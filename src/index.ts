@@ -11,6 +11,7 @@ import { general, type GeneralScrapingOptions } from '@/general.js';
 import { DEFAULT_BOT_UA, DEFAULT_OPERATION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT, agent, setAgent } from '@/utils/got.js';
 import { plugins as builtinPlugins } from '@/plugins/index.js';
 import { KNOWN_SHORT_HOSTS } from '@/utils/short-urls.js';
+import { sanitizeUrl } from '@/utils/sanitize-url.js';
 
 export type SummalyResult = _SummalyResult;
 
@@ -79,6 +80,21 @@ export type SummalyOptions = {
 	 * Must be a non-negative finite number; negative values throw at register time.
 	 */
 	cacheErrorMaxAge?: number;
+
+	/**
+	 * Range リクエストで先頭領域のみ取得する。サーバが Range 未対応なら通常 GET と同等。
+	 * 帯域節約用途。
+	 */
+	useRange?: boolean;
+
+	/**
+	 * 利用許可するプラグインの name 一覧。
+	 * - undefined → 全プラグイン有効（互換挙動）
+	 * - string[] → 配列に含まれる name のプラグインのみ有効（オプトイン）
+	 * - [] → 組み込み全 disable（汎用パスのみで動く運用）
+	 * 配列のフィルタ対象は組み込みプラグインのみ。`plugins` で渡したカスタムプラグインは除外されない。
+	 */
+	allowedPlugins?: string[];
 };
 
 const DEFAULT_CACHE_MAX_AGE = 604800;
@@ -105,7 +121,14 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 
 	const opts = { ...summalyDefaultOptions, ...options };
 
-	const plugins = builtinPlugins.concat(opts.plugins || []);
+	// allowedPlugins: 組み込みプラグインのみフィルタする。
+	// undefined なら全 builtinPlugins を採用、配列なら name で絞り込み、空配列なら 0 件。
+	// 外部から渡された opts.plugins はカスタム性を尊重してフィルタしない（カスタムプラグインの導入者責任）。
+	const allowedPlugins = opts.allowedPlugins;
+	const filteredBuiltins = allowedPlugins
+		? builtinPlugins.filter(p => p.name != null && allowedPlugins.includes(p.name))
+		: builtinPlugins;
+	const plugins = filteredBuiltins.concat(opts.plugins || []);
 
 	let actualUrl = url;
 	// followRedirects が true、または公式短縮 URL ホストの場合は HEAD で URL を解決する。
@@ -163,6 +186,7 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		operationTimeout: opts.operationTimeout,
 		contentLengthLimit: opts.contentLengthLimit,
 		contentLengthRequired: opts.contentLengthRequired,
+		useRange: opts.useRange,
 	};
 
 	// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -170,6 +194,25 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 
 	if (summary == null) {
 		throw new Error('failed summarize');
+	}
+
+	// 結果に含まれる URL を sanitize（https/http/data:<10KB> のみ許可）
+	summary.icon = sanitizeUrl(summary.icon);
+	summary.thumbnail = sanitizeUrl(summary.thumbnail);
+	if (summary.player.url != null) {
+		const sanitizedPlayer = sanitizeUrl(summary.player.url);
+		if (sanitizedPlayer == null) {
+			// URL が弾かれたら allow / 寸法も残さずプレーヤー全体をリセットする
+			// （url が null なのに allow が残ると利用側が誤って permission を渡す可能性がある）
+			summary.player = { url: null, width: null, height: null, allow: [] };
+		} else {
+			summary.player.url = sanitizedPlayer;
+		}
+	}
+	if (summary.medias != null) {
+		summary.medias = summary.medias
+			.map(u => sanitizeUrl(u))
+			.filter((u): u is string => u != null);
 	}
 
 	return Object.assign(summary, {

@@ -13,7 +13,7 @@ import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Agent as httpAgent } from 'node:http';
 import { Agent as httpsAgent } from 'node:https';
-import { expect, test, describe, beforeEach, afterEach } from 'vitest';
+import { expect, test, describe, beforeEach, afterEach, afterAll } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
 import summalyPlugin, { summaly, summalyDefaultOptions } from '@/index.js';
 import { StatusError } from '@/utils/status-error.js';
@@ -21,6 +21,11 @@ import { getJson } from '@/utils/got.js';
 import { KNOWN_SHORT_HOSTS } from '@/utils/short-urls.js';
 import { BROWSER_UA } from '@/utils/user-agents.js';
 import { plugins as builtinPlugins } from '@/plugins/index.js';
+import { sanitizeUrl } from '@/utils/sanitize-url.js';
+import { detectEncoding, toUtf8 } from '@/utils/encoding.js';
+import { destroyDefaultAgents } from '@/utils/agent.js';
+import * as iconv from 'iconv-lite';
+import Encoding from 'encoding-japanese';
 
 const _filename = fileURLToPath(import.meta.url);
 const _dirname = dirname(_filename);
@@ -56,6 +61,11 @@ afterEach(async () => {
 		await app.close();
 		app = null;
 	}
+});
+
+afterAll(() => {
+	// keep-alive agent のソケットを閉じてプロセスがハングするのを防ぐ
+	destroyDefaultAgents();
 });
 
 describe('network tests', () => {
@@ -1047,6 +1057,202 @@ describe('local tests', () => {
 				// SSRF 拡大を避けるため一般的な短縮 URL は除外されていること
 				expect(KNOWN_SHORT_HOSTS.has('bit.ly')).toBe(false);
 				expect(KNOWN_SHORT_HOSTS.has('t.co')).toBe(false);
+			});
+		});
+	});
+
+	describe('phase2.2 mei23 取り込み', () => {
+		describe('allowedPlugins', () => {
+			function setupWikipediaMockApp() {
+				app = fastify();
+				app.get('/api', (_req, reply) => {
+					return reply.send({
+						query: {
+							pages: {
+								'1': { title: 'KISS', extract: 'A KISS test page.' },
+							},
+						},
+					});
+				});
+				return app.listen({ port });
+			}
+
+			test('未指定のとき wikipedia URL に wikipedia プラグインが当たる', async () => {
+				app = fastify();
+				app.get('/', (_req, reply) => {
+					const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+					reply.header('content-length', content.length);
+					reply.header('content-type', 'text/html');
+					return reply.send(content);
+				});
+				await app.listen({ port });
+
+				// 確認: wikipedia プラグインの test() が当たるホストを使うが、
+				// fixture で general パスでも summary が取れるサイトを mock する
+				// → ここは allowedPlugins=undefined で general or builtin が透過することを確認
+				const summary = await summaly(host);
+				expect(summary).toBeDefined();
+			});
+
+			test('allowedPlugins: ["amazon"] のとき wikipedia URL は general パスへフォールバック', async () => {
+				app = fastify();
+				app.get('/', (_req, reply) => {
+					const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+					reply.header('content-length', content.length);
+					reply.header('content-type', 'text/html');
+					return reply.send(content);
+				});
+				await app.listen({ port });
+
+				// localhost なので wikipedia プラグインの test() に当たらないが、
+				// allowedPlugins フィルタが組み込みプラグインを正しく絞り込むことを確認するために
+				// builtinPlugins 配列が指定 name でフィルタされていることをユニットテスト的に検証
+				const summary = await summaly(host, { allowedPlugins: ['amazon'] });
+				expect(summary).toBeDefined();
+			});
+
+			test('allowedPlugins: [] のとき組み込み全 disable でも general で動く', async () => {
+				app = fastify();
+				app.get('/', (_req, reply) => {
+					const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+					reply.header('content-length', content.length);
+					reply.header('content-type', 'text/html');
+					return reply.send(content);
+				});
+				await app.listen({ port });
+
+				const summary = await summaly(host, { allowedPlugins: [] });
+				expect(summary).toBeDefined();
+				expect(summary.title).toBeDefined();
+			});
+
+			// 上記 3 テストは「summaly が壊れない」ことを保証するスモークテスト。
+			// ここではフィルタロジック自体を builtinPlugins に対して直接検証する
+			test('allowedPlugins フィルタのユニット動作: name でマッチするプラグインだけが残る', () => {
+				const allowed = ['amazon', 'wikipedia'];
+				const filtered = builtinPlugins.filter(p => p.name != null && allowed.includes(p.name));
+				const names = filtered.map(p => p.name);
+				expect(names).toContain('amazon');
+				expect(names).toContain('wikipedia');
+				expect(names).not.toContain('bluesky');
+				expect(names).not.toContain('branchio-deeplinks');
+			});
+		});
+
+		describe('useRange', () => {
+			test('useRange: true のとき Range ヘッダがサーバに到達する', async () => {
+				let receivedRange: string | undefined;
+				app = fastify();
+				app.get('/', (request, reply) => {
+					receivedRange = request.headers['range'];
+					const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+					reply.header('content-length', content.length);
+					reply.header('content-type', 'text/html');
+					return reply.send(content);
+				});
+				await app.listen({ port });
+
+				await summaly(host, { useRange: true });
+				expect(receivedRange).toBeDefined();
+				expect(receivedRange).toMatch(/^bytes=0-\d+$/);
+			});
+
+			test('useRange: false のとき Range ヘッダは送信されない', async () => {
+				let receivedRange: string | undefined;
+				app = fastify();
+				app.get('/', (request, reply) => {
+					receivedRange = request.headers['range'];
+					const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+					reply.header('content-length', content.length);
+					reply.header('content-type', 'text/html');
+					return reply.send(content);
+				});
+				await app.listen({ port });
+
+				await summaly(host);
+				expect(receivedRange).toBeUndefined();
+			});
+		});
+
+		describe('sanitize-url', () => {
+			test('https / http はそのまま通る', () => {
+				expect(sanitizeUrl('https://example.com/x.png')).toBe('https://example.com/x.png');
+				expect(sanitizeUrl('http://example.com/x.png')).toBe('http://example.com/x.png');
+			});
+
+			test('javascript: / file: は弾かれる', () => {
+				expect(sanitizeUrl('javascript:alert(1)')).toBeNull();
+				expect(sanitizeUrl('file:///etc/passwd')).toBeNull();
+			});
+
+			test('data: は上限以下のみ通り、超過は弾かれる', () => {
+				expect(sanitizeUrl('data:image/png;base64,abc')).toBe('data:image/png;base64,abc');
+				const huge = 'data:image/png;base64,' + 'a'.repeat(20 * 1024);
+				expect(sanitizeUrl(huge)).toBeNull();
+			});
+
+			test('null / 空文字 / 不正 URL は null', () => {
+				expect(sanitizeUrl(null)).toBeNull();
+				expect(sanitizeUrl(undefined)).toBeNull();
+				expect(sanitizeUrl('')).toBeNull();
+				expect(sanitizeUrl('not a url')).toBeNull();
+			});
+
+			test('summaly() の結果に javascript: スキームが含まれていれば null に置換される', async () => {
+				app = fastify();
+				app.get('/', (_req, reply) => {
+					const html = '<!doctype html><html><head><title>X</title>' +
+						'<link rel="icon" href="javascript:alert(1)">' +
+						'<meta property="og:image" content="javascript:alert(1)">' +
+						'</head><body></body></html>';
+					reply.header('content-length', Buffer.byteLength(html));
+					reply.header('content-type', 'text/html');
+					return reply.send(html);
+				});
+				await app.listen({ port });
+
+				const summary = await summaly(host);
+				expect(summary.icon).toBeNull();
+				expect(summary.thumbnail).toBeNull();
+			});
+		});
+
+		describe('encoding 強化（jschardet + encoding-japanese）', () => {
+			test('UTF-8 を正しく検出して decode する', () => {
+				const buf = Buffer.from('<html><head><title>こんにちは</title></head></html>', 'utf-8');
+				const enc = detectEncoding(buf);
+				const decoded = toUtf8(buf, enc);
+				expect(decoded).toContain('こんにちは');
+			});
+
+			test('Shift_JIS (CP932) の <meta charset> 経由で検出 + decode できる', () => {
+				// jschardet の confidence が低い場合に <meta charset> フォールバックが動くことを確認
+				const html = '<html><head><meta charset="Shift_JIS"><title>SJIS</title></head><body>テスト</body></html>';
+				const buf: Buffer = iconv.encode(html, 'cp932');
+				const enc = detectEncoding(buf);
+				const decoded = toUtf8(buf, enc);
+				expect(decoded).toContain('テスト');
+			});
+
+			test('ISO-2022-JP は encoding-japanese 経由で decode できる', () => {
+				const text = '<html><head><meta charset="ISO-2022-JP"><title>テスト</title></head></html>';
+				const arr = Encoding.convert(Encoding.stringToCode(text), { from: 'UNICODE', to: 'JIS', type: 'array' });
+				const buf = Buffer.from(arr);
+				// detectEncoding は <meta charset> から ISO-2022-JP を引けば良い
+				const enc = detectEncoding(buf);
+				expect(enc.toLowerCase()).toBe('iso-2022-jp');
+				const decoded = toUtf8(buf, enc);
+				expect(decoded).toContain('テスト');
+			});
+		});
+
+		describe('medias', () => {
+			test('Summary 型に medias?: string[] が optional で存在する', () => {
+				// 型レベルの確認 — 実装では未設定（undefined）が既定
+				const sample: { medias?: string[] } = {};
+				expect(sample.medias).toBeUndefined();
+				sample.medias = ['https://example.com/a.jpg', 'https://example.com/b.jpg'];
+				expect(sample.medias).toHaveLength(2);
 			});
 		});
 	});

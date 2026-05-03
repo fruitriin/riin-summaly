@@ -5,12 +5,34 @@ import type { IPv4, IPv6 } from 'ipaddr.js';
 import type { GeneralScrapingOptions } from '@/general.js';
 import { StatusError } from '@/utils/status-error.js';
 import { detectEncoding, toUtf8 } from '@/utils/encoding.js';
+import { defaultHttpAgent, defaultHttpsAgent } from '@/utils/agent.js';
 
+/**
+ * 外部から `setAgent` で渡された agent。設定されている場合は keep-alive デフォルトより優先される。
+ * 設定時はプライベート IP ガードが解除される（プロキシ用途のため）— 既存挙動を維持。
+ */
 export let agent: Got.Agents = {};
 
 export function setAgent(_agent: Got.Agents) {
 	// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
 	agent = _agent || {};
+}
+
+/**
+ * 外部 agent（`setAgent` 経由）が設定されているか。
+ * SSRF ガード解除判定とデフォルト agent 選択の両方からこの関数を参照することで、
+ * ロジックの分散を防ぐ。
+ */
+function isExternalAgentSet(): boolean {
+	return Object.keys(agent).length > 0;
+}
+
+/**
+ * `setAgent` で外部 agent が設定されていればそれを返し、無ければ keep-alive デフォルト agent を返す。
+ */
+function getEffectiveAgent(): Got.Agents {
+	if (isExternalAgentSet()) return agent;
+	return { http: defaultHttpAgent, https: defaultHttpsAgent };
 }
 
 export type GotOptions = {
@@ -24,6 +46,7 @@ export type GotOptions = {
 	operationTimeout?: number;
 	contentLengthLimit?: number;
 	contentLengthRequired?: boolean;
+	useRange?: boolean;
 };
 
 export const DEFAULT_RESPONSE_TIMEOUT = 20 * 1000;
@@ -32,12 +55,17 @@ export const DEFAULT_MAX_RESPONSE_SIZE = 10 * 1024 * 1024;
 export const DEFAULT_BOT_UA = `SummalyBot/${_VERSION_}`;
 
 export function getGotOptions(url: string, opts?: GeneralScrapingOptions): Omit<GotOptions, 'method'> {
+	const maxSize = opts?.contentLengthLimit ?? DEFAULT_MAX_RESPONSE_SIZE;
 	return {
 		url,
 		headers: {
 			'accept': 'text/html,application/xhtml+xml',
 			'user-agent': opts?.userAgent ?? DEFAULT_BOT_UA,
 			'accept-language': opts?.lang ?? undefined,
+			// useRange: true のときは Range ヘッダで先頭領域だけ取得する。
+			// サーバが Range をサポートしていなければ 200 OK でフルボディが返るため
+			// 既存の contentLengthLimit ガードで保護される。
+			...(opts?.useRange ? { range: `bytes=0-${maxSize - 1}` } : {}),
 		},
 		typeFilter: /^(text\/html|application\/xhtml\+xml)/,
 		followRedirects: opts?.followRedirects,
@@ -45,6 +73,7 @@ export function getGotOptions(url: string, opts?: GeneralScrapingOptions): Omit<
 		operationTimeout: opts?.operationTimeout,
 		contentLengthLimit: opts?.contentLengthLimit,
 		contentLengthRequired: opts?.contentLengthRequired,
+		useRange: opts?.useRange,
 	};
 }
 
@@ -142,7 +171,7 @@ export async function getResponse(args: GotOptions) {
 			request: operationTimeout,	// whole operation timeout
 		},
 		followRedirect: args.followRedirects,
-		agent,
+		agent: getEffectiveAgent(),
 		http2: false,
 		retry: {
 			limit: 0,
@@ -155,7 +184,7 @@ export async function getResponse(args: GotOptions) {
 	// SUMMALY_ALLOW_PRIVATE_IPはテスト用
 	// TODO: Try moving this to receiveResponse- ATM `got` doesn't provide a means
 	// to check the IP/response header data while streaming the response...
-	const allowPrivateIp = process.env.SUMMALY_ALLOW_PRIVATE_IP === 'true' || Object.keys(agent).length > 0;
+	const allowPrivateIp = process.env.SUMMALY_ALLOW_PRIVATE_IP === 'true' || isExternalAgentSet();
 	if (!allowPrivateIp && res.ip != null) {
 		let ip: IPv4 | IPv6;
 		try {

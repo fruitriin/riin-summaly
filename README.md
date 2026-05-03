@@ -56,6 +56,8 @@ npm run serve
 | **contentLengthRequired** | *boolean*              | If set to true, it will be an error if the other server does not return content-length.                                                                                             | `false`                |
 | **cacheMaxAge**           | *number*               | Fastify mode only. `Cache-Control: public, max-age=<n>` (seconds) for successful responses. Set to `0` to emit `Cache-Control: no-store`.                                           | `604800` (1 week)      |
 | **cacheErrorMaxAge**      | *number*               | Fastify mode only. `Cache-Control: public, max-age=<n>` (seconds) for error responses. Set to `0` to emit `Cache-Control: no-store`.                                                | `3600` (1 hour)        |
+| **useRange**              | *boolean*              | Send `Range: bytes=0-N-1` to fetch only the head of the document. Servers that ignore Range fall back to full body (still capped by `contentLengthLimit`).                            | `false`                |
+| **allowedPlugins**        | *string[]*             | Opt-in allowlist of builtin plugin names. `undefined` = all enabled. Empty array `[]` = all builtins disabled (general path only). Custom `plugins` are not filtered.                 | `undefined`            |
 
 #### Server caching
 
@@ -83,6 +85,12 @@ https://github.com/sindresorhus/got/blob/v12.6.0/documentation/tips.md#proxying
 
 (Summaly currently does not support http2.)
 
+When `setAgent` is **not** called, summaly uses a built-in keep-alive agent (HTTP / HTTPS) to amortize TCP/TLS handshakes for high-frequency preview workloads. Set `SUMMALY_FAMILY=4` or `SUMMALY_FAMILY=6` to force IPv4 / IPv6 only.
+
+#### Production deployment
+
+For running summaly as a standalone Fastify server behind nginx + systemd, see [docs/deploy-examples/](docs/deploy-examples/) — nginx reverse proxy, systemd unit, and JSON config samples (treat as starting points; verify against your environment).
+
 ### Returns
 
 A Promise of an Object that contains properties below:
@@ -102,6 +110,7 @@ A Promise of an Object that contains properties below:
 | **sensitive**        | *boolean*          | Whether the url is sensitive                               |
 | **activityPub**      | *string* \| *null* | The url of the ActivityPub representation of that web page |
 | **fediverseCreator** | *string* \| *null* | The pages fediverse handle                                 |
+| **medias**           | *string[]* \| *undefined* | Additional media URLs (e.g. multi-photo posts). Consumers should prefer `medias` when set, fall back to `thumbnail` otherwise. |
 | **url**              | *string*           | The url of the web page                                    |
 
 #### Summary

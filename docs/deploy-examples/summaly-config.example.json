@@ -1,0 +1,9 @@
+{
+	"useRange": true,
+	"allowedPlugins": ["amazon", "bluesky", "wikipedia", "branchio-deeplinks"],
+	"cacheMaxAge": 604800,
+	"cacheErrorMaxAge": 3600,
+	"contentLengthLimit": 10485760,
+	"responseTimeout": 20000,
+	"operationTimeout": 60000
+}

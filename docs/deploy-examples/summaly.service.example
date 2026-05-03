@@ -1,0 +1,38 @@
+# systemd unit example for summaly (Fastify standalone via fastify-cli).
+#
+# Replace placeholders:
+#   /opt/summaly       — install directory containing built/index.js
+#   summaly             — service user / group (create with: useradd -r -s /usr/sbin/nologin summaly)
+#
+# Install: place at /etc/systemd/system/summaly.service, then:
+#   systemctl daemon-reload && systemctl enable --now summaly
+
+[Unit]
+Description=summaly preview server
+Documentation=https://github.com/misskey-dev/summaly
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=summaly
+Group=summaly
+WorkingDirectory=/opt/summaly
+ExecStart=/usr/bin/env node node_modules/.bin/fastify start built/index.js --address 127.0.0.1 --port 3000 --options summaly-config.example.json
+Restart=on-failure
+RestartSec=5
+
+# IPv4 のみ / IPv6 のみで運用する場合は SUMMALY_FAMILY を指定する
+# Environment=SUMMALY_FAMILY=4
+
+# プライベート IP 解放はテスト専用。本番では絶対に有効化しない
+# Environment=SUMMALY_ALLOW_PRIVATE_IP=true
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

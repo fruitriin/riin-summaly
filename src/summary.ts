@@ -20,6 +20,13 @@ type Summary = {
 	thumbnail: string | null;
 
 	/**
+	 * Additional media URLs (e.g. multi-photo posts).
+	 * 利用側は medias を最優先、無ければ thumbnail を使うことを期待する。
+	 * 未設定（undefined）の場合は thumbnail のみを利用する。
+	 */
+	medias?: string[];
+
+	/**
 	 * The name of site of that web page
 	 */
 	sitename: string | null;

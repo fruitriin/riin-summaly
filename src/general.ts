@@ -137,6 +137,11 @@ export type GeneralScrapingOptions = {
 	operationTimeout?: number;
 	contentLengthLimit?: number;
 	contentLengthRequired?: boolean;
+	/**
+	 * Range リクエストで先頭領域だけを取得する。サーバが Range 未対応の場合は通常の GET 同等の挙動。
+	 * 帯域節約用途（高頻度プレビューや大型 HTML サイト）。
+	 */
+	useRange?: boolean;
 };
 
 export async function general(_url: URL | string, opts?: GeneralScrapingOptions): Promise<Summary | null> {
@@ -153,6 +158,7 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 		operationTimeout: opts?.operationTimeout,
 		contentLengthLimit: opts?.contentLengthLimit,
 		contentLengthRequired: opts?.contentLengthRequired,
+		useRange: opts?.useRange,
 	});
 
 	return await parseGeneral(url, res);

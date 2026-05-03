@@ -1,6 +1,6 @@
 # Phase 2.2 — mei23 fork の非プラグイン機能の取り込み（軽量版）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-03)**
 > 種別: 機能拡張 / 取捨選択
 > サイズ: **M**
 > 依存: なし（[phase2.1](phase2.1-plugin-infrastructure.md) と並列で着手可）
@@ -134,37 +134,37 @@ mei23 fork に存在し、upstream に存在しない / 実装が異なる「プ
 
 各ステップで `pnpm eslint && pnpm test` を通す。各ステップは互いに独立しており、worktree を分けて並列開発も可能。
 
-- [ ] **Step 1 — `medias?: string[]` 型追加**
+- [x] **Step 1 — `medias?: string[]` 型追加**
   - [src/summary.ts](src/summary.ts) の `Summary` 型 + `SummalyResult` 型に追加
   - 既存テストが壊れないことを確認（optional なので影響なし想定）
-- [ ] **Step 2 — keep-alive agent の既定化**
+- [x] **Step 2 — keep-alive agent の既定化**
   - [src/utils/agent.ts](src/utils/agent.ts) を新設、`httpAgent` / `httpsAgent` を export
   - [src/utils/got.ts](src/utils/got.ts) で `setAgent` 未呼び出し時は既定 agent を使う
   - `SUMMALY_FAMILY` 環境変数のテスト追加
   - **テスト後の cleanup**: `agent.destroy()` を `afterAll` で呼んでプロセスがハングしないこと
-- [ ] **Step 3 — `useRange` オプション**
+- [x] **Step 3 — `useRange` オプション**
   - `SummalyOptions.useRange?: boolean` を追加
   - `scpaping` で `range: bytes=0-<MAX-1>` ヘッダ付与
   - `content-range` レスポンスヘッダのパースは既存の `contentLengthLimit` 検査と統合
   - フィクスチャベースのテスト追加（テストサーバ側で Range レスポンスを返す）
-- [ ] **Step 4 — `allowedPlugins` オプション**
+- [x] **Step 4 — `allowedPlugins` オプション**
   - `SummalyOptions.allowedPlugins?: string[]` を追加（[phase2.1](phase2.1-plugin-infrastructure.md) の `name` 定数を利用）
   - [src/index.ts](src/index.ts) のディスパッチで `builtinPlugins` を `allowedPlugins` でフィルタ
   - テスト: `allowedPlugins: ['amazon']` のとき wikipedia URL が general パスに落ちることを確認、`[]` で組み込み全 disable を確認
-- [ ] **Step 5 — `sanitize-url` 結果フィルタ**
+- [x] **Step 5 — `sanitize-url` 結果フィルタ**
   - [src/utils/sanitize-url.ts](src/utils/sanitize-url.ts) を新設（`https:` / `http:` / `data:`<size_limit> を許可）
   - [src/index.ts](src/index.ts) の最終リターン前に `player.url` / `icon` / `thumbnail` / `medias` を一括フィルタ
   - `data:` の長さ上限テスト追加（過大 base64 を弾くこと）
-- [ ] **Step 6 — 文字コード判定強化**（参考: [misskey-dev/summaly#39](https://github.com/misskey-dev/summaly/issues/39)）
+- [x] **Step 6 — 文字コード判定強化**（参考: [misskey-dev/summaly#39](https://github.com/misskey-dev/summaly/issues/39)）
   - `package.json` の依存を更新: `chardet` を削除、`jschardet` / `encoding-japanese` を追加
   - [src/utils/encoding.ts](src/utils/encoding.ts) を mei23 ベースに書き換え
   - 既存テストが全パスすることを確認
   - Shift-JIS と ISO-2022-JP の HTML フィクスチャを `test/htmls/` に追加し、UTF-8 にデコードされて OG 抽出されることをテスト
-- [ ] **Step 7 — deploy 補助ファイル整備**
+- [x] **Step 7 — deploy 補助ファイル整備**
   - `docs/deploy-examples/` を新設
   - mei23 の nginx / systemd を upstream 構成（`fastify-cli`）に合わせて書き換え
   - README に「Production deployment」節を追加してリンク
-- [ ] **Step 8 — README / CHANGELOG 更新**
+- [x] **Step 8 — README / CHANGELOG 更新**
   - 新オプション (`useRange`, `allowedPlugins`) の説明
   - keep-alive デフォルト化の挙動説明（外部 agent が優先される旨も）
   - 文字コード判定強化のリリースノート（issue #39 の修正である旨を明記）

@@ -1,0 +1,36 @@
+# nginx reverse proxy example for summaly
+#
+# Replace placeholders:
+#   YOUR_DOMAIN     — public hostname (e.g. summaly.example.com)
+#   /path/to/cert   — TLS cert / key paths
+#   3000            — internal port where summaly listens (matches summaly.service.example)
+#
+# Place this file under /etc/nginx/conf.d/ or /etc/nginx/sites-available/.
+
+upstream summaly_backend {
+    server 127.0.0.1:3000;
+    keepalive 32;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name YOUR_DOMAIN;
+
+    ssl_certificate     /path/to/cert/fullchain.pem;
+    ssl_certificate_key /path/to/cert/privkey.pem;
+
+    # Optional: cap response size at the proxy layer too.
+    client_max_body_size 1m;
+
+    location / {
+        proxy_pass http://summaly_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Match summaly's internal operation timeout (default 60s)
+        proxy_read_timeout 65s;
+    }
+}
