@@ -47,7 +47,21 @@ export type GotOptions = {
 	contentLengthLimit?: number;
 	contentLengthRequired?: boolean;
 	useRange?: boolean;
+	/**
+	 * `getResponse` 自体は参照しないが、`scpaping` の後続処理（PDF 検出分岐）で
+	 * 透過的に保持するため `GotOptions` に含める。
+	 */
+	enablePdf?: boolean;
 };
+
+/**
+ * PDF 機能の有効化判定。`enablePdf` オプション、または環境変数 `SUMMALY_ENABLE_PDF=true` のいずれかで有効化。
+ * 関数オプションを優先し、未指定（undefined）のときのみ環境変数を見る。
+ */
+function isPdfEnabled(enablePdf: boolean | undefined): boolean {
+	if (enablePdf != null) return enablePdf;
+	return process.env.SUMMALY_ENABLE_PDF === 'true';
+}
 
 export const DEFAULT_RESPONSE_TIMEOUT = 20 * 1000;
 export const DEFAULT_OPERATION_TIMEOUT = 60 * 1000;
@@ -56,10 +70,19 @@ export const DEFAULT_BOT_UA = `SummalyBot/${_VERSION_}`;
 
 export function getGotOptions(url: string, opts?: GeneralScrapingOptions): Omit<GotOptions, 'method'> {
 	const maxSize = opts?.contentLengthLimit ?? DEFAULT_MAX_RESPONSE_SIZE;
+	const pdfEnabled = isPdfEnabled(opts?.enablePdf);
+	// enablePdf 真のときだけ typeFilter に application/pdf を加える。
+	// 偽時は既存挙動（HTML のみ）と完全互換。
+	const typeFilter = pdfEnabled
+		? /^(text\/html|application\/xhtml\+xml|application\/pdf)/
+		: /^(text\/html|application\/xhtml\+xml)/;
+	const accept = pdfEnabled
+		? 'text/html,application/xhtml+xml,application/pdf'
+		: 'text/html,application/xhtml+xml';
 	return {
 		url,
 		headers: {
-			'accept': 'text/html,application/xhtml+xml',
+			'accept': accept,
 			'user-agent': opts?.userAgent ?? DEFAULT_BOT_UA,
 			'accept-language': opts?.lang ?? undefined,
 			// useRange: true のときは Range ヘッダで先頭領域だけ取得する。
@@ -67,26 +90,67 @@ export function getGotOptions(url: string, opts?: GeneralScrapingOptions): Omit<
 			// 既存の contentLengthLimit ガードで保護される。
 			...(opts?.useRange ? { range: `bytes=0-${maxSize - 1}` } : {}),
 		},
-		typeFilter: /^(text\/html|application\/xhtml\+xml)/,
+		typeFilter,
 		followRedirects: opts?.followRedirects,
 		responseTimeout: opts?.responseTimeout,
 		operationTimeout: opts?.operationTimeout,
 		contentLengthLimit: opts?.contentLengthLimit,
 		contentLengthRequired: opts?.contentLengthRequired,
 		useRange: opts?.useRange,
+		enablePdf: opts?.enablePdf,
 	};
+}
+
+export type ScpapingResult = {
+	body: string;
+	$: cheerio.CheerioAPI;
+	response: Got.Response<string>;
+	pdf?: { title?: string };
+};
+
+const PDF_PARSE_TIMEOUT_MS = 5000;
+
+/**
+ * Promise を timeout 付きで race する。setTimeout のハンドルは race 完了後に必ず clear するため
+ * Node プロセスが timer リファレンスで生き残る (open handle / メモリリーク) リスクが無い。
+ * テスト容易化のため export している。
+ */
+export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message = 'timeout'): Promise<T> {
+	let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+	const timeoutPromise = new Promise<never>((_, reject) => {
+		timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs);
+	});
+	try {
+		return await Promise.race([promise, timeoutPromise]);
+	} finally {
+		if (timeoutHandle != null) clearTimeout(timeoutHandle);
+	}
 }
 
 export async function scpaping(
 	url: string,
 	opts?: GeneralScrapingOptions,
-) {
+): Promise<ScpapingResult> {
 	const args = getGotOptions(url, opts);
 
 	const response = await getResponse({
 		...args,
 		method: 'GET',
 	});
+
+	// PDF レスポンスは別パスで処理する。
+	// enablePdf が真のときのみ typeFilter で application/pdf を許可しているため、
+	// ここに到達するのは enablePdf 真のとき限定。
+	if (isPdfEnabled(opts?.enablePdf) && /^application\/pdf/.test(response.headers['content-type'] ?? '')) {
+		const pdfMeta = await parsePdfTitle(response.rawBody);
+		// PDF 分岐では body / $ は HTML 文脈で使われないが、型整合のため空で返す
+		return {
+			body: '',
+			$: cheerio.load(''),
+			response,
+			pdf: pdfMeta,
+		};
+	}
 
 	const encoding = detectEncoding(response.rawBody);
 	const body = toUtf8(response.rawBody, encoding);
@@ -97,6 +161,37 @@ export async function scpaping(
 		$,
 		response,
 	};
+}
+
+/**
+ * PDF buffer からタイトルだけ取得する。pdf-parse v2 の getInfo() を使用。
+ * 5 秒で hard timeout し、超過時はタイトル無しで返す（呼出側でホスト名等にフォールバック）。
+ *
+ * 防衛層:
+ * - getInfo() は document-level metadata のみ読むため、本文ページのテキスト解析は走らない
+ * - withTimeout で 5 秒 hard timeout（setTimeout のハンドルも必ず clear する）
+ * - 上位の contentLengthLimit (10 MiB デフォルト) で受信前にサイズ制限済み
+ *
+ * 注意: 初回呼び出しで `pdfjs-dist`（約 30 MB）の動的 import が走るため、
+ * 最初の PDF リクエストは数十ミリ秒余分にかかる場合がある。
+ */
+async function parsePdfTitle(rawBody: Uint8Array): Promise<{ title?: string }> {
+	let parser: { getInfo: () => Promise<unknown>; destroy: () => Promise<void> } | undefined;
+	try {
+		const { PDFParse } = await import('pdf-parse');
+		// Node の Buffer は Uint8Array のサブクラスなので rawBody はそのまま渡せる
+		parser = new PDFParse({ data: rawBody });
+		const info = await withTimeout(parser.getInfo(), PDF_PARSE_TIMEOUT_MS, 'pdf-parse timeout');
+		const rawTitle = (info as { info?: { Title?: unknown } }).info?.Title;
+		const title = typeof rawTitle === 'string' && rawTitle.length > 0 ? rawTitle : undefined;
+		return { title };
+	} catch {
+		// timeout / パース失敗時はタイトル無しでフォールバック
+		return {};
+	} finally {
+		// timeout 経路でも destroy を試みる（パーサーがバックグラウンドで走り続けるのを防ぐ）
+		await parser?.destroy().catch(() => { /* noop */ });
+	}
 }
 
 export async function get(url: string) {

@@ -109,6 +109,17 @@ export type SummalyOptions = {
 	 * 1 エントリ数 KB として 1000 で数 MB 程度のメモリ消費を見込む。
 	 */
 	inMemoryCacheMaxEntries?: number;
+
+	/**
+	 * PDF レスポンスのタイトル取得を有効化する（オプトイン）。
+	 * `true` または環境変数 `SUMMALY_ENABLE_PDF=true` のいずれかが設定されている場合のみ
+	 * PDF を type filter で許可し、`pdf-parse` で先頭メタデータからタイトルを取得する。
+	 *
+	 * デフォルト無効。PDF パースは巨大ファイル / 悪意ある PDF でメモリ・CPU を消費するため
+	 * `contentLengthLimit` (受信前)・`useRange` (受信中)・5 秒 timeout・1 ページのみ等の多段防衛を入れているが、
+	 * 「PDF を扱う／扱わない」の最終判断は運用者に委ねる方針。
+	 */
+	enablePdf?: boolean;
 };
 
 const DEFAULT_CACHE_MAX_AGE = 604800;
@@ -192,10 +203,14 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		try {
 			const timeout = opts.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT;
 			const operationTimeout = opts.operationTimeout ?? DEFAULT_OPERATION_TIMEOUT;
+			// enablePdf 真のときは Accept に application/pdf も含める（厳格なコンテントネゴシエーションサーバ向け）
+			const headAcceptHeader = opts.enablePdf
+				? 'text/html,application/xhtml+xml,application/pdf'
+				: 'text/html,application/xhtml+xml';
 			actualUrl = await got
 				.head(url, {
 					headers: {
-						accept: 'text/html,application/xhtml+xml',
+						accept: headAcceptHeader,
 						'user-agent': opts.userAgent ?? DEFAULT_BOT_UA,
 						'accept-language': opts.lang ?? undefined,
 					},
@@ -237,6 +252,7 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		contentLengthLimit: opts.contentLengthLimit,
 		contentLengthRequired: opts.contentLengthRequired,
 		useRange: opts.useRange,
+		enablePdf: opts.enablePdf,
 	};
 
 	// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition

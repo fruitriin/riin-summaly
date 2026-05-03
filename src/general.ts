@@ -5,6 +5,7 @@ import { clip } from '@/utils/clip.js';
 import { cleanupTitle } from '@/utils/cleanup-title.js';
 
 import { get, head, scpaping } from '@/utils/got.js';
+import { PDF_ICON_DATA_URL } from '@/utils/pdf-icon.js';
 
 /**
  * Contains only the html snippet for a sanitized iframe as the thumbnail is
@@ -142,6 +143,12 @@ export type GeneralScrapingOptions = {
 	 * 帯域節約用途（高頻度プレビューや大型 HTML サイト）。
 	 */
 	useRange?: boolean;
+
+	/**
+	 * PDF レスポンス対応を有効化する（オプトイン）。
+	 * 詳細は SummalyOptions.enablePdf を参照。
+	 */
+	enablePdf?: boolean;
 };
 
 export async function general(_url: URL | string, opts?: GeneralScrapingOptions): Promise<Summary | null> {
@@ -159,9 +166,34 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 		contentLengthLimit: opts?.contentLengthLimit,
 		contentLengthRequired: opts?.contentLengthRequired,
 		useRange: opts?.useRange,
+		enablePdf: opts?.enablePdf,
 	});
 
+	if (res.pdf != null) {
+		return buildPdfSummary(url, res.pdf);
+	}
+
 	return await parseGeneral(url, res);
+}
+
+/**
+ * PDF レスポンス専用の Summary を組み立てる。タイトルが取れなければホスト名で代用、
+ * アイコンは固定の PDF アイコン (data URI)。
+ */
+function buildPdfSummary(url: URL, pdf: { title?: string }): Summary {
+	const title = (pdf.title != null && pdf.title.trim().length > 0)
+		? pdf.title.trim()
+		: url.hostname;
+	return {
+		title,
+		icon: PDF_ICON_DATA_URL,
+		description: null,
+		thumbnail: null,
+		sitename: url.hostname,
+		player: { url: null, width: null, height: null, allow: [] },
+		activityPub: null,
+		fediverseCreator: null,
+	};
 }
 
 function headerEqualValueContains(search: string, headerValue: string | string[] | undefined) {

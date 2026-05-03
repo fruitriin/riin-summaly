@@ -60,6 +60,7 @@ npm run serve
 | **allowedPlugins**        | *string[]*             | Opt-in allowlist of builtin plugin names. `undefined` = all enabled. Empty array `[]` = all builtins disabled (general path only). Custom `plugins` are not filtered.                 | `undefined`            |
 | **inMemoryCache**         | *boolean*              | Fastify mode only. Enable in-process LRU cache so repeated requests for the same URL are served from memory. Useful when an HTTP client (e.g. Got, node-fetch) ignores `Cache-Control`. | `false`                |
 | **inMemoryCacheMaxEntries** | *number*             | Fastify mode only. Maximum number of entries in the in-memory cache. Each entry is typically a few KB, but a long `description` or `data:` thumbnail can push it higher; size accordingly. | `1000`                 |
+| **enablePdf**             | *boolean*              | Opt-in: extract title from `application/pdf` responses via `pdf-parse`. Falls back to hostname on parse failure / timeout. Also enabled by env `SUMMALY_ENABLE_PDF=true`; explicit option wins.  | `false`                |
 
 #### Server caching
 
@@ -77,6 +78,18 @@ Cache key: URL with the fragment (`#...`) stripped, plus the `lang` query value 
 - 5xx errors are also cached for `cacheErrorMaxAge` (default 1 hour). If an upstream site recovers from an outage, summaly will continue returning the cached error until the TTL expires. Restart the process or lower `cacheErrorMaxAge` to mitigate.
 - Concurrent requests for the same URL each hit the origin until the first response populates the cache (no in-flight dedup).
 - Cache lives for the process lifetime only; restart the server to flush. For persistent or shared caches across replicas, run summaly behind nginx / Varnish / a CDN that honours the emitted `Cache-Control` header.
+
+#### PDF responses
+
+Set `enablePdf: true` (or env `SUMMALY_ENABLE_PDF=true`) to extract titles from `application/pdf` responses. The implementation is hardened against hangs:
+
+- `getInfo()` only reads document-level metadata (no per-page text extraction)
+- Hard 5-second timeout via `Promise.race`
+- `contentLengthLimit` (default 10 MiB) cancels oversized PDFs before they reach the parser
+- Combine with `useRange: true` to fetch only the head bytes when the origin supports HTTP Range
+- Title missing / parse fails / timeout → falls back to `hostname` for `title` plus a fixed SVG PDF icon as `data:` URI
+
+Default off because `pdf-parse` pulls in `pdfjs-dist` (large dep) and PDF parsing can stress CPU/memory; flip on once you've sized the operational envelope. The explicit option wins over the env var, so passing `enablePdf: false` always disables PDF even when `SUMMALY_ENABLE_PDF=true` is set.
 
 #### Plugin
 

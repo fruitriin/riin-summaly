@@ -44,7 +44,8 @@
     "iconv-lite": "0.7.2",
     "ipaddr.js": "2.3.0",
     "jschardet": "3.1.4",
-    "lru-cache": "11.3.5"
+    "lru-cache": "11.3.5",
+    "pdf-parse": "2.4.5"
   },
   "optionalDependencies": {
     "fastify": "5.8.5"

@@ -1491,6 +1491,160 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('PDF 対応 (phase5.1)', () => {
+		const pdfBuffer = fs.readFileSync(_dirname + '/pdfs/sample.pdf');
+
+		afterEach(() => {
+			delete process.env.SUMMALY_ENABLE_PDF;
+		});
+
+		test('enablePdf 未指定時は PDF レスポンスが type filter で reject される (デフォルト互換)', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-length', pdfBuffer.length);
+				reply.header('content-type', 'application/pdf');
+				return reply.send(pdfBuffer);
+			});
+			await app.listen({ port });
+
+			await expect(summaly(host)).rejects.toThrow(/Rejected by type filter/);
+		});
+
+		test('enablePdf: true で PDF からタイトルが取れる', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-length', pdfBuffer.length);
+				reply.header('content-type', 'application/pdf');
+				return reply.send(pdfBuffer);
+			});
+			await app.listen({ port });
+
+			const summary = await summaly(host, { enablePdf: true });
+			expect(summary.title).toBe('Hello PDF World');
+			expect(summary.icon).toMatch(/^data:image\/svg\+xml;base64,/);
+			expect(summary.description).toBeNull();
+			expect(summary.thumbnail).toBeNull();
+			expect(summary.player.url).toBeNull();
+			expect(summary.sitename).toBe('localhost');
+		});
+
+		test('SUMMALY_ENABLE_PDF=true 環境変数でも有効化できる', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-length', pdfBuffer.length);
+				reply.header('content-type', 'application/pdf');
+				return reply.send(pdfBuffer);
+			});
+			await app.listen({ port });
+
+			process.env.SUMMALY_ENABLE_PDF = 'true';
+			const summary = await summaly(host);
+			expect(summary.title).toBe('Hello PDF World');
+		});
+
+		test('enablePdf: false が SUMMALY_ENABLE_PDF=true より優先される (関数オプション優先)', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-length', pdfBuffer.length);
+				reply.header('content-type', 'application/pdf');
+				return reply.send(pdfBuffer);
+			});
+			await app.listen({ port });
+
+			process.env.SUMMALY_ENABLE_PDF = 'true';
+			await expect(summaly(host, { enablePdf: false })).rejects.toThrow(/Rejected by type filter/);
+		});
+
+		test('Title 無し PDF はホスト名を title として返す', async () => {
+			// Title フィールドの無い最小 PDF を生成
+			const noTitlePdf = (() => {
+				const obj1 = '1 0 obj\n<</Type /Catalog /Pages 2 0 R>>\nendobj\n';
+				const obj2 = '2 0 obj\n<</Type /Pages /Kids [3 0 R] /Count 1>>\nendobj\n';
+				const obj3 = '3 0 obj\n<</Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]>>\nendobj\n';
+				const header = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
+				let pos = Buffer.byteLength(header, 'binary');
+				const offsets = [];
+				for (const o of [obj1, obj2, obj3]) {
+					offsets.push(pos);
+					pos += Buffer.byteLength(o);
+				}
+				const xrefOffset = pos;
+				let xref = 'xref\n0 4\n0000000000 65535 f \n';
+				for (const o of offsets) xref += String(o).padStart(10, '0') + ' 00000 n \n';
+				const trailer = `trailer\n<</Size 4 /Root 1 0 R>>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+				return Buffer.concat([
+					Buffer.from(header, 'binary'),
+					Buffer.from(obj1),
+					Buffer.from(obj2),
+					Buffer.from(obj3),
+					Buffer.from(xref),
+					Buffer.from(trailer),
+				]);
+			})();
+
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-length', noTitlePdf.length);
+				reply.header('content-type', 'application/pdf');
+				return reply.send(noTitlePdf);
+			});
+			await app.listen({ port });
+
+			const summary = await summaly(host, { enablePdf: true });
+			// hostname フォールバック
+			expect(summary.title).toBe('localhost');
+			expect(summary.icon).toMatch(/^data:image\/svg\+xml;base64,/);
+		});
+
+		test('contentLengthLimit を超える PDF は受信前にキャンセルされる (5層防衛 ①)', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-length', pdfBuffer.length);
+				reply.header('content-type', 'application/pdf');
+				return reply.send(pdfBuffer);
+			});
+			await app.listen({ port });
+
+			// PDF サイズ (403 bytes) より小さい contentLengthLimit を渡してキャンセル発火を確認
+			await expect(summaly(host, { enablePdf: true, contentLengthLimit: 100 }))
+				.rejects.toThrow(/maxSize exceeded/);
+		});
+
+		test('withTimeout が 5 秒経過時に reject し、setTimeout ハンドルを clear する (5層防衛 ④)', async () => {
+			const { withTimeout } = await import('@/utils/got.js');
+			const start = Date.now();
+			// 永遠に解決しない promise を 50ms で timeout
+			await expect(withTimeout(new Promise(() => { /* never resolve */ }), 50, 'unit-test-timeout'))
+				.rejects.toThrow('unit-test-timeout');
+			const elapsed = Date.now() - start;
+			// 50ms ± 余裕で完了することを確認（leak していたらテストプロセスが終わらない）
+			expect(elapsed).toBeLessThan(500);
+		});
+
+		test('withTimeout が成功時もハンドルを clear する (open handle leak 防止)', async () => {
+			const { withTimeout } = await import('@/utils/got.js');
+			// 即解決の promise + 長いタイムアウト → finally で clearTimeout
+			const result = await withTimeout(Promise.resolve('ok'), 60_000);
+			expect(result).toBe('ok');
+			// このテスト終了後 vitest が即座に exit すれば leak していない（暗黙確認）
+		});
+
+		test('破損 PDF はタイトル取得失敗で hostname にフォールバック (5層防衛 ④ パース失敗)', async () => {
+			// "%PDF-1.4" で始まるが本体が破損している = parse error 経由で fallback
+			const brokenPdf = Buffer.from('%PDF-1.4\nbroken garbage data\n%%EOF\n');
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-length', brokenPdf.length);
+				reply.header('content-type', 'application/pdf');
+				return reply.send(brokenPdf);
+			});
+			await app.listen({ port });
+
+			const summary = await summaly(host, { enablePdf: true });
+			expect(summary.title).toBe('localhost');
+		});
+	});
+
 	describe('DOM 後処理系プラグイン (phase3.2)', () => {
 		describe('dlsite', () => {
 			test('test() が www.dlsite.com にマッチ', () => {

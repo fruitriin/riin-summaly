@@ -5,13 +5,12 @@
 
 phase 番号は **着手順**（数値が小さいほど先）。同じ大番号内（例: 2.1 と 2.2）は並列着手可能。
 
-## 現在のフェーズ: phase5.1（次に着手可、phase6.1 は保留中）
+## 現在のフェーズ: 全コア計画完了（phase6.1 のみ保留中）
 
 ## バックログ
 
 | 優先度 | Phase | 計画ファイル | サイズ | 状態 |
 |---|---|---|:---:|---|
-| 5 | 5.1 | [docs/plans/phase5.1-pdf-support.md](docs/plans/phase5.1-pdf-support.md) — PDF 対応（オプトイン+ハング対策5層） | M〜L | 未着手 |
 | — | 6.1 | [docs/plans/phase6.1-plugin-twitter.md](docs/plans/phase6.1-plugin-twitter.md) — twitter プラグイン | S | 保留（運用判断待ち） |
 
 ### 並列実行マップ
@@ -25,9 +24,8 @@ phase2.2  完了
 phase3.1  完了
 phase3.2  完了
 phase4.1  完了
+phase5.1  完了
    ↓
-phase5.1  ← 次に着手可（useRange / sanitize-url 利用）
-           ↓
 phase6.1  ← 採用判断後（保留）
 ```
 
@@ -44,3 +42,4 @@ phase6.1  ← 採用判断後（保留）
 | 3.1 | [docs/plans/phase3.1-plugin-oembed.md](docs/plans/phase3.1-plugin-oembed.md) — oEmbed 系プラグイン（youtube / spotify） | 完了 (2026-05-03)、Progress: [.claude/Progresses/2026-05-03-phase3.1-plugin-oembed.md](.claude/Progresses/2026-05-03-phase3.1-plugin-oembed.md) |
 | 3.2 | [docs/plans/phase3.2-plugin-dom.md](docs/plans/phase3.2-plugin-dom.md) — DOM 後処理系プラグイン（dlsite / iwara / komiflo / nijie） | 完了 (2026-05-04)、Progress: [.claude/Progresses/2026-05-04-phase3.2-plugin-dom.md](.claude/Progresses/2026-05-04-phase3.2-plugin-dom.md) |
 | 4.1 | [docs/plans/phase4.1-fastify-in-memory-cache.md](docs/plans/phase4.1-fastify-in-memory-cache.md) — Fastify インメモリ LRU キャッシュ | 完了 (2026-05-04)、Progress: [.claude/Progresses/2026-05-04-phase4.1-fastify-in-memory-cache.md](.claude/Progresses/2026-05-04-phase4.1-fastify-in-memory-cache.md) |
+| 5.1 | [docs/plans/phase5.1-pdf-support.md](docs/plans/phase5.1-pdf-support.md) — PDF 対応（オプトイン+ハング対策5層） | 完了 (2026-05-04)、Progress: [.claude/Progresses/2026-05-04-phase5.1-pdf-support.md](.claude/Progresses/2026-05-04-phase5.1-pdf-support.md) |

@@ -1,6 +1,8 @@
 # Phase 5.1 — PDF レスポンス対応（オプトイン + ハング対策5層）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-04)**
+>
+> **実装メモ**: pdf-parse v2 の API は計画時 (v1) と異なる。`pdf-parse(buffer, { max: 1 })` は無く、代わりに `new PDFParse({ data }).getInfo()` を使用。`getInfo()` は document-level metadata のみ読むため「1 ページのみパース」より安全な実装になった。
 > 種別: 機能拡張 / 大型機能
 > サイズ: **M〜L**
 > 依存: [phase2.2](phase2.2-mei23-non-plugin.md)（`useRange`、`sanitize-url` の `data:` 許可）
@@ -104,30 +106,30 @@ mei23 が使っている base64 PNG（[worktrees/mei-summaly/src/general.ts:17](
 
 各ステップで `pnpm eslint && pnpm test` を通す。
 
-- [ ] **Step 1 — `pdf-parse` 依存追加**
+- [x] **Step 1 — `pdf-parse` 依存追加**
   - `package.json` の `dependencies` に `pdf-parse`（最新安定版）を追加
   - 利用箇所は通常の `import`（dynamic import は不要、`dependencies` なので必ず存在する）
   - インストール後の `pnpm install` が通ることを確認
-- [ ] **Step 2 — `enablePdf` オプション**
+- [x] **Step 2 — `enablePdf` オプション**
   - `SummalyOptions.enablePdf?: boolean` を追加
   - 環境変数 `SUMMALY_ENABLE_PDF=true` を読む（`process.env` 参照）
   - 統合: `enablePdf` または `SUMMALY_ENABLE_PDF=true` のいずれかが真なら PDF 機能を有効化
-- [ ] **Step 3 — `typeFilter` の動的化**
+- [x] **Step 3 — `typeFilter` の動的化**
   - [src/utils/got.ts](src/utils/got.ts) の `scpaping` で `enablePdf` 真時のみ `typeFilter` に `application/pdf` を追加
   - `enablePdf` 偽時は既存と完全互換（`text/html|application/xhtml+xml` のみ）
-- [ ] **Step 4 — PDF 分岐実装**
+- [x] **Step 4 — PDF 分岐実装**
   - `scpaping` 戻り値型に `pdf?: { title?: string }` を追加
   - `enablePdf` 真かつ `content-type: application/pdf` のとき:
     - `pdf-parse(rawBody, { max: 1 })` で 1 ページのみパース
     - `Promise.race([pdfParse(rawBody, { max: 1 }), timeout(5000)])` で 5 秒 timeout
     - timeout または例外時は `pdf: { title: undefined }` を返す（フォールバック）
-- [ ] **Step 5 — PDF アイコン定数**
+- [x] **Step 5 — PDF アイコン定数**
   - [src/utils/pdf-icon.ts](src/utils/pdf-icon.ts) を新設、`PDF_ICON_DATA_URL` を export
   - mei23 から base64 PNG を取り込み（または独自に作成、サイズが小さく `sanitize-url` の長さ上限内に収まること）
-- [ ] **Step 6 — `general.ts` の PDF 分岐**
+- [x] **Step 6 — `general.ts` の PDF 分岐**
   - [src/general.ts](src/general.ts) で `res.pdf` がある場合の専用結果を返す
   - `title: res.pdf.title ?? new URL(actualUrl).hostname`、`icon: PDF_ICON_DATA_URL`、`sitename: hostname`、`description: null`、`thumbnail: null`、`player: { url: null, width: null, height: null, allow: [] }`
-- [ ] **Step 7 — テスト**
+- [x] **Step 7 — テスト**
   - フィクスチャ用に小さな PDF を `test/pdfs/` に配置
   - ハング系テスト:
     - `enablePdf: false`（デフォルト）で PDF レスポンスが type filter リジェクトされる
@@ -135,7 +137,7 @@ mei23 が使っている base64 PNG（[worktrees/mei-summaly/src/general.ts:17](
     - `enablePdf: true` で 5 秒超かかる PDF（モックでパース関数を遅延）の timeout fallback が返る
     - `enablePdf: true` で正常 PDF からタイトルが取れる
     - `SUMMALY_ENABLE_PDF=true` 環境変数でも有効化できる
-- [ ] **Step 8 — README / CHANGELOG 更新**
+- [x] **Step 8 — README / CHANGELOG 更新**
   - 新オプション `enablePdf` の説明
   - 環境変数 `SUMMALY_ENABLE_PDF=true` の説明
   - 挙動制約（10 MiB / 5 秒 timeout / 1 ページのみ）を明記

@@ -56,6 +56,51 @@ phase2.2 で導入した「結果 URL の sanitize」「keep-alive デフォル�
 5. **5xx エラーキャッシュの罠を README に明記**: サーバ復旧後も TTL 切れまでエラーが返り続ける挙動。インメモリキャッシュは「再起動で消える」点が外部キャッシュと異なるため運用者向けに警告を書く
 6. **thundering herd は意図的に未対応**: 同時リクエストはそれぞれ origin に到達する。dedup の複雑さを避け、単純な LRU のみで第一版完結
 
+## PDF レスポンス対応のハング対策5層（phase5.1）
+
+`pdf-parse@2` で PDF からタイトル取得をオプトイン提供。ハング・メモリ膨張のリスクが高いため多段防衛を入れる。
+
+| 層 | 対策 | 実装ポイント |
+|---|---|---|
+| ① 受信前 | `contentLengthLimit` (デフォルト 10 MiB) | content-length ヘッダ + downloadProgress で超過を検出して `req.cancel()` |
+| ② 受信中 | `useRange` 併用で先頭領域だけ取得 | サーバが Range 未対応なら通常 GET にフォールバック |
+| ③ パース直前 | pdf-parse v2 の `getInfo()` のみ呼ぶ | 「1 ページのみパース」より安全（document-level metadata だけ読む、本文ページのテキスト解析は走らない）|
+| ④ パース時 | `withTimeout(getInfo(), 5000)` | `Promise.race` + finally で setTimeout を必ず clear（リーク防止）、エラー経路でも `parser.destroy()` を呼ぶ |
+| ⑤ ランタイム | `enablePdf: true` または `SUMMALY_ENABLE_PDF=true` | デフォルト無効。関数オプションが環境変数より優先 |
+
+### withTimeout のリーク防止パターン
+
+`Promise.race([promise, timeoutPromise])` は race の勝者が決まっても **負けた側が破棄されない** (Promise はキャンセル不可)。setTimeout を clear せずに置くと:
+
+- vitest が「open handle」警告を出す
+- Node プロセスが timer リファレンスで shutdown が遅れる
+
+正しいパターン:
+
+```ts
+export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message = 'timeout'): Promise<T> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error(message)), timeoutMs);
+    });
+    try {
+        return await Promise.race([promise, timeoutPromise]);
+    } finally {
+        if (timeoutHandle != null) clearTimeout(timeoutHandle);
+    }
+}
+```
+
+汎用的なヘルパとして export しておくとユニットテストも書きやすい（永遠に解決しない promise + 短い timeout で reject 確認、即解決 promise + 長い timeout で leak 防止確認）。
+
+### 動的 import のコスト
+
+`pdf-parse` (`pdfjs-dist` 約 30 MB) は `await import('pdf-parse')` で初回だけロード。コールドスタートではなく **最初の PDF リクエスト** に数十ミリ秒の追加レイテンシが乗ることを README に明記する。
+
+### Buffer / Uint8Array の互換性
+
+Node の `Buffer` は `Uint8Array` のサブクラスなので、`buffer instanceof Uint8Array` は常に true。`new Uint8Array(buffer)` 変換は dead code になる。`PDFParse({ data: buffer })` のような API には Buffer をそのまま渡せる。
+
 ## 関連
 
 - [object-assign-mutable-target.md](object-assign-mutable-target.md) — オプション扱いの落とし穴
