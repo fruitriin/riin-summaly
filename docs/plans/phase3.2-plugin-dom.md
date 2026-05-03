@@ -1,6 +1,6 @@
 # Phase 3.2 — DOM 後処理系プラグインの取り込み（dlsite / iwara / komiflo / nijie）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-04)**
 > 種別: 機能拡張 / プラグイン移植
 > サイズ: **M**
 > 依存: [phase2.1](phase2.1-plugin-infrastructure.md)（`getJson`、UA オーバーライド機構）、[phase2.2](phase2.2-mei23-non-plugin.md)（`sanitize-url`、`medias[]`）
@@ -123,33 +123,33 @@ mei23 の `decodeEntities` は `clip(decode(...))` の薄いラッパ。upstream
 
 各ステップで `pnpm eslint && pnpm test` を通す。プラグイン間に依存はないため、Step 1〜4 は worktree を分けて並列開発も可能。
 
-- [ ] **Step 1 — dlsite プラグイン**
+- [x] **Step 1 — dlsite プラグイン**
   - [src/plugins/dlsite.ts](src/plugins/dlsite.ts) を新設、`name = 'dlsite'`
   - 404 リトライロジック実装（`/announce/` ↔ `/work/` 入れ替え、無限ループ防止）
   - `sensitive` 自動判定（パス正規表現）
   - [src/plugins/index.ts](src/plugins/index.ts) に登録
   - フィクスチャテスト（200 と 404 の両方のレスポンスをモック）
-- [ ] **Step 2 — iwara プラグイン**
+- [x] **Step 2 — iwara プラグイン**
   - [src/plugins/iwara.ts](src/plugins/iwara.ts) を新設、`name = 'iwara'`
   - `scpaping → parseGeneral → 後処理` パターンで実装
   - description 補完（`.field-type-text-with-summary`）、thumbnail 補完（`#video-player[poster]`）、`//ecchi.` ホストで `sensitive`
   - `decodeEntities` は `html-entities.decode` 直呼び
   - [src/plugins/index.ts](src/plugins/index.ts) に登録
   - フィクスチャテスト
-- [ ] **Step 3 — komiflo プラグイン**
+- [x] **Step 3 — komiflo プラグイン**
   - [src/plugins/komiflo.ts](src/plugins/komiflo.ts) を新設、`name = 'komiflo'`
   - `parseGeneral` 結果の thumbnail が favicon/ogp_logo フォールバックの場合のみ `api.komiflo.com` を `getJson` で叩く
   - `346_mobile` variant 固定のリスクをコメントに明記
   - 例外は静かに握りつぶしてフォールバック
   - [src/plugins/index.ts](src/plugins/index.ts) に登録
   - フィクスチャテスト（API レスポンスをモック）
-- [ ] **Step 4 — nijie プラグイン**
+- [x] **Step 4 — nijie プラグイン**
   - [src/plugins/nijie.ts](src/plugins/nijie.ts) を新設、`name = 'nijie'`
   - JSON-LD `\r?\n` → `\\n` エスケープ後パース、`@type === 'ImageObject'` 抽出
   - `thumbnailUrl` を `summary.thumbnail` に書き戻し、`sensitive = true`
   - [src/plugins/index.ts](src/plugins/index.ts) に登録
   - フィクスチャテスト
-- [ ] **Step 5 — README / CHANGELOG 更新**
+- [x] **Step 5 — README / CHANGELOG 更新**
   - 「対応形式（組み込みプラグイン）」表に dlsite / iwara / komiflo / nijie を追加
   - mei23 由来である旨を記載
 

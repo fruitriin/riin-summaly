@@ -1366,4 +1366,228 @@ describe('local tests', () => {
 			});
 		});
 	});
+
+	describe('DOM 後処理系プラグイン (phase3.2)', () => {
+		describe('dlsite', () => {
+			test('test() が www.dlsite.com にマッチ', () => {
+				const dlsite = builtinPlugins.find(p => p.name === 'dlsite');
+				expect(dlsite).toBeDefined();
+				expect(dlsite!.test(new URL('https://www.dlsite.com/comic/work/=/product_id/RJ123.html'))).toBe(true);
+				expect(dlsite!.test(new URL('https://example.com/work/RJ123'))).toBe(false);
+			});
+
+			test('/announce/ が 404 のとき /work/ にスワップして再取得し成功する', async () => {
+				app = fastify();
+				let announceHits = 0;
+				let workHits = 0;
+				app.get('/maniax/announce/=/product_id/RJ999.html', (_req, reply) => {
+					announceHits++;
+					reply.header('content-type', 'text/html');
+					return reply.status(404).send('<html><head><title>404</title></head></html>');
+				});
+				app.get('/maniax/work/=/product_id/RJ999.html', (_req, reply) => {
+					workHits++;
+					const html = '<html><head><title>DLsite Work</title>' +
+						'<meta property="og:title" content="DLsite Work"></head><body></body></html>';
+					reply.header('content-length', Buffer.byteLength(html));
+					reply.header('content-type', 'text/html');
+					return reply.send(html);
+				});
+				await app.listen({ port });
+
+				// dlsite プラグインの test() に当たらない URL（localhost）なので、summarize を直接呼ぶ
+				const dlsite = await import('@/plugins/dlsite.js');
+				const summary = await dlsite.summarize(new URL(`${host}/maniax/announce/=/product_id/RJ999.html`));
+				expect(summary).not.toBeNull();
+				expect(summary!.title).toBe('DLsite Work');
+				expect(announceHits).toBe(1);
+				expect(workHits).toBe(1);
+				// /maniax/ は SAFE_PATH_PATTERN にマッチしないため sensitive
+				expect(summary!.sensitive).toBe(true);
+			});
+
+			test('セーフパス (/comic/) では sensitive にならない', async () => {
+				app = fastify();
+				app.get('/comic/work/RJ123.html', (_req, reply) => {
+					const html = '<html><head><title>X</title>' +
+						'<meta property="og:title" content="X"></head></html>';
+					reply.header('content-length', Buffer.byteLength(html));
+					reply.header('content-type', 'text/html');
+					return reply.send(html);
+				});
+				await app.listen({ port });
+
+				const dlsite = await import('@/plugins/dlsite.js');
+				const summary = await dlsite.summarize(new URL(`${host}/comic/work/RJ123.html`));
+				expect(summary).not.toBeNull();
+				// dlsite プラグインが sensitive=true を立てないこと（parseGeneral 由来の false はそのまま）
+				expect(summary!.sensitive).not.toBe(true);
+			});
+		});
+
+		describe('iwara enrichWithIwara (フィクスチャ)', () => {
+			test('description が無いとき .field-type-text-with-summary から補完', async () => {
+				const cheerio = await import('cheerio');
+				const { enrichWithIwara } = await import('@/plugins/iwara.js');
+				const $ = cheerio.load('<html><body><div class="field-type-text-with-summary">  This is the description.  </div></body></html>');
+				const summary = baseSummary({ description: null });
+				const result = enrichWithIwara(summary, $, new URL('https://www.iwara.tv/videos/abc'));
+				expect(result.description).toBe('This is the description.');
+			});
+
+			test('thumbnail が無いとき #video-player[poster] から補完（相対 URL を解決）', async () => {
+				const cheerio = await import('cheerio');
+				const { enrichWithIwara } = await import('@/plugins/iwara.js');
+				const $ = cheerio.load('<html><body><video id="video-player" poster="/img/thumb.jpg"></video></body></html>');
+				const summary = baseSummary({ thumbnail: null });
+				const result = enrichWithIwara(summary, $, new URL('https://www.iwara.tv/videos/abc'));
+				expect(result.thumbnail).toBe('https://www.iwara.tv/img/thumb.jpg');
+			});
+
+			test('ecchi.iwara.tv ホストで sensitive', async () => {
+				const cheerio = await import('cheerio');
+				const { enrichWithIwara } = await import('@/plugins/iwara.js');
+				const $ = cheerio.load('<html></html>');
+				const summary = baseSummary();
+				const result = enrichWithIwara(summary, $, new URL('https://ecchi.iwara.tv/videos/abc'));
+				expect(result.sensitive).toBe(true);
+			});
+
+			test('description が title と一致する場合は採用しない', async () => {
+				const cheerio = await import('cheerio');
+				const { enrichWithIwara } = await import('@/plugins/iwara.js');
+				const $ = cheerio.load('<html><body><div class="field-type-text-with-summary">SAME</div></body></html>');
+				const summary = baseSummary({ description: null, title: 'SAME' });
+				const result = enrichWithIwara(summary, $, new URL('https://www.iwara.tv/videos/abc'));
+				expect(result.description).toBeNull();
+			});
+		});
+
+		describe('komiflo extractCoverFilename (フィクスチャ)', () => {
+			test('test() が komiflo.com にマッチ', () => {
+				const komiflo = builtinPlugins.find(p => p.name === 'komiflo');
+				expect(komiflo!.test(new URL('https://komiflo.com/comics/12345'))).toBe(true);
+				expect(komiflo!.test(new URL('https://example.com/comics/12345'))).toBe(false);
+			});
+
+			test('正常な API レスポンスから filename を抽出', async () => {
+				const { extractCoverFilename } = await import('@/plugins/komiflo.js');
+				const filename = extractCoverFilename({
+					named_imgs: {
+						cover: {
+							filename: 'cover.jpg',
+							variants: ['original', '346_mobile', '720'],
+						},
+					},
+				});
+				expect(filename).toBe('cover.jpg');
+			});
+
+			test('346_mobile variant が無い場合 null', async () => {
+				const { extractCoverFilename } = await import('@/plugins/komiflo.js');
+				const filename = extractCoverFilename({
+					named_imgs: {
+						cover: { filename: 'cover.jpg', variants: ['original', '720'] },
+					},
+				});
+				expect(filename).toBeNull();
+			});
+
+			test('cover が無い / null / オブジェクトでない入力で null', async () => {
+				const { extractCoverFilename } = await import('@/plugins/komiflo.js');
+				expect(extractCoverFilename(null)).toBeNull();
+				expect(extractCoverFilename({})).toBeNull();
+				expect(extractCoverFilename({ named_imgs: {} })).toBeNull();
+				expect(extractCoverFilename('not an object')).toBeNull();
+			});
+		});
+
+		describe('nijie enrichWithNijie (フィクスチャ)', () => {
+			test('JSON-LD ImageObject から thumbnail / description を補完して sensitive', async () => {
+				const cheerio = await import('cheerio');
+				const { enrichWithNijie } = await import('@/plugins/nijie.js');
+				const html = '<html><head><script type="application/ld+json">' +
+					JSON.stringify({
+						'@type': 'ImageObject',
+						thumbnailUrl: 'https://nijie.info/img/abc.jpg',
+						description: 'A nijie image',
+					}) +
+					'</script></head></html>';
+				const $ = cheerio.load(html);
+				const summary = baseSummary({ thumbnail: null, description: null });
+				const result = enrichWithNijie(summary, $, new URL('https://nijie.info/view.php?id=123'));
+				expect(result.thumbnail).toBe('https://nijie.info/img/abc.jpg');
+				expect(result.description).toBe('A nijie image');
+				expect(result.sensitive).toBe(true);
+			});
+
+			test('JSON-LD に生改行が含まれていてもパースして採用', async () => {
+				const cheerio = await import('cheerio');
+				const { enrichWithNijie } = await import('@/plugins/nijie.js');
+				// description に生改行を含む JSON-LD（mei23 で観測されたパターン）
+				const rawJson = '{"@type":"ImageObject","thumbnailUrl":"https://nijie.info/img/x.jpg","description":"line1\nline2"}';
+				const html = `<html><head><script type="application/ld+json">${rawJson}</script></head></html>`;
+				const $ = cheerio.load(html);
+				const summary = baseSummary({ thumbnail: null });
+				const result = enrichWithNijie(summary, $, new URL('https://nijie.info/view.php?id=123'));
+				expect(result.thumbnail).toBe('https://nijie.info/img/x.jpg');
+			});
+
+			test('JSON-LD に \\r や \\t などの制御文字が含まれてもパース可能', async () => {
+				const cheerio = await import('cheerio');
+				const { enrichWithNijie } = await import('@/plugins/nijie.js');
+				// CR (\r), HT (\t) を含む JSON
+				const rawJson = '{"@type":"ImageObject","thumbnailUrl":"https://nijie.info/img/y.jpg","description":"a\rb\tc"}';
+				const html = `<html><head><script type="application/ld+json">${rawJson}</script></head></html>`;
+				const $ = cheerio.load(html);
+				const summary = baseSummary({ thumbnail: null });
+				const result = enrichWithNijie(summary, $, new URL('https://nijie.info/view.php?id=123'));
+				expect(result.thumbnail).toBe('https://nijie.info/img/y.jpg');
+			});
+
+			test('view.php 以外のパスでは何もしない', async () => {
+				const cheerio = await import('cheerio');
+				const { enrichWithNijie } = await import('@/plugins/nijie.js');
+				const html = '<html><head><script type="application/ld+json">' +
+					JSON.stringify({ '@type': 'ImageObject', thumbnailUrl: 'https://x.jpg' }) +
+					'</script></head></html>';
+				const $ = cheerio.load(html);
+				const summary = baseSummary({ thumbnail: null });
+				const result = enrichWithNijie(summary, $, new URL('https://nijie.info/about.php'));
+				expect(result.thumbnail).toBeNull();
+				expect(result.sensitive).toBeUndefined();
+			});
+		});
+	});
 });
+
+/** テスト用の Summary ベース */
+function baseSummary(overrides: Partial<{
+	title: string | null;
+	icon: string | null;
+	description: string | null;
+	thumbnail: string | null;
+	sitename: string | null;
+}> = {}): {
+	title: string | null;
+	icon: string | null;
+	description: string | null;
+	thumbnail: string | null;
+	sitename: string | null;
+	player: { url: string | null; width: number | null; height: number | null; allow: string[] };
+	activityPub: string | null;
+	fediverseCreator: string | null;
+	sensitive?: boolean;
+} {
+	return {
+		title: 'Title',
+		icon: null,
+		description: 'Original description',
+		thumbnail: 'https://example.com/orig-thumb.jpg',
+		sitename: null,
+		player: { url: null, width: null, height: null, allow: [] },
+		activityPub: null,
+		fediverseCreator: null,
+		...overrides,
+	};
+}

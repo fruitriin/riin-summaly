@@ -118,6 +118,18 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 **`PLAYER_ALLOW_OEMBED` の共有**:
 複数プラグインで参照する safelist 配列は `readonly string[]` + `Object.freeze()` で mutate 防止。`Summary.player.allow` への代入時はスプレッド (`[...PLAYER_ALLOW_OEMBED]`) でコピーして参照漏洩を防ぐ。
 
+## DOM 後処理プラグイン（phase3.2）
+
+`scpaping → parseGeneral → 後処理` を各プラグインが自前で呼び、`postProcess` フックは追加しない方針。bluesky と同じパターン。後処理ロジックは `enrichWithXxx(summary, $, landingUrl)` ヘルパとして export し、cheerio をテストで直接ロードしてフィクスチャテストする。
+
+### 落とし穴
+
+1. **`Summary` には `url` フィールドが無い**: `Summary` は `summarize` の戻り値型で、`url` は `summaly()` 出口で `SummalyResult` に追加される。プラグイン内で「結果 URL のパスで sensitive 判定」したい場合は `general(url)` に渡した `url`（または retry で実際に成功した URL）を呼出側で別途保持する必要がある（dlsite で `tryFetch` が `{summary, usedUrl}` を返す形にした）。
+2. **`cheerio.text()` は既にエンティティをデコード済み**: その上に `html-entities.decode` を重ねると `&amp;lt;` のような二重エンコードされた値が `<lt>` まで化けるリスクがある。`.text()` の戻り値には `decode` を掛けず `trim()` のみに留める（属性値 `.attr('content')` には decode が必要）。
+3. **JSON-LD の制御文字エスケープ**: `\n` だけでなく `\r` `\t` 等 U+0000-U+001F は JSON 中で生で出ると `JSON.parse` が失敗する。一括して `replace(/[\x00-\x1F]/g, c => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'))` で Unicode エスケープに置換する（`no-control-regex` lint は意図的なので disable コメントで抑制）。
+4. **404 リトライの無限ループ防止**: `tryFetch(url, opts, alreadySwapped: boolean)` のように再帰の深さをフラグで制限。dlsite の `/announce/` ↔ `/work/` が好例。
+5. **API 失敗時の握りつぶし**: ライブラリ責務として `console.log` は出さず、try-catch で fallback パスに静かに戻す。komiflo の `api.komiflo.com` 失敗時の挙動。
+
 ## 関連
 
 - [object-assign-mutable-target.md](object-assign-mutable-target.md) — オプション扱いの落とし穴
