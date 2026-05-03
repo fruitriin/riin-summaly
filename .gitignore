@@ -6,6 +6,7 @@ npm-debug.log
 .claude/commands/*.exp.md
 .claude/.turn-count
 .claude/logs/
+.claude/scheduled_tasks.lock
 CLAUDE.local.md
 CLAUDE.repo.md
 # --- /ADDF Framework ---

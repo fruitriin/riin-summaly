@@ -54,6 +54,14 @@ npm run serve
 | **operationTimeout**      | *number*               | Set the timeout from the start to the end of the request.                                                                                                                           | `60000`                |
 | **contentLengthLimit**    | *number*               | If set to true, an error will occur if the content-length value returned from the other server is larger than this parameter (or if the received body size exceeds this parameter). | `10485760`             |
 | **contentLengthRequired** | *boolean*              | If set to true, it will be an error if the other server does not return content-length.                                                                                             | `false`                |
+| **cacheMaxAge**           | *number*               | Fastify mode only. `Cache-Control: public, max-age=<n>` (seconds) for successful responses. Set to `0` to emit `Cache-Control: no-store`.                                           | `604800` (1 week)      |
+| **cacheErrorMaxAge**      | *number*               | Fastify mode only. `Cache-Control: public, max-age=<n>` (seconds) for error responses. Set to `0` to emit `Cache-Control: no-store`.                                                | `3600` (1 hour)        |
+
+#### Server caching
+
+When summaly is used as a Fastify plugin (`fastify.register(Summaly, opts)`), every response includes a `Cache-Control` header so that upstream caches (nginx `proxy_cache`, Cloudflare, etc.) can serve repeated lookups without round-tripping to the origin site. Successful responses default to `public, max-age=604800` (1 week) and error responses to `public, max-age=3600` (1 hour). Caching errors briefly avoids amplifying repeated requests for broken URLs (related to the [Mastodon link-preview DDoS issue](https://github.com/mastodon/mastodon/issues/23662)).
+
+Override the durations with `cacheMaxAge` / `cacheErrorMaxAge`, or set them to `0` to opt out (`Cache-Control: no-store`). Note that some HTTP clients (e.g. Got, node-fetch) do not honor `Cache-Control`; if you need application-level caching, run summaly behind nginx / a CDN, or wait for a future in-process LRU cache option.
 
 #### Plugin
 

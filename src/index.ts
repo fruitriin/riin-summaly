@@ -64,7 +64,31 @@ export type SummalyOptions = {
 	 * If set to true, it will be an error if the other server does not return content-length.
 	 */
 	contentLengthRequired?: boolean;
+
+	/**
+	 * Cache-Control max-age (seconds) for successful responses in Fastify mode.
+	 * Defaults to 604800 (1 week). Set to 0 to emit `Cache-Control: no-store`.
+	 * Must be a non-negative finite number; negative values throw at register time.
+	 */
+	cacheMaxAge?: number;
+
+	/**
+	 * Cache-Control max-age (seconds) for error responses in Fastify mode.
+	 * Defaults to 3600 (1 hour). Set to 0 to emit `Cache-Control: no-store`.
+	 * Must be a non-negative finite number; negative values throw at register time.
+	 */
+	cacheErrorMaxAge?: number;
 };
+
+const DEFAULT_CACHE_MAX_AGE = 604800;
+const DEFAULT_CACHE_ERROR_MAX_AGE = 3600;
+
+function cacheControlHeader(maxAge: number): string {
+	if (!Number.isFinite(maxAge) || maxAge < 0) {
+		throw new RangeError(`cacheMaxAge / cacheErrorMaxAge must be a non-negative finite number, got ${maxAge}`);
+	}
+	return maxAge === 0 ? 'no-store' : `public, max-age=${maxAge}`;
+}
 
 export const summalyDefaultOptions = {
 	lang: null,
@@ -146,6 +170,16 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 
 // eslint-disable-next-line import/no-default-export
 export default function (fastify: FastifyInstance, options: SummalyOptions, done: (err?: Error) => void) {
+	let successCacheHeader: string;
+	let errorCacheHeader: string;
+	try {
+		successCacheHeader = cacheControlHeader(options.cacheMaxAge ?? DEFAULT_CACHE_MAX_AGE);
+		errorCacheHeader = cacheControlHeader(options.cacheErrorMaxAge ?? DEFAULT_CACHE_ERROR_MAX_AGE);
+	} catch (e) {
+		done(e as Error);
+		return;
+	}
+
 	fastify.get<{
 		Querystring: {
 			url?: string;
@@ -155,6 +189,7 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		const url = req.query.url as string;
 		// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
 		if (url == null) {
+			reply.header('Cache-Control', errorCacheHeader);
 			return reply.status(400).send({
 				error: 'url is required',
 			});
@@ -167,8 +202,10 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 				...options,
 			});
 
+			reply.header('Cache-Control', successCacheHeader);
 			return summary;
 		} catch (e) {
+			reply.header('Cache-Control', errorCacheHeader);
 			return reply.status(500).send({
 				error: e,
 			});

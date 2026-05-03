@@ -13,6 +13,7 @@ export default [ // eslint-disable-line import/no-default-export
 			'vitest.config.ts',
 			'tsdown.config.ts',
 			'test',
+			'worktrees',
 		],
 	},
 	{

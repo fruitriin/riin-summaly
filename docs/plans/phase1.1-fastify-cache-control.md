@@ -1,11 +1,27 @@
 # Phase 1.1 — Fastify Cache-Control の即修正（退化修正）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-03)**
 > 種別: バグ修正 / 退化修正
 > サイズ: **XS**
 > 関連 issue: [misskey-dev/summaly#27](https://github.com/misskey-dev/summaly/issues/27)
 > 依存: なし（最優先で着手可能）
 > 後続: [phase4.1-fastify-in-memory-cache.md](phase4.1-fastify-in-memory-cache.md)（インメモリ LRU 拡張）
+
+## 完了サマリ (2026-05-03)
+
+- `SummalyOptions` に `cacheMaxAge`（デフォルト 604800）と `cacheErrorMaxAge`（デフォルト 3600）を追加
+- Fastify ハンドラの成功・400・500 レスポンスに `Cache-Control` を付与
+- `cacheMaxAge: 0` または `cacheErrorMaxAge: 0` で `Cache-Control: no-store` を出す
+- 負数指定は `RangeError` で `done(err)` 経由で reject（plugin 初期化エラー）
+- ヘルパ関数 `cacheControlHeader(maxAge)` を抽出
+- テスト 9 件追加（成功/400/500/上書き/0/負数バリデーション）
+- README に「Server caching」節を追加
+
+副次的修正:
+- ESLint 設定の `ignores` に `worktrees` を追加（Stage 1 ゲートを通すため）
+
+派生フェーズ:
+- 実装中に `summaly()` の `Object.assign(summalyDefaultOptions, options)` mutation バグを発見 → [phase1.2-options-mutation-fix.md](phase1.2-options-mutation-fix.md) として独立計画化（バグ分離ルールに従う）
 
 ## 目的・背景
 

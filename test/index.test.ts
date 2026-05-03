@@ -15,7 +15,7 @@ import { Agent as httpAgent } from 'node:http';
 import { Agent as httpsAgent } from 'node:https';
 import { expect, test, describe, beforeEach, afterEach } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
-import { summaly } from '@/index.js';
+import summalyPlugin, { summaly } from '@/index.js';
 import { StatusError } from '@/utils/status-error.js';
 
 const _filename = fileURLToPath(import.meta.url);
@@ -714,6 +714,132 @@ describe('local tests', () => {
 			await app.listen({ port });
 
 			await expect(summaly(host, { contentLengthLimit: 16 })).rejects.toThrow(/maxSize exceeded \(\d+ > 16\) on response/);
+		});
+	});
+
+	describe('Fastify plugin: Cache-Control', () => {
+		// summaly plugin (default export) を別の Fastify インスタンスに register し、
+		// 同じテストポートで origin と plugin を共存させる。
+		// origin 用の app は port、plugin 用の app は port+1 で起動する
+		// — origin がローカルなら summaly は私的 IP 拒否を入れているため、
+		//   `SUMMALY_ALLOW_PRIVATE_IP=true` の beforeEach 設定をそのまま流用できる
+		const proxyPort = port + 1;
+		let proxyApp: FastifyInstance | null = null;
+
+		afterEach(async () => {
+			if (proxyApp != null) {
+				await proxyApp.close();
+				proxyApp = null;
+			}
+		});
+
+		async function setupOriginAndProxy(pluginOptions: Partial<SummalyOptions> = {}) {
+			app = fastify();
+			app.get('/', (request, reply) => {
+				const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+				reply.header('content-length', content.length);
+				reply.header('content-type', 'text/html');
+				return reply.send(content);
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			// summalyDefaultOptions が mutate される既知の課題（別 phase で扱う）への
+			// テスト独立性確保のため contentLengthLimit を明示的に渡す
+			await proxyApp.register(summalyPlugin, { contentLengthLimit: 10 * 1024 * 1024, ...pluginOptions });
+			await proxyApp.listen({ port: proxyPort });
+		}
+
+		test('成功レスポンスにデフォルト Cache-Control が付くこと（max-age=604800）', async () => {
+			await setupOriginAndProxy();
+			const res = await proxyApp!.inject({
+				method: 'GET',
+				url: '/',
+				query: { url: host },
+			});
+			expect(res.statusCode).toBe(200);
+			expect(res.headers['cache-control']).toBe('public, max-age=604800');
+		});
+
+		test('400 エラー（url 未指定）に Cache-Control が付くこと（デフォルト max-age=3600）', async () => {
+			await setupOriginAndProxy();
+			const res = await proxyApp!.inject({
+				method: 'GET',
+				url: '/',
+			});
+			expect(res.statusCode).toBe(400);
+			expect(res.headers['cache-control']).toBe('public, max-age=3600');
+		});
+
+		test('500 エラー（origin 失敗）に Cache-Control が付くこと（デフォルト max-age=3600）', async () => {
+			// このテストは origin を立てない（接続不能ポートに飛ばして summaly() を失敗させる）。
+			// グローバル afterEach の `app.close()` は `app != null` でガードされているため
+			// `app` が null のままでも問題ない。proxyApp のみ独自 afterEach で close する。
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, { contentLengthLimit: 10 * 1024 * 1024 });
+			await proxyApp.listen({ port: proxyPort });
+
+			const res = await proxyApp.inject({
+				method: 'GET',
+				url: '/',
+				query: { url: `http://localhost:${port + 99}/nonexistent` },
+			});
+			expect(res.statusCode).toBe(500);
+			expect(res.headers['cache-control']).toBe('public, max-age=3600');
+		});
+
+		test('cacheMaxAge オプションが反映されること', async () => {
+			await setupOriginAndProxy({ cacheMaxAge: 60 });
+			const res = await proxyApp!.inject({
+				method: 'GET',
+				url: '/',
+				query: { url: host },
+			});
+			expect(res.statusCode).toBe(200);
+			expect(res.headers['cache-control']).toBe('public, max-age=60');
+		});
+
+		test('cacheErrorMaxAge オプションが反映されること', async () => {
+			await setupOriginAndProxy({ cacheErrorMaxAge: 30 });
+			const res = await proxyApp!.inject({
+				method: 'GET',
+				url: '/',
+			});
+			expect(res.statusCode).toBe(400);
+			expect(res.headers['cache-control']).toBe('public, max-age=30');
+		});
+
+		test('cacheMaxAge: 0 で no-store が出ること', async () => {
+			await setupOriginAndProxy({ cacheMaxAge: 0 });
+			const res = await proxyApp!.inject({
+				method: 'GET',
+				url: '/',
+				query: { url: host },
+			});
+			expect(res.statusCode).toBe(200);
+			expect(res.headers['cache-control']).toBe('no-store');
+		});
+
+		test('cacheErrorMaxAge: 0 で no-store が出ること', async () => {
+			await setupOriginAndProxy({ cacheErrorMaxAge: 0 });
+			const res = await proxyApp!.inject({
+				method: 'GET',
+				url: '/',
+			});
+			expect(res.statusCode).toBe(400);
+			expect(res.headers['cache-control']).toBe('no-store');
+		});
+
+		test('負数の cacheMaxAge は初期化時に RangeError を投げること', async () => {
+			proxyApp = fastify();
+			proxyApp.register(summalyPlugin, { cacheMaxAge: -1 });
+			await expect(proxyApp.ready()).rejects.toThrow(RangeError);
+		});
+
+		test('負数の cacheErrorMaxAge は初期化時に RangeError を投げること', async () => {
+			proxyApp = fastify();
+			proxyApp.register(summalyPlugin, { cacheErrorMaxAge: -1 });
+			await expect(proxyApp.ready()).rejects.toThrow(RangeError);
 		});
 	});
 
