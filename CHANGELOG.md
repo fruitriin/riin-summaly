@@ -17,6 +17,11 @@
   * `SUMMALY_FAMILY=4` / `=6` で IP family を強制可能
   * 文字コード判定を `chardet` → `jschardet` + `encoding-japanese` に置き換え（[issue #39](https://github.com/misskey-dev/summaly/issues/39): ISO-2022-JP の文字化けを修正）
 * `docs/deploy-examples/` に nginx / systemd / 設定 JSON の参考例を追加
+* oEmbed 系プラグインを追加（youtube / spotify）:
+  * `youtube`: `*.youtube.com/{watch,v,playlist,shorts}` および `youtu.be/<id>` をハンドル。`https://www.youtube.com/oembed` を 1 リクエストで叩く高速化パス
+  * `spotify`: `open.spotify.com` をハンドル。`https://open.spotify.com/oembed` 経由
+  * 既存の汎用 `general()` 経由（HTML 取得 → oEmbed フォールバック）に比べてリクエスト数が削減される
+  * **挙動変更**: oEmbed には description フィールドが無いため、上記サイトでは `description: null` になります（従来は OG メタの description を返していました）
 
 5.3.0 / 2026/05/02
 ------------------

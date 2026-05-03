@@ -69,35 +69,17 @@ afterAll(() => {
 });
 
 describe('network tests', () => {
-	skippableTest('Stage Bye Stage', async () => {
-		// If this test fails, you must rewrite the result data and the example in README.md.
+	skippableTest('Stage Bye Stage (YouTube oEmbed plugin)', async () => {
+		// phase3.1 で youtube プラグインを oEmbed 直叩きに置き換えた。
+		// 本テストは実際の YouTube oEmbed エンドポイントを叩くため、
+		// 構造・タイトル等が合致することのみ確認する（HTML 構造変化に強い形に変更）。
 		const summary = await summaly('https://www.youtube.com/watch?v=NMIEAhH_fTU');
-		expect(summary).toEqual(
-			{
-				'title': '【アイドルマスター】「Stage Bye Stage」(歌：島村卯月、渋谷凛、本田未央)',
-				'icon': 'https://www.youtube.com/s/desktop/78bc1359/img/logos/favicon.ico',
-				'description': 'Website▶https://columbia.jp/idolmaster/Playlist▶https://www.youtube.com/playlist?list=PL83A2998CF3BBC86D2018年7月18日発売予定THE IDOLM@STER CINDERELLA GIRLS CG STAR...',
-				'thumbnail': 'https://i.ytimg.com/vi/NMIEAhH_fTU/maxresdefault.jpg',
-				'player': {
-					'url': 'https://www.youtube.com/embed/NMIEAhH_fTU?feature=oembed',
-					'width': 200,
-					'height': 113,
-					'allow': [
-						'autoplay',
-						'clipboard-write',
-						'encrypted-media',
-						'picture-in-picture',
-						'web-share',
-						'fullscreen',
-					],
-				},
-				'sitename': 'YouTube',
-				'sensitive': false,
-				'activityPub': null,
-				'fediverseCreator': null,
-				'url': 'https://www.youtube.com/watch?v=NMIEAhH_fTU',
-			},
-		);
+		expect(summary.sitename).toBe('YouTube');
+		expect(summary.icon).toBe('https://www.youtube.com/favicon.ico');
+		expect(summary.title).toBeDefined();
+		expect(summary.player.url).toMatch(/^https:\/\/www\.youtube\.com\/embed\/NMIEAhH_fTU/);
+		expect(summary.player.allow).toContain('fullscreen');
+		expect(summary.url).toBe('https://www.youtube.com/watch?v=NMIEAhH_fTU');
 	});
 
 	test('Should block localhost by default', async () => {
@@ -1057,6 +1039,134 @@ describe('local tests', () => {
 				// SSRF 拡大を避けるため一般的な短縮 URL は除外されていること
 				expect(KNOWN_SHORT_HOSTS.has('bit.ly')).toBe(false);
 				expect(KNOWN_SHORT_HOSTS.has('t.co')).toBe(false);
+			});
+		});
+
+		describe('oEmbed 系プラグイン (phase3.1)', () => {
+			test('youtube プラグインが www / m / 短縮 URL に正しくマッチする', () => {
+				const youtube = builtinPlugins.find(p => p.name === 'youtube');
+				expect(youtube).toBeDefined();
+				const t = (s: string) => youtube!.test(new URL(s));
+
+				expect(t('https://www.youtube.com/watch?v=abc')).toBe(true);
+				expect(t('https://m.youtube.com/watch?v=abc')).toBe(true);
+				expect(t('https://youtube.com/watch?v=abc')).toBe(true);
+				expect(t('https://www.youtube.com/playlist?list=PLxxx')).toBe(true);
+				expect(t('https://www.youtube.com/shorts/abc')).toBe(true);
+				expect(t('https://youtu.be/abc')).toBe(true);
+
+				// マッチしないべき URL
+				expect(t('https://example.com/watch?v=abc')).toBe(false);
+				expect(t('https://www.youtube.com/about')).toBe(false);
+				expect(t('https://www.youtube.com/')).toBe(false);
+			});
+
+			test('spotify プラグインが open.spotify.com にマッチする', () => {
+				const spotify = builtinPlugins.find(p => p.name === 'spotify');
+				expect(spotify).toBeDefined();
+				const t = (s: string) => spotify!.test(new URL(s));
+
+				expect(t('https://open.spotify.com/track/abc')).toBe(true);
+				expect(t('https://open.spotify.com/playlist/abc')).toBe(true);
+
+				// spotify.link は branchio-deeplinks プラグインが扱う
+				expect(t('https://spotify.link/abc')).toBe(false);
+				expect(t('https://example.com/track/abc')).toBe(false);
+			});
+
+			test('PLAYER_ALLOW_OEMBED が要求された permission を含む', async () => {
+				const { PLAYER_ALLOW_OEMBED } = await import('@/utils/player-allow.js');
+				expect(PLAYER_ALLOW_OEMBED).toContain('autoplay');
+				expect(PLAYER_ALLOW_OEMBED).toContain('clipboard-write');
+				expect(PLAYER_ALLOW_OEMBED).toContain('encrypted-media');
+				expect(PLAYER_ALLOW_OEMBED).toContain('picture-in-picture');
+				expect(PLAYER_ALLOW_OEMBED).toContain('web-share');
+				expect(PLAYER_ALLOW_OEMBED).toContain('fullscreen');
+			});
+
+			describe('youtube buildSummaryFromOEmbed (フィクスチャ)', () => {
+				test('正常な oEmbed レスポンスから Summary を組み立てる', async () => {
+					const { buildSummaryFromOEmbed } = await import('@/plugins/youtube.js');
+					const fixture = {
+						type: 'video',
+						title: 'Test Video',
+						thumbnail_url: 'https://i.ytimg.com/vi/abc/default.jpg',
+						width: 200,
+						height: 113,
+						html: '<iframe width="200" height="113" src="https://www.youtube.com/embed/abc?feature=oembed" frameborder="0" allow="autoplay; clipboard-write" allowfullscreen></iframe>',
+					};
+					const summary = buildSummaryFromOEmbed(fixture);
+					expect(summary).not.toBeNull();
+					expect(summary!.title).toBe('Test Video');
+					expect(summary!.icon).toBe('https://www.youtube.com/favicon.ico');
+					expect(summary!.description).toBeNull();
+					expect(summary!.thumbnail).toBe('https://i.ytimg.com/vi/abc/default.jpg');
+					expect(summary!.player.url).toBe('https://www.youtube.com/embed/abc?feature=oembed');
+					expect(summary!.player.width).toBe(200);
+					expect(summary!.player.height).toBe(113);
+					expect(summary!.player.allow).toContain('fullscreen');
+					expect(summary!.sitename).toBe('YouTube');
+				});
+
+				test('type が video でないとき null を返す', async () => {
+					const { buildSummaryFromOEmbed } = await import('@/plugins/youtube.js');
+					expect(buildSummaryFromOEmbed({ type: 'rich', html: '<iframe src="https://x"></iframe>' })).toBeNull();
+				});
+
+				test('iframe src が http: のとき null を返す（https 強制）', async () => {
+					const { buildSummaryFromOEmbed } = await import('@/plugins/youtube.js');
+					const fixture = { type: 'video', html: '<iframe src="http://www.youtube.com/embed/abc"></iframe>' };
+					expect(buildSummaryFromOEmbed(fixture)).toBeNull();
+				});
+
+				test('iframe src が javascript: 偽装でも parse 経由で弾かれる', async () => {
+					const { buildSummaryFromOEmbed } = await import('@/plugins/youtube.js');
+					const fixture = { type: 'video', html: '<iframe src="javascript:alert(1)"></iframe>' };
+					expect(buildSummaryFromOEmbed(fixture)).toBeNull();
+				});
+
+				test('iframe が複数 / ない場合は null', async () => {
+					const { buildSummaryFromOEmbed } = await import('@/plugins/youtube.js');
+					expect(buildSummaryFromOEmbed({ type: 'video', html: '<div>no iframe</div>' })).toBeNull();
+					expect(buildSummaryFromOEmbed({ type: 'video', html: '<iframe src="https://a"></iframe><iframe src="https://b"></iframe>' })).toBeNull();
+				});
+
+				test('オブジェクトでない入力 / null は null', async () => {
+					const { buildSummaryFromOEmbed } = await import('@/plugins/youtube.js');
+					expect(buildSummaryFromOEmbed(null)).toBeNull();
+					expect(buildSummaryFromOEmbed('not an object')).toBeNull();
+					expect(buildSummaryFromOEmbed(42)).toBeNull();
+				});
+			});
+
+			describe('spotify buildSummaryFromOEmbed (フィクスチャ)', () => {
+				test('正常な oEmbed レスポンスから Summary を組み立てる', async () => {
+					const { buildSummaryFromOEmbed } = await import('@/plugins/spotify.js');
+					const fixture = {
+						title: 'Test Track',
+						thumbnail_url: 'https://i.scdn.co/image/abc',
+						provider_name: 'Spotify',
+						width: 456,
+						height: 152,
+						html: '<iframe src="https://open.spotify.com/embed/track/abc" width="100%" height="152" frameborder="0" allowtransparency="true" allow="encrypted-media"></iframe>',
+					};
+					const summary = buildSummaryFromOEmbed(fixture);
+					expect(summary).not.toBeNull();
+					expect(summary!.title).toBe('Test Track');
+					expect(summary!.icon).toBe('https://open.spotify.com/favicon.ico');
+					expect(summary!.thumbnail).toBe('https://i.scdn.co/image/abc');
+					expect(summary!.player.url).toBe('https://open.spotify.com/embed/track/abc');
+					// width="100%" は数値変換で NaN → null に正規化される
+					expect(summary!.player.width).toBeNull();
+					expect(summary!.player.height).toBe(152);
+					expect(summary!.sitename).toBe('Spotify');
+				});
+
+				test('html が無い / 空の場合 null', async () => {
+					const { buildSummaryFromOEmbed } = await import('@/plugins/spotify.js');
+					expect(buildSummaryFromOEmbed({})).toBeNull();
+					expect(buildSummaryFromOEmbed({ html: '' })).toBeNull();
+				});
 			});
 		});
 	});

@@ -86,6 +86,38 @@ if (shouldResolve) {
 - **HEAD 解決失敗は許容**: try-catch で original URL にフォールバック。短縮 URL がデッドリンクでも一般経路として動作する
 - **解決後の URL でプラグインマッチング**: `youtu.be/<id>` → `youtube.com/watch?v=<id>` の dispatch が Fastify モードでも自然に動く
 
+## oEmbed プラグインのテスト容易化（phase3.1）
+
+YouTube / Spotify のような oEmbed 直叩きプラグインは「ネットワーク呼出 → JSON パース → Summary 組立」の 3 段で、ネットワーク呼出を mock しないとローカルテストが書けない。
+
+**解決パターン**: `summarize()` を「ネットワーク呼出」と「JSON → Summary 組立」に分け、後者を `buildSummaryFromOEmbed(oEmbed: unknown): Summary | null` として export する。
+
+```ts
+export function buildSummaryFromOEmbed(oEmbed: unknown): Summary | null {
+    if (typeof oEmbed !== 'object' || oEmbed === null) return null;
+    const o = oEmbed as Record<string, unknown>;
+    // ナローイングしてフィールドを検証
+    if (o.type !== 'video' || typeof o.html !== 'string') return null;
+    // ...iframe 抽出 + Summary 組立...
+}
+
+export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
+    const oEmbed = await getJson(buildOEmbedUrl(url), undefined, opts);
+    return buildSummaryFromOEmbed(oEmbed);
+}
+```
+
+利点:
+- フィクスチャテスト（モック oEmbed JSON を関数に直接渡す）が `vi.mock` 不要で書ける
+- 異常系（type 違い・iframe 偽装 URL・null 入力等）を網羅的にユニットテストできる
+- `as any` キャスト不要で `unknown` ナローイングのみで型安全
+
+**iframe src の URL parse 検証**:
+`startsWith('https://')` ではなく `new URL(src).protocol !== 'https:'` を try-catch で使う。`https:evil.com` のような偽装を弾けるため防御深度が増す。`general.ts` の `getOEmbedPlayer` と同じパターン。
+
+**`PLAYER_ALLOW_OEMBED` の共有**:
+複数プラグインで参照する safelist 配列は `readonly string[]` + `Object.freeze()` で mutate 防止。`Summary.player.allow` への代入時はスプレッド (`[...PLAYER_ALLOW_OEMBED]`) でコピーして参照漏洩を防ぐ。
+
 ## 関連
 
 - [object-assign-mutable-target.md](object-assign-mutable-target.md) — オプション扱いの落とし穴

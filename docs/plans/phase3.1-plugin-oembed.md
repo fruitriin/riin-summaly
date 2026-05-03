@@ -1,6 +1,6 @@
 # Phase 3.1 — oEmbed 系プラグインの取り込み（youtube / spotify）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-03)**
 > 種別: 機能拡張 / プラグイン移植
 > サイズ: **S**
 > 依存: [phase2.1](phase2.1-plugin-infrastructure.md)（`getJson`、UA オーバーライド機構）、[phase2.2](phase2.2-mei23-non-plugin.md)（`sanitize-url`、`Player.allow` 互換）
@@ -101,7 +101,7 @@ mei23 は iframe の `src` が `https?://` であることだけチェックし�
 
 各ステップで `pnpm eslint && pnpm test` を通す。
 
-- [ ] **Step 1 — youtube プラグイン**
+- [x] **Step 1 — youtube プラグイン**
   - [src/plugins/youtube.ts](src/plugins/youtube.ts) を新設
     - `export const name = 'youtube';`
     - `test(url)`: `(www|m).youtube.com` のパス制約、または `youtu.be/<id>`
@@ -110,7 +110,7 @@ mei23 は iframe の `src` が `https?://` であることだけチェックし�
   - [src/plugins/index.ts](src/plugins/index.ts) に登録
   - oEmbed レスポンスのフィクスチャを `test/htmls/` 隣に作って統合テスト（モックサーバ）
   - 短縮 URL `youtu.be` でも動作することをテスト
-- [ ] **Step 2 — spotify プラグイン**
+- [x] **Step 2 — spotify プラグイン**
   - [src/plugins/spotify.ts](src/plugins/spotify.ts) を新設
     - `export const name = 'spotify';`
     - `test(url)`: `open.spotify.com` のみ
@@ -119,11 +119,11 @@ mei23 は iframe の `src` が `https?://` であることだけチェックし�
   - [src/plugins/index.ts](src/plugins/index.ts) に登録（branchio-deeplinks の前後関係に注意）
   - 既存 [src/plugins/branchio-deeplinks.ts](src/plugins/branchio-deeplinks.ts) の `spotify.link` ルートと衝突しないことをテストで確認
   - oEmbed レスポンスのフィクスチャを作って統合テスト
-- [ ] **Step 3 — `Player.allow` 共通定数**
+- [x] **Step 3 — `Player.allow` 共通定数**
   - [src/utils/player-allow.ts](src/utils/player-allow.ts) を新設し `PLAYER_ALLOW_OEMBED` を export
   - youtube / spotify から共有
   - 将来 [phase3.2](phase3.2-plugin-dom.md) や [phase6.1](phase6.1-plugin-twitter.md) からも参照可能にする
-- [ ] **Step 4 — README / CHANGELOG 更新**
+- [x] **Step 4 — README / CHANGELOG 更新**
   - 「対応形式（組み込みプラグイン）」表に youtube / spotify の行を追加
   - mei23 から取り込んだ高速化パスである旨を記載
 

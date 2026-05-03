@@ -152,8 +152,8 @@ will be ... ↓
 ```json
 {
 	"title": "【アイドルマスター】「Stage Bye Stage」(歌：島村卯月、渋谷凛、本田未央)",
-	"icon": "https://www.youtube.com/s/desktop/711fd789/img/logos/favicon.ico",
-	"description": "Website▶https://columbia.jp/idolmaster/Playlist▶https://www.youtube.com/playlist?list=PL83A2998CF3BBC86D2018年7月18日発売予定THE IDOLM@STER CINDERELLA GIRLS CG STAR...",
+	"icon": "https://www.youtube.com/favicon.ico",
+	"description": null,
 	"thumbnail": "https://i.ytimg.com/vi/NMIEAhH_fTU/maxresdefault.jpg",
 	"player": {
 		"url": "https://www.youtube.com/embed/NMIEAhH_fTU?feature=oembed",
@@ -165,15 +165,17 @@ will be ... ↓
 			"encrypted-media",
 			"picture-in-picture",
 			"web-share",
-			"fullscreen",
+			"fullscreen"
 		]
 	},
 	"sitename": "YouTube",
-	"sensitive": false,
 	"activityPub": null,
+	"fediverseCreator": null,
 	"url": "https://www.youtube.com/watch?v=NMIEAhH_fTU"
 }
 ```
+
+Note: Since v5.4 (phase3.1), YouTube / Spotify URLs are processed via the dedicated oEmbed plugins which do not include a `description` field (oEmbed responses do not provide one). For the previous behavior of pulling description from OG meta, set `allowedPlugins: ['amazon', 'bluesky', 'wikipedia', 'branchio-deeplinks']` to disable the youtube/spotify plugins and fall back to the general path.
 
 Testing
 ----------------------------------------------------------------
