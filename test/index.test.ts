@@ -15,7 +15,7 @@ import { Agent as httpAgent } from 'node:http';
 import { Agent as httpsAgent } from 'node:https';
 import { expect, test, describe, beforeEach, afterEach } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
-import summalyPlugin, { summaly } from '@/index.js';
+import summalyPlugin, { summaly, summalyDefaultOptions } from '@/index.js';
 import { StatusError } from '@/utils/status-error.js';
 
 const _filename = fileURLToPath(import.meta.url);
@@ -717,6 +717,45 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('options 不変性', () => {
+		test('summaly() の連続呼び出しで前回の opts が次回に漏れないこと', async () => {
+			const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+
+			app = fastify();
+			app.get('/', (request, reply) => {
+				reply.header('content-length', content.byteLength);
+				reply.header('content-type', 'text/html');
+				return reply.send(content);
+			});
+			await app.listen({ port });
+
+			// 1 回目: 極端に小さい contentLengthLimit を渡して必ず失敗させる
+			await expect(summaly(host, { contentLengthLimit: 16 })).rejects.toThrow();
+
+			// 2 回目: opts を渡さない。デフォルト 10 MiB で動くべき。
+			// summalyDefaultOptions が mutate されているとここで再び maxSize exceeded が出る。
+			const summary = await summaly(host);
+			expect(summary).toBeDefined();
+			expect(summary.title).toBeDefined();
+		});
+
+		test('summalyDefaultOptions オブジェクト自体が呼び出しで mutate されないこと', async () => {
+			const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+
+			app = fastify();
+			app.get('/', (request, reply) => {
+				reply.header('content-length', content.byteLength);
+				reply.header('content-type', 'text/html');
+				return reply.send(content);
+			});
+			await app.listen({ port });
+
+			const before = { ...summalyDefaultOptions };
+			await summaly(host, { contentLengthLimit: 16 }).catch(() => { /* 失敗しても良い */ });
+			expect({ ...summalyDefaultOptions }).toEqual(before);
+		});
+	});
+
 	describe('Fastify plugin: Cache-Control', () => {
 		// summaly plugin (default export) を別の Fastify インスタンスに register し、
 		// 同じテストポートで origin と plugin を共存させる。
@@ -744,9 +783,7 @@ describe('local tests', () => {
 			await app.listen({ port });
 
 			proxyApp = fastify();
-			// summalyDefaultOptions が mutate される既知の課題（別 phase で扱う）への
-			// テスト独立性確保のため contentLengthLimit を明示的に渡す
-			await proxyApp.register(summalyPlugin, { contentLengthLimit: 10 * 1024 * 1024, ...pluginOptions });
+			await proxyApp.register(summalyPlugin, pluginOptions);
 			await proxyApp.listen({ port: proxyPort });
 		}
 
@@ -776,7 +813,7 @@ describe('local tests', () => {
 			// グローバル afterEach の `app.close()` は `app != null` でガードされているため
 			// `app` が null のままでも問題ない。proxyApp のみ独自 afterEach で close する。
 			proxyApp = fastify();
-			await proxyApp.register(summalyPlugin, { contentLengthLimit: 10 * 1024 * 1024 });
+			await proxyApp.register(summalyPlugin);
 			await proxyApp.listen({ port: proxyPort });
 
 			const res = await proxyApp.inject({

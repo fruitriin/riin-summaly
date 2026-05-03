@@ -1,5 +1,8 @@
 (unreleased)
 ------------------
+* `summaly()` の連続呼び出しで前回の opts が次回呼び出しに漏れるバグを修正 (`Object.assign(summalyDefaultOptions, options)` が `summalyDefaultOptions` を mutate していた)
+  * 利用者が異なる opts で連続呼び出ししても、前回の値が混入しなくなります
+  * 「前回の `summaly()` 呼び出し後に `summalyDefaultOptions` が変化していること」に依存するコードがあれば動作が変わりますが、想定されない使用方法のため Breaking Change と見做していません
 
 5.3.0 / 2026/05/02
 ------------------

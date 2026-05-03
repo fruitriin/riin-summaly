@@ -1,6 +1,6 @@
 # Phase 1.2 — `summaly()` のオプション mutation バグ修正
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-03)**
 > 種別: バグ修正
 > サイズ: **XS**
 > 発見元: phase1.1 のテスト追加時、`content-length limit` テスト後に追加した Fastify テストで `maxSize exceeded (274 > 16)` エラーが伝播
@@ -102,16 +102,16 @@ test('summalyDefaultOptions が連続呼び出しで mutate されないこと',
 
 各ステップで `pnpm eslint && pnpm test` を通す。
 
-- [ ] **Step 1 — 修正**
+- [x] **Step 1 — 修正**
   - [src/index.ts](src/index.ts) の `Object.assign(summalyDefaultOptions, options)` を `{ ...summalyDefaultOptions, ...options }` に置換
-- [ ] **Step 2 — 回帰テスト追加**
-  - [test/index.test.ts](test/index.test.ts) に「異なる opts で連続呼出ししても前回の opts が漏れない」テスト追加
-- [ ] **Step 3 — phase1.1 で入れた回避策の撤去**
-  - [test/index.test.ts](test/index.test.ts) の `Fastify plugin: Cache-Control` の `setupOriginAndProxy` で `contentLengthLimit: 10 * 1024 * 1024` の明示渡しを撤去
-  - 撤去後も既存テストが通ることを確認
-- [ ] **Step 4 — CHANGELOG / リリースノート**
-  - 「`summaly()` の opts mutation バグ修正」を CHANGELOG に追記
-  - ライブラリ利用者で前回の opts が次回に漏れていた挙動に依存しているコードは想定上ないが、念のため挙動変更点として明記
+- [x] **Step 2 — 回帰テスト追加**
+  - [test/index.test.ts](test/index.test.ts) に新規 describe `options 不変性` を追加し、2 件のテストを追加（連続呼び出しでの opts 漏れ検証・`summalyDefaultOptions` 自体の不変性検証）
+- [x] **Step 3 — phase1.1 で入れた回避策の撤去**
+  - [test/index.test.ts](test/index.test.ts) の `Fastify plugin: Cache-Control` の `setupOriginAndProxy` および 500 エラーテストから `contentLengthLimit: 10 * 1024 * 1024` の明示渡しを撤去
+  - 撤去後も全テスト通過確認済み
+- [x] **Step 4 — CHANGELOG / リリースノート**
+  - [CHANGELOG.md](../../CHANGELOG.md) の `(unreleased)` に「`summaly()` の opts mutation バグ修正」を追記
+  - ライブラリ利用者向けに「前回の opts が次回に漏れなくなった」挙動変更を明記
 
 ---
 

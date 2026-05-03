@@ -102,7 +102,7 @@ export const summalyDefaultOptions = {
 export const summaly = async (url: string, options?: SummalyOptions): Promise<SummalyResult> => {
 	if (options?.agent) setAgent(options.agent);
 
-	const opts = Object.assign(summalyDefaultOptions, options);
+	const opts = { ...summalyDefaultOptions, ...options };
 
 	const plugins = builtinPlugins.concat(opts.plugins || []);
 
