@@ -1,3 +1,11 @@
 /node_modules
 /built
 npm-debug.log
+
+# --- ADDF Framework (do not remove) ---
+.claude/commands/*.exp.md
+.claude/.turn-count
+.claude/logs/
+CLAUDE.local.md
+CLAUDE.repo.md
+# --- /ADDF Framework ---
