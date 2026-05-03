@@ -43,6 +43,19 @@ phase2.2 で導入した「結果 URL の sanitize」「keep-alive デフォル�
 2. **`name` を持たない外部プラグインは自動的に除外**: `p.name != null && allowedPlugins.includes(p.name)` 条件で安全に弾ける
 3. **空配列 `[]` の意味を明確化**: 「組み込み全 disable」が意図的に呼べる選択肢として保持。汎用パスのみで運用したいケース用
 
+## Fastify インメモリ LRU キャッシュ（phase4.1）
+
+`lru-cache@11` を使い `inMemoryCache: true` でオプトイン提供。`Cache-Control` を解釈しない HTTP クライアント (Got / node-fetch) でもサーバ単独で重複リクエストを抑制できる。
+
+**設計の決め手**:
+
+1. **キー区切り文字は NULL byte (`\0`)**: `lang` クエリに空白を含む不正値が来てもキー衝突しない。半角スペースだと「URL 末尾スペース + lang」と「URL + lang 先頭スペース」が同一キーになり偽ヒットの危険
+2. **エラーをキャッシュする際は plain object に正規化**: `Error` インスタンスを直接保存すると `JSON.stringify` で `{}` になりレスポンスから情報が消える。`{ message, name }` に変換し、HIT/MISS 両方で同じシリアライズ結果になるよう MISS 側でも同じ変換を適用
+3. **TTL はコンストラクタに渡さず set() ごとに指定**: 成功 / エラーで TTL が違うため、コンストラクタに既定 TTL を渡すと「全エントリこの TTL」と誤読される。各 `set(key, value, { ttl })` で指定して意図を明示
+4. **キャッシュキーの正規化はフラグメント除去のみ**: クエリ順正規化等はキャッシュヒット率と引き換えに「異なる結果を返すべき URL」を同一視する危険があるため第一版では行わない
+5. **5xx エラーキャッシュの罠を README に明記**: サーバ復旧後も TTL 切れまでエラーが返り続ける挙動。インメモリキャッシュは「再起動で消える」点が外部キャッシュと異なるため運用者向けに警告を書く
+6. **thundering herd は意図的に未対応**: 同時リクエストはそれぞれ origin に到達する。dedup の複雑さを避け、単純な LRU のみで第一版完結
+
 ## 関連
 
 - [object-assign-mutable-target.md](object-assign-mutable-target.md) — オプション扱いの落とし穴

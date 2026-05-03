@@ -1367,6 +1367,130 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('Fastify インメモリ LRU キャッシュ (phase4.1)', () => {
+		const proxyPort = port + 1;
+		let proxyApp: FastifyInstance | null = null;
+
+		afterEach(async () => {
+			if (proxyApp != null) {
+				await proxyApp.close();
+				proxyApp = null;
+			}
+		});
+
+		async function setupOriginAndProxy(opts: Partial<SummalyOptions> & { inMemoryCache?: boolean; inMemoryCacheMaxEntries?: number } = {}) {
+			let originHits = 0;
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				originHits++;
+				const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+				reply.header('content-length', content.length);
+				reply.header('content-type', 'text/html');
+				return reply.send(content);
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, opts);
+			await proxyApp.listen({ port: proxyPort });
+
+			return { getOriginHits: () => originHits };
+		}
+
+		test('inMemoryCache: true で 2 回目リクエストが origin に到達しない', async () => {
+			const { getOriginHits } = await setupOriginAndProxy({ inMemoryCache: true });
+
+			const r1 = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r1.statusCode).toBe(200);
+			expect(r1.headers['x-cache']).toBe('MISS');
+			const hitsAfter1 = getOriginHits();
+			expect(hitsAfter1).toBeGreaterThanOrEqual(1);
+
+			const r2 = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r2.statusCode).toBe(200);
+			expect(r2.headers['x-cache']).toBe('HIT');
+			expect(getOriginHits()).toBe(hitsAfter1);
+		});
+
+		test('inMemoryCache 未指定（デフォルト false）では X-Cache が付かない', async () => {
+			await setupOriginAndProxy();
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(200);
+			expect(r.headers['x-cache']).toBeUndefined();
+		});
+
+		test('lang 違いはキャッシュ別エントリ', async () => {
+			const { getOriginHits } = await setupOriginAndProxy({ inMemoryCache: true });
+
+			await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host, lang: 'ja' } });
+			const hitsAfter1 = getOriginHits();
+			expect(hitsAfter1).toBeGreaterThanOrEqual(1);
+
+			const r2 = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host, lang: 'en' } });
+			expect(r2.headers['x-cache']).toBe('MISS');
+			expect(getOriginHits()).toBeGreaterThan(hitsAfter1);
+		});
+
+		test('500 エラーもキャッシュされ、2 回目で origin に到達しない', async () => {
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, { inMemoryCache: true });
+			await proxyApp.listen({ port: proxyPort });
+
+			const targetUrl = `http://localhost:${port + 99}/nonexistent`;
+			const r1 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: targetUrl } });
+			expect(r1.statusCode).toBe(500);
+			expect(r1.headers['x-cache']).toBe('MISS');
+
+			const r2 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: targetUrl } });
+			expect(r2.statusCode).toBe(500);
+			expect(r2.headers['x-cache']).toBe('HIT');
+		});
+
+		test('inMemoryCacheMaxEntries 超過で LRU evict', async () => {
+			app = fastify();
+			const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+			app.get('/', (_req, reply) => {
+				reply.header('content-length', content.length);
+				reply.header('content-type', 'text/html');
+				return reply.send(content);
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, { inMemoryCache: true, inMemoryCacheMaxEntries: 2 });
+			await proxyApp.listen({ port: proxyPort });
+
+			const url1 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: host, lang: 'a' } });
+			expect(url1.headers['x-cache']).toBe('MISS');
+			const url2 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: host, lang: 'b' } });
+			expect(url2.headers['x-cache']).toBe('MISS');
+
+			// 2 番目を再アクセスして直近利用済みに（state: [a (LRU), b (MRU)]）
+			await proxyApp.inject({ method: 'GET', url: '/', query: { url: host, lang: 'b' } });
+			// 3 番目を入れると一番古い (lang=a) が evict される（state: [b, c]）
+			await proxyApp.inject({ method: 'GET', url: '/', query: { url: host, lang: 'c' } });
+
+			// lang=a は evict 済み → MISS
+			const aRefetch = await proxyApp.inject({ method: 'GET', url: '/', query: { url: host, lang: 'a' } });
+			expect(aRefetch.headers['x-cache']).toBe('MISS');
+			// lang=c はまだ残っている → HIT
+			const cRefetch = await proxyApp.inject({ method: 'GET', url: '/', query: { url: host, lang: 'c' } });
+			expect(cRefetch.headers['x-cache']).toBe('HIT');
+		});
+
+		test('URL のフラグメントはキャッシュキーに含まない', async () => {
+			const { getOriginHits } = await setupOriginAndProxy({ inMemoryCache: true });
+
+			const r1 = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: `${host}/#section1` } });
+			expect(r1.headers['x-cache']).toBe('MISS');
+			const hitsAfter1 = getOriginHits();
+
+			const r2 = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: `${host}/#section2` } });
+			expect(r2.headers['x-cache']).toBe('HIT');
+			expect(getOriginHits()).toBe(hitsAfter1);
+		});
+	});
+
 	describe('DOM 後処理系プラグイン (phase3.2)', () => {
 		describe('dlsite', () => {
 			test('test() が www.dlsite.com にマッチ', () => {

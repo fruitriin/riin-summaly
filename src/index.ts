@@ -4,6 +4,7 @@
  */
 
 import got, { type Agents as GotAgents } from 'got';
+import { LRUCache } from 'lru-cache';
 import type { FastifyInstance } from 'fastify';
 import { SummalyResult as _SummalyResult } from '@/summary.js';
 import { SummalyPlugin as _SummalyPlugin } from '@/iplugin.js';
@@ -95,10 +96,59 @@ export type SummalyOptions = {
 	 * 配列のフィルタ対象は組み込みプラグインのみ。`plugins` で渡したカスタムプラグインは除外されない。
 	 */
 	allowedPlugins?: string[];
+
+	/**
+	 * Fastify モードで summaly サーバ自身が LRU ベースのインメモリキャッシュを持つかどうか。デフォルト false。
+	 * true にすると、cacheMaxAge 内の同一 URL リクエストは origin に到達せず、サーバ内のキャッシュから返す。
+	 * プロセス再起動でキャッシュは消える（永続キャッシュは別実装）。
+	 */
+	inMemoryCache?: boolean;
+
+	/**
+	 * インメモリキャッシュの最大エントリ数。デフォルト 1000。
+	 * 1 エントリ数 KB として 1000 で数 MB 程度のメモリ消費を見込む。
+	 */
+	inMemoryCacheMaxEntries?: number;
 };
 
 const DEFAULT_CACHE_MAX_AGE = 604800;
 const DEFAULT_CACHE_ERROR_MAX_AGE = 3600;
+const DEFAULT_IN_MEMORY_CACHE_MAX_ENTRIES = 1000;
+
+type CacheEntry =
+	| { kind: 'success'; value: SummalyResult }
+	| { kind: 'error'; error: unknown };
+
+/**
+ * Fastify モードのインメモリキャッシュキーを生成する。
+ * URL のフラグメントを除き、`lang` を含めることで言語別の汚染を防ぐ。
+ * 区切りに NULL byte (`\0`) を使うことで `lang` に空白などが入っても URL 部と衝突しない。
+ * （クエリ順正規化等の過剰正規化はキャッシュヒット率と引き換えに「異なる結果を返すべき URL」を
+ * 同一視するリスクがあるため第一版では行わない）
+ */
+function normalizeCacheKey(url: string, lang: string | undefined): string | null {
+	let normalized: URL;
+	try {
+		normalized = new URL(url);
+	} catch {
+		return null;
+	}
+	normalized.hash = '';
+	return `${normalized.href}\0${lang ?? ''}`;
+}
+
+/**
+ * エラーをキャッシュ可能な形に変換する。
+ * `Error` インスタンスは `JSON.stringify` で `{}` になりレスポンスから情報が消えるため、
+ * `{ message, name }` の plain object に正規化して HIT/MISS でレスポンスの一貫性を保つ。
+ * stack トレースは積み重ねでメモリ消費の遠因になるため捨てる。
+ */
+function serializableError(e: unknown): unknown {
+	if (e instanceof Error) {
+		return { message: e.message, name: e.name };
+	}
+	return e;
+}
 
 function cacheControlHeader(maxAge: number): string {
 	if (!Number.isFinite(maxAge) || maxAge < 0) {
@@ -222,15 +272,26 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 
 // eslint-disable-next-line import/no-default-export
 export default function (fastify: FastifyInstance, options: SummalyOptions, done: (err?: Error) => void) {
+	const successMaxAge = options.cacheMaxAge ?? DEFAULT_CACHE_MAX_AGE;
+	const errorMaxAge = options.cacheErrorMaxAge ?? DEFAULT_CACHE_ERROR_MAX_AGE;
+
 	let successCacheHeader: string;
 	let errorCacheHeader: string;
 	try {
-		successCacheHeader = cacheControlHeader(options.cacheMaxAge ?? DEFAULT_CACHE_MAX_AGE);
-		errorCacheHeader = cacheControlHeader(options.cacheErrorMaxAge ?? DEFAULT_CACHE_ERROR_MAX_AGE);
+		successCacheHeader = cacheControlHeader(successMaxAge);
+		errorCacheHeader = cacheControlHeader(errorMaxAge);
 	} catch (e) {
 		done(e as Error);
 		return;
 	}
+
+	// インメモリキャッシュ（プラグインスコープ singleton）。
+	// TTL は各 set() 呼び出しで成功 / エラー個別に指定するため、コンストラクタには渡さない。
+	const cache: LRUCache<string, CacheEntry> | null = options.inMemoryCache
+		? new LRUCache<string, CacheEntry>({
+			max: options.inMemoryCacheMaxEntries ?? DEFAULT_IN_MEMORY_CACHE_MAX_ENTRIES,
+		})
+		: null;
 
 	fastify.get<{
 		Querystring: {
@@ -247,19 +308,47 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 			});
 		}
 
+		const lang = req.query.lang as string | undefined;
+		// normalizeCacheKey が null を返す（不正 URL）場合はキャッシュをスキップして summaly() に委ねる
+		const cacheKey = cache ? normalizeCacheKey(url, lang) : null;
+
+		// キャッシュヒット
+		if (cache && cacheKey != null) {
+			const hit = cache.get(cacheKey);
+			if (hit != null) {
+				reply.header('X-Cache', 'HIT');
+				if (hit.kind === 'success') {
+					reply.header('Cache-Control', successCacheHeader);
+					return hit.value;
+				}
+				// エラーキャッシュヒット
+				reply.header('Cache-Control', errorCacheHeader);
+				return reply.status(500).send({ error: hit.error });
+			}
+		}
+
 		try {
 			const summary = await summaly(url, {
-				lang: req.query.lang as string,
+				lang,
 				followRedirects: false,
 				...options,
 			});
 
+			if (cache && cacheKey != null) {
+				cache.set(cacheKey, { kind: 'success', value: summary }, { ttl: successMaxAge * 1000 });
+				reply.header('X-Cache', 'MISS');
+			}
 			reply.header('Cache-Control', successCacheHeader);
 			return summary;
 		} catch (e) {
+			const errorPayload = serializableError(e);
+			if (cache && cacheKey != null) {
+				cache.set(cacheKey, { kind: 'error', error: errorPayload }, { ttl: errorMaxAge * 1000 });
+				reply.header('X-Cache', 'MISS');
+			}
 			reply.header('Cache-Control', errorCacheHeader);
 			return reply.status(500).send({
-				error: e,
+				error: errorPayload,
 			});
 		}
 	});

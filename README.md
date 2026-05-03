@@ -58,12 +58,25 @@ npm run serve
 | **cacheErrorMaxAge**      | *number*               | Fastify mode only. `Cache-Control: public, max-age=<n>` (seconds) for error responses. Set to `0` to emit `Cache-Control: no-store`.                                                | `3600` (1 hour)        |
 | **useRange**              | *boolean*              | Send `Range: bytes=0-N-1` to fetch only the head of the document. Servers that ignore Range fall back to full body (still capped by `contentLengthLimit`).                            | `false`                |
 | **allowedPlugins**        | *string[]*             | Opt-in allowlist of builtin plugin names. `undefined` = all enabled. Empty array `[]` = all builtins disabled (general path only). Custom `plugins` are not filtered.                 | `undefined`            |
+| **inMemoryCache**         | *boolean*              | Fastify mode only. Enable in-process LRU cache so repeated requests for the same URL are served from memory. Useful when an HTTP client (e.g. Got, node-fetch) ignores `Cache-Control`. | `false`                |
+| **inMemoryCacheMaxEntries** | *number*             | Fastify mode only. Maximum number of entries in the in-memory cache. Each entry is typically a few KB, but a long `description` or `data:` thumbnail can push it higher; size accordingly. | `1000`                 |
 
 #### Server caching
 
 When summaly is used as a Fastify plugin (`fastify.register(Summaly, opts)`), every response includes a `Cache-Control` header so that upstream caches (nginx `proxy_cache`, Cloudflare, etc.) can serve repeated lookups without round-tripping to the origin site. Successful responses default to `public, max-age=604800` (1 week) and error responses to `public, max-age=3600` (1 hour). Caching errors briefly avoids amplifying repeated requests for broken URLs (related to the [Mastodon link-preview DDoS issue](https://github.com/mastodon/mastodon/issues/23662)).
 
-Override the durations with `cacheMaxAge` / `cacheErrorMaxAge`, or set them to `0` to opt out (`Cache-Control: no-store`). Note that some HTTP clients (e.g. Got, node-fetch) do not honor `Cache-Control`; if you need application-level caching, run summaly behind nginx / a CDN, or wait for a future in-process LRU cache option.
+Override the durations with `cacheMaxAge` / `cacheErrorMaxAge`, or set them to `0` to opt out (`Cache-Control: no-store`). Note that some HTTP clients (e.g. Got, node-fetch) do not honor `Cache-Control`; if you need application-level caching, run summaly behind nginx / a CDN, or use the in-process LRU cache below.
+
+#### In-process LRU cache
+
+Set `inMemoryCache: true` (Fastify mode) to enable an in-process LRU cache backed by `lru-cache`. Repeat requests for the same URL within `cacheMaxAge` are served from memory and never reach the origin site. Errors are cached separately for `cacheErrorMaxAge` to amplify-protect against repeated bad URLs.
+
+Cache key: URL with the fragment (`#...`) stripped, plus the `lang` query value (`ja` and `en` are separate entries to avoid serving Japanese results to English users). Cap entries via `inMemoryCacheMaxEntries`. Each response includes `X-Cache: HIT` or `X-Cache: MISS`.
+
+**Caveats**:
+- 5xx errors are also cached for `cacheErrorMaxAge` (default 1 hour). If an upstream site recovers from an outage, summaly will continue returning the cached error until the TTL expires. Restart the process or lower `cacheErrorMaxAge` to mitigate.
+- Concurrent requests for the same URL each hit the origin until the first response populates the cache (no in-flight dedup).
+- Cache lives for the process lifetime only; restart the server to flush. For persistent or shared caches across replicas, run summaly behind nginx / Varnish / a CDN that honours the emitted `Cache-Control` header.
 
 #### Plugin
 

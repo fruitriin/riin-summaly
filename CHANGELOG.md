@@ -17,6 +17,12 @@
   * `SUMMALY_FAMILY=4` / `=6` で IP family を強制可能
   * 文字コード判定を `chardet` → `jschardet` + `encoding-japanese` に置き換え（[issue #39](https://github.com/misskey-dev/summaly/issues/39): ISO-2022-JP の文字化けを修正）
 * `docs/deploy-examples/` に nginx / systemd / 設定 JSON の参考例を追加
+* Fastify モードに **インメモリ LRU キャッシュ** をオプトインで追加 (issue #27):
+  * `inMemoryCache: true` で同一 URL リクエストをサーバ内 LRU キャッシュから返す。`Cache-Control` を解釈しない HTTP クライアント（Misskey の Got / node-fetch 等）でも summaly サーバ単独で重複アクセスを抑制可能
+  * 成功 / エラーともキャッシュ。それぞれ `cacheMaxAge` / `cacheErrorMaxAge` を TTL として流用
+  * `inMemoryCacheMaxEntries` (デフォルト 1000) でエントリ数上限
+  * レスポンスに `X-Cache: HIT` / `MISS` を付与（無効時は付かない）
+  * キャッシュキーは URL（フラグメント除去）+ `lang`。プロセス再起動でキャッシュは消える
 * DOM 後処理系プラグインを追加（dlsite / iwara / komiflo / nijie）:
   * `dlsite`: `www.dlsite.com`。`/announce/` ↔ `/work/` で 404 のときに自動再取得、結果パスのカテゴリで `sensitive` を判定
   * `iwara`: `(www|ecchi).iwara.tv`。description を `.field-type-text-with-summary` から、thumbnail を `#video-player[poster]` 等から補完。`ecchi.` ホストで `sensitive`

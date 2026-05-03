@@ -1,6 +1,6 @@
 # Phase 4.1 — Fastify インメモリ LRU キャッシュ
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-04)**
 > 種別: 機能拡張 / 運用最適化
 > サイズ: **M**
 > 依存: [phase1.1](phase1.1-fastify-cache-control.md)（`cacheMaxAge` / `cacheErrorMaxAge` オプション）
@@ -131,28 +131,28 @@ fastify.get('/', async (req, reply) => {
 
 各ステップで `pnpm eslint && pnpm test` を通す。
 
-- [ ] **Step 1 — `lru-cache` 依存追加**
+- [x] **Step 1 — `lru-cache` 依存追加**
   - `package.json` の `dependencies` に `lru-cache`（最新安定版）を追加
   - 型定義の動作確認（`@types/lru-cache` は v10 以降で同梱）
-- [ ] **Step 2 — キャッシュインスタンスの初期化**
+- [x] **Step 2 — キャッシュインスタンスの初期化**
   - Fastify プラグイン関数内で `options.inMemoryCache` が truthy のときだけ `LRUCache` を生成
   - max は `options.inMemoryCacheMaxEntries ?? 1000`
   - 同じ Fastify プラグインの 2 回目以降の register でも同じインスタンスを使う（プラグインスコープ内 singleton）
-- [ ] **Step 3 — キャッシュルックアップ・保存ロジック**
+- [x] **Step 3 — キャッシュルックアップ・保存ロジック**
   - 上記「Fastify ハンドラの構造」の通り実装
   - キャッシュキー正規化関数 `normalizeKey(url, lang)` を抽出
   - エラーをシリアライズ可能な形に変換するヘルパ `serializableError(e)`
-- [ ] **Step 4 — `X-Cache` ヘッダ**
+- [x] **Step 4 — `X-Cache` ヘッダ**
   - HIT / MISS で適切に付与
   - インメモリキャッシュ無効時はヘッダを付けない
-- [ ] **Step 5 — テスト**
+- [x] **Step 5 — テスト**
   - 同一 URL 2 回目で origin への HEAD リクエストが発生しないこと（モック origin で確認）
   - `X-Cache: HIT` / `MISS` が正しく付与されること
   - TTL 経過後に再リクエストが origin に届くこと（タイマーモック）
   - エラーキャッシュが `cacheErrorMaxAge` で切れること
   - `lang` 違いで別キーになること
   - `inMemoryCacheMaxEntries: 2` で 3 件目を入れたとき LRU で古いものが evict されること
-- [ ] **Step 6 — README / CHANGELOG 更新**
+- [x] **Step 6 — README / CHANGELOG 更新**
   - 新オプション `inMemoryCache` / `inMemoryCacheMaxEntries` の説明
   - 「summaly サーバ運用時のキャッシュ戦略」節に追記（前段プロキシ vs インメモリ vs 両方）
   - 「キャッシュはプロセス再起動で消える」旨を明記
