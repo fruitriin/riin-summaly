@@ -1,6 +1,8 @@
 import { general, type GeneralScrapingOptions } from '@/general.js';
 import Summary from '@/summary.js';
 
+export const name = 'branchio-deeplinks';
+
 export function test(url: URL): boolean {
 	// Branch.io を使用したディープリンクにマッチ
 	return /^[a-zA-Z0-9]+\.app\.link$/.test(url.hostname) ||

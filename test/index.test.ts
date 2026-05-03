@@ -17,6 +17,10 @@ import { expect, test, describe, beforeEach, afterEach } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
 import summalyPlugin, { summaly, summalyDefaultOptions } from '@/index.js';
 import { StatusError } from '@/utils/status-error.js';
+import { getJson } from '@/utils/got.js';
+import { KNOWN_SHORT_HOSTS } from '@/utils/short-urls.js';
+import { BROWSER_UA } from '@/utils/user-agents.js';
+import { plugins as builtinPlugins } from '@/plugins/index.js';
 
 const _filename = fileURLToPath(import.meta.url);
 const _dirname = dirname(_filename);
@@ -931,6 +935,119 @@ describe('local tests', () => {
 			await app.listen({ port });
 
 			expect(await summaly(host, { contentLengthRequired: false })).toBeDefined();
+		});
+	});
+
+	describe('プラグイン基盤 (phase2.1)', () => {
+		describe('getJson', () => {
+			test('JSON エンドポイントから object を取得できる', async () => {
+				app = fastify();
+				app.get('/api', (request, reply) => {
+					reply.header('content-type', 'application/json');
+					return reply.send({ foo: 'bar', n: 42 });
+				});
+				await app.listen({ port });
+
+				const json = await getJson(`${host}/api`);
+				expect(json).toEqual({ foo: 'bar', n: 42 });
+			});
+
+			test('referer 引数が Referer ヘッダとして送信される', async () => {
+				let receivedReferer: string | undefined;
+				app = fastify();
+				app.get('/api', (request, reply) => {
+					receivedReferer = request.headers['referer'];
+					reply.header('content-type', 'application/json');
+					return reply.send({ ok: true });
+				});
+				await app.listen({ port });
+
+				await getJson(`${host}/api`, 'https://example.com/page');
+				expect(receivedReferer).toBe('https://example.com/page');
+			});
+
+			test('referer を渡さない場合は Referer ヘッダが送信されない', async () => {
+				let receivedReferer: string | undefined;
+				app = fastify();
+				app.get('/api', (request, reply) => {
+					receivedReferer = request.headers['referer'];
+					reply.header('content-type', 'application/json');
+					return reply.send({ ok: true });
+				});
+				await app.listen({ port });
+
+				await getJson(`${host}/api`);
+				expect(receivedReferer).toBeUndefined();
+			});
+
+			test('不正な JSON が返ると例外が throw される', async () => {
+				app = fastify();
+				app.get('/api', (request, reply) => {
+					reply.header('content-type', 'application/json');
+					return reply.send('this is not json{');
+				});
+				await app.listen({ port });
+
+				await expect(getJson(`${host}/api`)).rejects.toThrow();
+			});
+		});
+
+		describe('プラグイン name 定数', () => {
+			test('全組み込みプラグインに name 定数が付与されている', () => {
+				for (const plugin of builtinPlugins) {
+					expect(plugin.name, `plugin missing name: ${JSON.stringify(plugin)}`).toBeDefined();
+					expect(typeof plugin.name).toBe('string');
+					expect(plugin.name!.length).toBeGreaterThan(0);
+				}
+			});
+
+			test('プラグイン name はファイル名（src/plugins/<name>.ts）と一致する', () => {
+				const pluginsDir = _dirname + '/../src/plugins';
+				const files = readdirSync(pluginsDir)
+					.filter(f => f.endsWith('.ts') && f !== 'index.ts')
+					.map(f => f.replace(/\.ts$/, ''));
+				const names = builtinPlugins.map(p => p.name).filter((n): n is string => n != null);
+
+				// ファイル名で表現された全プラグインが name として登録されていること
+				for (const fileName of files) {
+					expect(names, `name not found for plugin file: ${fileName}.ts`).toContain(fileName);
+				}
+			});
+		});
+
+		describe('UA オーバーライド', () => {
+			test('BROWSER_UA 定数が定義されている', () => {
+				expect(BROWSER_UA).toBeDefined();
+				expect(typeof BROWSER_UA).toBe('string');
+				expect(BROWSER_UA).toMatch(/Mozilla\/5\.0/);
+			});
+
+			test('summaly() の userAgent オプションが scpaping の User-Agent ヘッダに反映される', async () => {
+				let receivedUA: string | undefined;
+				app = fastify();
+				app.get('/', (request, reply) => {
+					receivedUA = request.headers['user-agent'];
+					const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+					reply.header('content-length', content.length);
+					reply.header('content-type', 'text/html');
+					return reply.send(content);
+				});
+				await app.listen({ port });
+
+				await summaly(host, { userAgent: BROWSER_UA });
+				expect(receivedUA).toBe(BROWSER_UA);
+			});
+		});
+
+		describe('短縮 URL dispatcher', () => {
+			test('KNOWN_SHORT_HOSTS に主要短縮ホストが含まれる', () => {
+				expect(KNOWN_SHORT_HOSTS.has('youtu.be')).toBe(true);
+				expect(KNOWN_SHORT_HOSTS.has('amzn.to')).toBe(true);
+				expect(KNOWN_SHORT_HOSTS.has('w.wiki')).toBe(true);
+				// SSRF 拡大を避けるため一般的な短縮 URL は除外されていること
+				expect(KNOWN_SHORT_HOSTS.has('bit.ly')).toBe(false);
+				expect(KNOWN_SHORT_HOSTS.has('t.co')).toBe(false);
+			});
 		});
 	});
 });

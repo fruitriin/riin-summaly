@@ -92,6 +92,36 @@ export async function head(url: string) {
 	});
 }
 
+/**
+ * 任意の JSON エンドポイントを取得する。oEmbed / 外部 API 等、プラグインから利用される。
+ * `getResponse` を経由するため content-length 制限・プライベート IP ガード等は自動で効く。
+ *
+ * @param url リクエスト先
+ * @param referer 必要なら Referer ヘッダ（komiflo 等の API がリファラ必須のケースで利用）
+ * @param opts 一部のオプション（`userAgent`, タイムアウト）を上書きしたい場合に指定
+ */
+export async function getJson(
+	url: string,
+	referer?: string,
+	opts?: Pick<GeneralScrapingOptions, 'userAgent' | 'responseTimeout' | 'operationTimeout'>,
+): Promise<unknown> {
+	const res = await getResponse({
+		url,
+		method: 'GET',
+		headers: {
+			'accept': 'application/json, */*',
+			'user-agent': opts?.userAgent ?? DEFAULT_BOT_UA,
+			...(referer != null ? { referer } : {}),
+		},
+		// プライベート IP ガード・content-length 制限は getResponse 内で自動適用される
+		// （got.ts の既存テスト群で担保）
+		typeFilter: /^application\/(?:json|.*\+json)/,
+		responseTimeout: opts?.responseTimeout,
+		operationTimeout: opts?.operationTimeout,
+	});
+	return JSON.parse(String(res.body));
+}
+
 export async function getResponse(args: GotOptions) {
 	const timeout = args.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT;
 	const operationTimeout = args.operationTimeout ?? DEFAULT_OPERATION_TIMEOUT;

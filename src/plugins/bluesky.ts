@@ -3,6 +3,8 @@ import type Summary from '@/summary.js';
 import { getResponse, getGotOptions } from '@/utils/got.js';
 import { parseGeneral, type GeneralScrapingOptions } from '@/general.js';
 
+export const name = 'bluesky';
+
 export function test(url: URL): boolean {
 	return url.hostname === 'bsky.app';
 }

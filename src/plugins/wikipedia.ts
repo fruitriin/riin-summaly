@@ -2,6 +2,8 @@ import { get } from '@/utils/got.js';
 import summary from '@/summary.js';
 import { clip } from '@/utils/clip.js';
 
+export const name = 'wikipedia';
+
 export function test(url: URL): boolean {
 	if (!url.hostname) return false;
 	return /\.wikipedia\.org$/.test(url.hostname);

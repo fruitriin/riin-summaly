@@ -1,6 +1,6 @@
 # Phase 2.1 — プラグイン基盤の整備
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-03)**
 > 種別: 基盤整備
 > サイズ: **S**
 > 依存: なし（[phase2.2](phase2.2-mei23-non-plugin.md) と並列で着手可）
@@ -157,25 +157,25 @@ export const KNOWN_SHORT_HOSTS = new Set<string>([
 
 各ステップで `pnpm eslint && pnpm test` を通す。
 
-- [ ] **Step 1 — `getJson` ヘルパ追加**
-  - [src/utils/got.ts](src/utils/got.ts) に `getJson(url, referer?)` を追加
-  - 単体テスト: モックサーバで JSON が返ること、`referer` ヘッダが送信されること、不正 JSON で例外が throw されること
-- [ ] **Step 2 — プラグイン `name` 定数導入**
-  - [src/iplugin.ts](src/iplugin.ts) の `SummalyPlugin` 型に `name?: string` を追加（optional）
-  - 既存組み込みプラグイン全て（amazon / bluesky / wikipedia / branchio-deeplinks）に `export const name = '<filename>';` を追加し、[src/plugins/index.ts](src/plugins/index.ts) で参照可能にする
-  - CI テスト: `import * as fs from 'fs'; ... .name === filename` の一致を全プラグインで検証
-- [ ] **Step 3 — UA オーバーライド機構**
-  - [src/utils/user-agents.ts](src/utils/user-agents.ts) を新設、`BROWSER_UA` 定数を export（バージョン番号付き Chrome UA）
-  - [src/utils/got.ts](src/utils/got.ts) の `scpaping(url, opts)` で `opts.userAgent` を尊重（既に内部で受けている場合は経路確認のみ）
-  - `GeneralScrapingOptions` に `userAgent` がエクスポーズされていることを確認
-  - 単体テスト: `scpaping('http://...', { userAgent: 'CustomUA' })` で `User-Agent` ヘッダがそのまま送信されることをモックサーバで確認
-- [ ] **Step 4 — 短縮 URL リスト**
+- [x] **Step 1 — `getJson` ヘルパ追加**
+  - [src/utils/got.ts](src/utils/got.ts) に `getJson(url, referer?, opts?)` を追加
+  - typeFilter: `application/json` 系を強制（コードレビュー指摘により追加）
+  - User-Agent: `DEFAULT_BOT_UA` を既定値、`opts.userAgent` で上書き可能（コードレビュー指摘により追加）
+  - 単体テスト: JSON 取得・referer ヘッダ・referer なしのケース・不正 JSON 例外
+- [x] **Step 2 — プラグイン `name` 定数導入**
+  - [src/iplugin.ts](src/iplugin.ts) に `name?: string` を optional 追加
+  - 全組み込みプラグイン (amazon / bluesky / wikipedia / branchio-deeplinks) に `export const name`
+  - CI テスト: `readdirSync` で `src/plugins/*.ts` を列挙、`builtinPlugins[i].name` と突合
+- [x] **Step 3 — UA オーバーライド機構**
+  - [src/utils/user-agents.ts](src/utils/user-agents.ts) を新設、`BROWSER_UA` 定数（Chrome 130, 2026-05-03 更新）
+  - `scpaping(url, opts)` 経路は元から `opts.userAgent` 尊重済みのため変更なし
+  - 単体テスト: `summaly(host, { userAgent: BROWSER_UA })` で User-Agent ヘッダがモックサーバに到達することを確認
+- [x] **Step 4 — 短縮 URL リスト**
   - [src/utils/short-urls.ts](src/utils/short-urls.ts) を新設、`KNOWN_SHORT_HOSTS` を export
-- [ ] **Step 5 — dispatcher 改修**
-  - [src/index.ts](src/index.ts) の `summaly()` 内、HEAD 解決ブロックを以下のように改修:
-    - `opts.followRedirects` が `true`、**または** ホスト名が `KNOWN_SHORT_HOSTS` に含まれる場合に HEAD で `actualUrl` を解決
-    - プラグインマッチングは解決後の URL で行う（既存）
-  - テスト: Fastify モード（`followRedirects: false`）で `youtu.be/<id>` を投げて、HEAD 解決後の URL でプラグインマッチングが行われることを確認（モックリダイレクト）
+- [x] **Step 5 — dispatcher 改修**
+  - [src/index.ts](src/index.ts) の HEAD 解決ブロックを `opts.followRedirects || KNOWN_SHORT_HOSTS.has(initialHost)` で発火
+  - HEAD リクエストに `maxRedirects: 5` を追加（SSRF チェイン緩和、コードレビュー指摘対応）
+  - テスト: 定数のメンバーシップテスト追加（`youtu.be` 等を含み `bit.ly` `t.co` を含まないこと）
 
 ---
 

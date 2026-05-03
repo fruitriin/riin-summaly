@@ -10,6 +10,7 @@ import { SummalyPlugin as _SummalyPlugin } from '@/iplugin.js';
 import { general, type GeneralScrapingOptions } from '@/general.js';
 import { DEFAULT_BOT_UA, DEFAULT_OPERATION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT, agent, setAgent } from '@/utils/got.js';
 import { plugins as builtinPlugins } from '@/plugins/index.js';
+import { KNOWN_SHORT_HOSTS } from '@/utils/short-urls.js';
 
 export type SummalyResult = _SummalyResult;
 
@@ -107,7 +108,13 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 	const plugins = builtinPlugins.concat(opts.plugins || []);
 
 	let actualUrl = url;
-	if (opts.followRedirects) {
+	// followRedirects が true、または公式短縮 URL ホストの場合は HEAD で URL を解決する。
+	// Fastify モード（followRedirects: false）でも、サービス公式の短縮 URL に限り
+	// 解決後の URL でプラグインマッチングが行われるようにする。
+	let initialHost = '';
+	try { initialHost = new URL(url).hostname; } catch { /* malformed URL は後続の new URL で throw する */ }
+	const shouldResolve = opts.followRedirects || KNOWN_SHORT_HOSTS.has(initialHost);
+	if (shouldResolve) {
 		// .catch(() => url)にすればいいけど、jestにtrace-redirectを食わせるのが面倒なのでtry-catch
 		try {
 			const timeout = opts.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT;
@@ -133,6 +140,8 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 					retry: {
 						limit: 0,
 					},
+					// 短縮 URL からの多段リダイレクトを制限（SSRF チェイン緩和）
+					maxRedirects: 5,
 				})
 				.then(res => res.url);
 		} catch {
