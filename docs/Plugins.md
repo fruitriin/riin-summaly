@@ -40,7 +40,7 @@ interface SummalyPlugin {
 }
 ```
 
-`Summary` 型は [README.md](README.md#summalyresult) の `Omit<SummalyResult, "url">` を参照。
+`Summary` 型は [README.md](../README.md#summalyresult) の `Omit<SummalyResult, "url">` を参照。
 
 マッチング・ディスパッチの流れ
 ----------------------------------------------------------------
@@ -55,14 +55,14 @@ interface SummalyPlugin {
 4. マッチしたプラグインの `summarize(url, scrapingOptions)` を呼ぶ。マッチが無ければ汎用パス `general()` を呼ぶ
 5. 結果の URL フィールド（`icon` / `thumbnail` / `player.url` / `medias[]`）を `sanitizeUrl()` でフィルタ（`https:` / `http:` / `data:` <10KB のみ通す）
 
-組み込みプラグインの登録順は [src/plugins/index.ts](src/plugins/index.ts) で確認できます。**順序が重要** で、`spotify.link` と `open.spotify.com` のように似たホストを扱うプラグインは登録順で結果が変わる可能性があるため注意。
+組み込みプラグインの登録順は [src/plugins/index.ts](../src/plugins/index.ts) で確認できます。**順序が重要** で、`spotify.link` と `open.spotify.com` のように似たホストを扱うプラグインは登録順で結果が変わる可能性があるため注意。
 
 組み込みプラグイン詳細
 ----------------------------------------------------------------
 
 ### amazon
 
-実装: [src/plugins/amazon.ts](src/plugins/amazon.ts)
+実装: [src/plugins/amazon.ts](../src/plugins/amazon.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -74,7 +74,7 @@ interface SummalyPlugin {
 
 ### bluesky
 
-実装: [src/plugins/bluesky.ts](src/plugins/bluesky.ts)
+実装: [src/plugins/bluesky.ts](../src/plugins/bluesky.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -84,7 +84,7 @@ interface SummalyPlugin {
 
 ### wikipedia
 
-実装: [src/plugins/wikipedia.ts](src/plugins/wikipedia.ts)
+実装: [src/plugins/wikipedia.ts](../src/plugins/wikipedia.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -95,7 +95,7 @@ interface SummalyPlugin {
 
 ### branchio-deeplinks
 
-実装: [src/plugins/branchio-deeplinks.ts](src/plugins/branchio-deeplinks.ts)
+実装: [src/plugins/branchio-deeplinks.ts](../src/plugins/branchio-deeplinks.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -105,7 +105,7 @@ interface SummalyPlugin {
 
 ### youtube
 
-実装: [src/plugins/youtube.ts](src/plugins/youtube.ts)
+実装: [src/plugins/youtube.ts](../src/plugins/youtube.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -119,7 +119,7 @@ interface SummalyPlugin {
 
 ### spotify
 
-実装: [src/plugins/spotify.ts](src/plugins/spotify.ts)
+実装: [src/plugins/spotify.ts](../src/plugins/spotify.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -132,7 +132,7 @@ interface SummalyPlugin {
 
 ### dlsite
 
-実装: [src/plugins/dlsite.ts](src/plugins/dlsite.ts)
+実装: [src/plugins/dlsite.ts](../src/plugins/dlsite.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -142,7 +142,7 @@ interface SummalyPlugin {
 
 ### iwara
 
-実装: [src/plugins/iwara.ts](src/plugins/iwara.ts)
+実装: [src/plugins/iwara.ts](../src/plugins/iwara.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -155,7 +155,7 @@ interface SummalyPlugin {
 
 ### komiflo
 
-実装: [src/plugins/komiflo.ts](src/plugins/komiflo.ts)
+実装: [src/plugins/komiflo.ts](../src/plugins/komiflo.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -168,7 +168,7 @@ interface SummalyPlugin {
 
 ### nijie
 
-実装: [src/plugins/nijie.ts](src/plugins/nijie.ts)
+実装: [src/plugins/nijie.ts](../src/plugins/nijie.ts)
 
 | 項目 | 内容 |
 |:--|:--|
@@ -229,15 +229,15 @@ const summary = await summaly('https://mysite.example.com/article/123', {
 
 | ユーティリティ | 場所 | 用途 |
 |:--|:--|:--|
-| `scpaping(url, opts)` | [src/utils/got.ts](src/utils/got.ts) | HTML 取得 + cheerio パース。`{ body, $, response }` を返す（タイポは半ば公開 API のため改名しない） |
-| `getJson(url, referer?, opts?)` | [src/utils/got.ts](src/utils/got.ts) | JSON エンドポイント取得。SSRF ガードを `getResponse` 経由で継承、`typeFilter` で `application/json` 系を強制 |
-| `parseGeneral(url, scpapingResult)` | [src/general.ts](src/general.ts) | OG / Twitter Card / oEmbed の汎用抽出ロジック |
-| `general(url, opts)` | [src/general.ts](src/general.ts) | `scpaping → parseGeneral` のショートカット |
-| `BROWSER_UA` | [src/utils/user-agents.ts](src/utils/user-agents.ts) | サイト固有プラグインで Chrome UA を上書きしたいとき |
-| `KNOWN_SHORT_HOSTS` | [src/utils/short-urls.ts](src/utils/short-urls.ts) | Fastify モード（`followRedirects: false`）でも HEAD 解決する公式短縮 URL ホストの Set |
-| `PLAYER_ALLOW_OEMBED` | [src/utils/player-allow.ts](src/utils/player-allow.ts) | oEmbed 系プラグインで共通利用する iframe `allow` の readonly safelist |
-| `PDF_ICON_DATA_URL` | [src/utils/pdf-icon.ts](src/utils/pdf-icon.ts) | PDF レスポンス用デフォルトアイコン (data URI) |
-| `withTimeout(promise, ms)` | [src/utils/got.ts](src/utils/got.ts) | Promise を timeout 付きで race（`finally` で `setTimeout` を必ず clear） |
-| `sanitizeUrl(input, dataUrlLimit?)` | [src/utils/sanitize-url.ts](src/utils/sanitize-url.ts) | 結果フィールド用 URL のスキーム検証（`https:` / `http:` / `data:` <10KB のみ通す） |
+| `scpaping(url, opts)` | [src/utils/got.ts](../src/utils/got.ts) | HTML 取得 + cheerio パース。`{ body, $, response }` を返す（タイポは半ば公開 API のため改名しない） |
+| `getJson(url, referer?, opts?)` | [src/utils/got.ts](../src/utils/got.ts) | JSON エンドポイント取得。SSRF ガードを `getResponse` 経由で継承、`typeFilter` で `application/json` 系を強制 |
+| `parseGeneral(url, scpapingResult)` | [src/general.ts](../src/general.ts) | OG / Twitter Card / oEmbed の汎用抽出ロジック |
+| `general(url, opts)` | [src/general.ts](../src/general.ts) | `scpaping → parseGeneral` のショートカット |
+| `BROWSER_UA` | [src/utils/user-agents.ts](../src/utils/user-agents.ts) | サイト固有プラグインで Chrome UA を上書きしたいとき |
+| `KNOWN_SHORT_HOSTS` | [src/utils/short-urls.ts](../src/utils/short-urls.ts) | Fastify モード（`followRedirects: false`）でも HEAD 解決する公式短縮 URL ホストの Set |
+| `PLAYER_ALLOW_OEMBED` | [src/utils/player-allow.ts](../src/utils/player-allow.ts) | oEmbed 系プラグインで共通利用する iframe `allow` の readonly safelist |
+| `PDF_ICON_DATA_URL` | [src/utils/pdf-icon.ts](../src/utils/pdf-icon.ts) | PDF レスポンス用デフォルトアイコン (data URI) |
+| `withTimeout(promise, ms)` | [src/utils/got.ts](../src/utils/got.ts) | Promise を timeout 付きで race（`finally` で `setTimeout` を必ず clear） |
+| `sanitizeUrl(input, dataUrlLimit?)` | [src/utils/sanitize-url.ts](../src/utils/sanitize-url.ts) | 結果フィールド用 URL のスキーム検証（`https:` / `http:` / `data:` <10KB のみ通す） |
 
 `PLAYER_ALLOW_OEMBED` は `Object.freeze()` 済みなので、`Summary.player.allow` への代入時はスプレッド `[...PLAYER_ALLOW_OEMBED]` でコピーすること。

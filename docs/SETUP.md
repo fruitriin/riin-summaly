@@ -3,7 +3,7 @@ SETUP.md — Misskey 管理人向けセットアップガイド
 
 summaly を Misskey 等のフロントエンドから利用するために、**スタンドアロンの HTTP サーバ（Fastify モード）として運用する** 場合のガイドです。
 
-ライブラリとしてアプリ内で `summaly()` 関数を直接呼ぶだけなら [README.md](README.md) で十分です。
+ライブラリとしてアプリ内で `summaly()` 関数を直接呼ぶだけなら [README.md](../README.md) で十分です。
 
 目次
 ----------------------------------------------------------------
@@ -53,12 +53,12 @@ pnpm exec fastify start ./built/index.js --address 127.0.0.1 --port 3000
 pnpm exec fastify start ./built/index.js --options summaly-config.json
 ```
 
-`summaly-config.json` のサンプルは [docs/deploy-examples/summaly-config.example.json](docs/deploy-examples/summaly-config.example.json)。
+`summaly-config.json` のサンプルは [docs/deploy-examples/summaly-config.example.json](deploy-examples/summaly-config.example.json)。
 
 Fastify モード固有のオプション
 ----------------------------------------------------------------
 
-`fastify.register(Summaly, opts)` または `--options config.json` で渡せるオプション。ライブラリ共通のオプション（`lang` / `userAgent` / `responseTimeout` / `operationTimeout` / `contentLengthLimit` / `agent` 等）は [README.md](README.md) を参照。
+`fastify.register(Summaly, opts)` または `--options config.json` で渡せるオプション。ライブラリ共通のオプション（`lang` / `userAgent` / `responseTimeout` / `operationTimeout` / `contentLengthLimit` / `agent` 等）は [README.md](../README.md) を参照。
 
 | プロパティ | 型 | 説明 | デフォルト |
 |:--|:--|:--|:--|
@@ -83,7 +83,7 @@ summaly のキャッシュは **3 段重ね** で考えるのが運用の基本:
 
 ### `Cache-Control`
 
-すべてのレスポンスに付く（[phase1.1](docs/plans/phase1.1-fastify-cache-control.md)）:
+すべてのレスポンスに付く（[phase1.1](plans/phase1.1-fastify-cache-control.md)）:
 
 - 200: `Cache-Control: public, max-age=604800`
 - 400 / 500: `Cache-Control: public, max-age=3600`
@@ -113,7 +113,7 @@ summaly のキャッシュは **3 段重ね** で考えるのが運用の基本:
 #### 注意点
 
 - **5xx エラーもキャッシュされる**: 上流が一時障害から復旧しても `cacheErrorMaxAge` までエラーが返り続けます。プロセス再起動するか `cacheErrorMaxAge` を短く設定して緩和
-- **同時リクエストの dedup は行わない**（thundering herd 残課題、[phase4.2](docs/plans/phase4.2-inflight-dedup.md) で対応予定）。キャッシュが完成する前に来た並列リクエストは全て origin に到達します。Misskey のユーザーストリーミング由来で同時集中が起きる場合は phase4.2 完了を待つか、前段に nginx `proxy_cache` を立てて吸収してください
+- **同時リクエストの dedup は行わない**（thundering herd 残課題、[phase4.2](plans/phase4.2-inflight-dedup.md) で対応予定）。キャッシュが完成する前に来た並列リクエストは全て origin に到達します。Misskey のユーザーストリーミング由来で同時集中が起きる場合は phase4.2 完了を待つか、前段に nginx `proxy_cache` を立てて吸収してください
 - **プロセス再起動でキャッシュは消えます**。永続キャッシュは別実装（要望次第で Redis 等を将来検討）
 
 PDF 対応
@@ -207,11 +207,11 @@ setAgent({ https: new HttpsProxyAgent('http://proxy:8080') });
 本番デプロイ例（nginx + systemd）
 ----------------------------------------------------------------
 
-[docs/deploy-examples/](docs/deploy-examples/) に以下のサンプルがあります（**動作保証なし、参考用**。OS / ディストリ / 配置構成に応じた読み替えが必要）:
+[docs/deploy-examples/](deploy-examples/) に以下のサンプルがあります（**動作保証なし、参考用**。OS / ディストリ / 配置構成に応じた読み替えが必要）:
 
-- [summaly.nginx.conf.example](docs/deploy-examples/summaly.nginx.conf.example) — nginx reverse proxy 設定
-- [summaly.service.example](docs/deploy-examples/summaly.service.example) — systemd unit
-- [summaly-config.example.json](docs/deploy-examples/summaly-config.example.json) — Fastify プラグイン設定 JSON
+- [summaly.nginx.conf.example](deploy-examples/summaly.nginx.conf.example) — nginx reverse proxy 設定
+- [summaly.service.example](deploy-examples/summaly.service.example) — systemd unit
+- [summaly-config.example.json](deploy-examples/summaly-config.example.json) — Fastify プラグイン設定 JSON
 
 ### nginx + summaly 推奨構成
 
