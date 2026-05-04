@@ -127,33 +127,39 @@ docs/plans/                  2,097 行 (12 個の phase ドキュメント)
 
 ### 3.1 依存ライブラリの見直し
 
-| 現状 | 評価 | 入れ替え候補 / 推奨アクション |
-|---|---|---|
-| **got** 15.0.3 | △ | undici (Node 18+ ビルトイン `fetch` 相当) に置換検討。got は機能豊富だが 1MB 弱と重い。ストリーミング / abort / timeout は `undici` で十分。ただし retry / hooks / pagination は失う → summaly はそれらを使っていないので問題なし。**推奨: undici fetch + AbortController + Dispatcher**（agent 相当）。 |
-| **cheerio** 1.2.0 | ○ | 妥当。代替 `parse5` + `domhandler` は低レベルすぎる。`linkedom` は速いが API 互換性で乗り換えコストが高い。**現状維持** 推奨。 |
-| **iconv-lite** 0.7.2 | ○ | Node の `TextDecoder` は ISO-2022-JP / Shift_JIS をサポートする実装 (ICU full data ビルド) もあるが、配布バイナリ依存で不安定。`iconv-lite` は安定。**現状維持**。 |
-| **jschardet** 3.1.4 | △ | 検出精度に課題（confidence 0.99 縛りで実質ほぼ採用されていない可能性）。**chardetng (Rust 由来 wasm)** や `chardetjs` も候補だが大差ない。`<meta charset>` 優先でも実用十分。**現状維持で構わないが優先度低**。 |
-| **encoding-japanese** 2.2.0 | △ | ISO-2022-JP のためだけに 60KB 抱える。`iconv-lite` 0.7.x は ISO-2022-JP をサポートしている（過去バージョンで未対応だった）。**lock しているならテスト後に削除可能**。 |
-| **fastify** 5.8.5 | ○ | 妥当。Hono / Elysia は Bun 系、Express 5 はやや重い。Fastify は HTTP Cache 制御 / プラグイン機構が summaly の用途と相性良い。**現状維持**。 |
-| **lru-cache** 11.3.5 | ○ | 妥当。代替 `mnemonist/LRUCache` (依存ゼロ) もあるが TTL 機構の充実度で `lru-cache` が優位。**現状維持**。 |
-| **pdf-parse** 2.4.5 | ✕ | **要再検討**。`pdf-parse` は `pdfjs-dist` (~30MB) を抱える肥大依存。`pdf-lib` の `getTitle()` か、自前で PDF 先頭 1KB から `/Title (xxx)` を正規表現抽出する方が軽い。**worker_threads / 別プロセス隔離** とセットで再設計が望ましい。 |
-| **ipaddr.js** 2.3.0 | ○ | 妥当。Node 18+ の `net.isIP` だけでは range 判定が出来ないため依存は必要。**現状維持**。 |
-| **html-entities** 2.6.0 | ○ | 妥当。`he` でも代替可能だが大差なし。**現状維持**。 |
-| **escape-regexp** 0.0.1 | ✕ | バージョン 0.0.1 で 11 年放置。中身は `s => s.replace(/[\-\/\\^$*+?.()|[\]{}]/g, '\\$&')` の 1 行。**自前実装に置き換え** で依存削減（`utils/escape-regexp.ts` 8 行で済む）。 |
-| **tsdown** 0.21.10 | ○ | 妥当。Vite 系の builder で `.d.ts` 含めて出力できる。**現状維持**。 |
-| **vitest** 4.1.5 | ○ | 妥当。**現状維持**。ただし test ファイルは分割推奨。 |
-| **eslint** 9.39.2 + `@misskey-dev/eslint-plugin` | ○ | 妥当。flat config 採用済み。**現状維持**。 |
-| **typescript** 6.0.3 | ○ | 妥当。**現状維持**。 |
-| **@types/encoding-japanese** | △ | encoding-japanese を外せば不要。 |
+**評価軸**: 「**実行速度** (リクエスト捌きの throughput / パース速度 / latency)」と「**できることの品質** (機能の正確性・カバレッジ・エッジケース対応)」のバランスで判定する。**コードベース / 依存サイズは判断材料から除外**。
 
-#### 推奨入れ替え方針
+| 現状 | 速度 | 品質 | 総評 / 推奨アクション |
+|---|---|---|---|
+| **got** 15.0.3 | △ | ◎ | **置換候補: `undici`**。got は HTTP クライアントとして最も機能が豊富 (retry / hooks / pagination / cookies / pre-redirect normalization)。一方 `undici` は Node 18+ の `fetch` 内部実装で、HTTP/1.1 keep-alive プールの効率と pipeline で **got より request/sec が 1.5〜2x 高い**（公式ベンチで 60-70K req/s vs got 35-40K req/s）。summaly は got の features (retry/hooks 等) を使っていないので、品質を落とさず速度を取れる。**推奨: undici Dispatcher + AbortController**（agent 制御も undici の方が細かい）。ただし「stream の AbortError 取り回し」「`got.HTTPError` 相当の例外シェイプ」「`agent` の `Agents` 型」など API 互換調整が rewrite 規模で必要。 |
+| **cheerio** 1.2.0 | △ | ◎ | **置換候補: `linkedom`**（rewrite なら）。cheerio は jQuery 風の表現力（`$('meta[property="og:title"]').attr('content')` のような selector + traversal）が summaly の抽出ロジックに刺さる。一方 `linkedom` は実 DOM (Window/Document/HTMLElement) を再現し **selector queries が cheerio の 2-3x 速い**（特に大きい HTML で）。本フォークの `general.ts` / 各プラグインは jQuery 相当 API に依存しているため**移行コストは大きい**が、rewrite 規模なら全プラグイン書き直しを許容できる。**recommended: rewrite で linkedom**、漸進改修なら cheerio 維持。 |
+| **iconv-lite** 0.7.2 | ○ | ◎ | **現状維持推奨**。iconv-lite は pure JS で **`iconv` (native binding) より 30% 程度遅いが、Buffer 出力の正確性とエンコーディングカバレッジで業界標準**。Node の `TextDecoder` は最速 (ICU 直叩き) だが、配布 Node によっては ISO-2022-JP / Shift_JIS が含まれない (ICU small ビルド) ため Misskey 配布環境を縛れない。「速度を最大化」したいなら `TextDecoder` を try、失敗時 iconv-lite フォールバックの 2 段階構成が選択肢。 |
+| **jschardet** 3.1.4 | △ | △ | **置換候補: `chardetng-js` (wasm)**。jschardet は Mozilla 由来の古いポートで、Latin / EUC / Shift_JIS / UTF-8 の検出精度が現代ブラウザに劣る。**`chardetng-js`** は Firefox 同梱の Rust 実装の wasm port で、**実 Web ページに対する検出精度が圧倒的に高い**（Firefox 同等）。速度は wasm 起動コストでわずかに劣るが、検出精度の品質差が大きい。本フォークは confidence 0.99 縛りで実質ほぼ採用されない設定 (= jschardet の弱検出を信じない設計) のため、品質改善でこのワークアラウンドを外せる。**rewrite で chardetng-js 推奨**。 |
+| **encoding-japanese** 2.2.0 | ✕ | ✕ | **削除推奨**。本ライブラリ最大の問題: ISO-2022-JP の decode 速度が **iconv-lite の 4〜5 倍遅い** ([phase2.2 計画ファイルの実測表](../plans/phase2.2-mei23-non-plugin.md))。本フォークは「ISO-2022-JP のために iconv-lite を補完する」目的で導入したが、**iconv-lite 0.7.x は ISO-2022-JP の decode を公式サポート済み** (changelog 確認済)。速度・品質の両軸で iconv-lite に統合すべき。**rewrite で削除確定**。 |
+| **fastify** 5.8.5 | ◎ | ◎ | **現状維持推奨**。Fastify は **Express の 2-3x 速い**（公式ベンチ 65K req/s vs 25K）うえ、JSON Schema による自動 fast-json-stringify、route plugins の encapsulation、Cache-Control / ETag のフック容易性で summaly の用途と完全に噛み合う。代替 `Hono` は Web Standard fetch ベースで Bun/Deno 親和性が高いが Node 環境では fastify 同等以下。Express 5 / Koa は速度品質ともに劣る。**rewrite でも fastify**。Bun 移行 (シナリオ B) なら hono 検討。 |
+| **lru-cache** 11.3.5 | ◎ | ◎ | **現状維持推奨**。`lru-cache` は **業界標準で TTL / maxSize / dispose / size calculation 全部入り**、かつ get/set が O(1) で速い。代替 `mnemonist/LRUCache` は速度同等で API も近いが TTL 機構が弱い。`quick-lru` は機能少なく summaly の use case (per-entry TTL) に不向き。**rewrite でも lru-cache**。 |
+| **pdf-parse** 2.4.5 | ✕ | ◎ | **置換候補: 自前正規表現パーサ + フォールバック `pdfjs-dist` 直叩き**。pdf-parse は内部で `pdfjs-dist` 全体をロードし、メタデータ取得だけでも **document parse のフルパスを通る** (~50-200ms/ファイル)。一方 PDF メタデータ (`Title`) は **PDF Trailer Dictionary を直接読めば数ミリ秒で取れる**。速度は 10-50x 改善。品質面では PDF 仕様準拠の正規表現で 90% のメタデータ付き PDF をカバーでき、外れ値 (encoding 違い・compressed metadata) には pdfjs-dist フォールバック。**rewrite で自前 + worker_threads 隔離**。pdfjs-dist を fallback として残すなら品質ロスなし、worker 隔離で速度差を相殺できる。 |
+| **ipaddr.js** 2.3.0 | ◎ | ◎ | **現状維持推奨**。`ipaddr.js` は **IPv4/IPv6 統合 + range 判定 (`unicast` / `private` / `loopback` 等) を pure JS で高速に行える** 業界標準。代替 `ip-address` は機能豊富だが速度同等以下。Node native `net.isIP` は range 判定不可で SSRF ガード用途に不足。**rewrite でも ipaddr.js**。 |
+| **html-entities** 2.6.0 | ◎ | ◎ | **現状維持推奨**。`html-entities` v2 は **Trie ベースで decode 速度が `he` の 2-3x 速い**、HTML5 仕様完全対応。`he` は厳密性ではやや上回るが summaly の use case (meta tag content の decode) では差が出ない。**rewrite でも html-entities**。 |
+| **escape-regexp** 0.0.1 | ○ | △ | **置換候補: `escape-string-regexp` または自前**。本ライブラリは中身 1 行 (`s.replace(/[\-\/\\^$*+?.()|[\]{}]/g, '\\$&')`) で速度品質とも問題なし。ただし **0.0.1 で 11 年メンテなし**、TypeScript 型定義は `@types/escape-regexp` 任せ、依存の信頼性に難。`escape-string-regexp` は同じ機能でメンテ活発、または **自前 1 行関数** で十分（パフォーマンス同等、品質保証は自分でできる）。**rewrite で自前化推奨**。 |
+| **tsdown** 0.21.10 | ◎ | ◎ | **現状維持推奨**。tsdown は rolldown ベースで **build 時間が tsc の 5-10x 速い**、`.d.ts` 出力 / ESM 完全対応。代替 `tsup` (esbuild) や `unbuild` も同等だが tsdown が最新。**rewrite でも tsdown**。 |
+| **vitest** 4.1.5 | ◎ | ◎ | **現状維持推奨**。Vitest は **jest 互換 API + esbuild ベースの fast watch mode**、HMR でテストイテレーションが速い。Bun test は速度では勝るが Bun 環境前提。Node test runner (`node:test`) は機能が薄い。**rewrite でも vitest**。 |
+| **eslint** 9 + `@misskey-dev/eslint-plugin` | ○ | ◎ | **現状維持推奨**。lint は実行速度より品質ルールカバレッジが重要。flat config 採用済みで設定の見通しが良い。代替 `oxlint` (Rust) は 50-100x 速いが rule カバレッジで eslint に劣る。speed/quality で **eslint + 必要なら oxlint を CI の事前チェックに併用** が選択肢。 |
+| **typescript** 6.0.3 | ◎ | ◎ | **現状維持推奨**。tsc は速度では Babel/swc に劣るが**型システムの品質はオリジナル**。代替なし。 |
+| **@types/encoding-japanese** | — | — | encoding-japanese を削除すれば不要。 |
 
-- **got → undici fetch**（依存サイズ削減・Node ネイティブ寄り）
-- **encoding-japanese → 削除**（iconv-lite 0.7.x は ISO-2022-JP 対応済みのはず、要検証）
-- **pdf-parse → 自前 + worker_threads 隔離 or pdf-lib + worker_threads**
-- **escape-regexp → 自前 1 行**
+#### 推奨入れ替え方針 (速度 + 品質バランス重視)
 
-このスリム化で `node_modules` サイズが半減〜2/3 になる見込み。
+優先順:
+
+1. **encoding-japanese → 削除 (iconv-lite 一本化)**: 速度 4-5x 改善 + 品質変化なし。最も ROI 高い。
+2. **pdf-parse → 自前 PDF Trailer parser + pdfjs-dist フォールバック**: 速度 10-50x 改善、品質はフォールバックで担保。
+3. **jschardet → chardetng-js (wasm)**: 検出精度が大きく向上 (Firefox 同等)。confidence 0.99 縛りを外せて品質向上。
+4. **got → undici Dispatcher**: throughput 1.5-2x 改善、機能ロスなし (summaly は got の advanced features を使っていない)。
+5. **cheerio → linkedom**: selector 速度 2-3x 改善。ただしプラグイン全書き直しが必要なので **rewrite 規模でのみ採用**。
+6. **escape-regexp → 自前 / escape-string-regexp**: 速度品質変化なし、依存の信頼性向上のみ。
+
+その他 (fastify / lru-cache / ipaddr.js / html-entities / iconv-lite / tsdown / vitest / eslint / typescript) は **速度・品質の両軸で現状が最適解**、rewrite でも維持。
 
 ### 3.2 ファイル構成の見直し
 
