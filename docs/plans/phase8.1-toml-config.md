@@ -3,7 +3,8 @@
 > 状態: **未着手**
 > 種別: 運用基盤 / 設定 UX
 > サイズ: **M**
-> 依存: なし（[phase4.1](phase4.1-fastify-in-memory-cache.md) / [phase5.1](phase5.1-pdf-support.md) で導入された Fastify オプション群を流し込む対象として利用）
+> 依存: [phase4.2](phase4.2-inflight-dedup.md) / [phase7.1](phase7.1-dev-server.md)（仕掛中の `SummalyOptions` 拡張が落ち着いてから整合性込みで TOML 化するため、両方の完了後に着手）
+> 関連: [phase4.1](phase4.1-fastify-in-memory-cache.md) / [phase5.1](phase5.1-pdf-support.md) で導入された Fastify オプション群を流し込む対象
 
 ## 目的・背景
 

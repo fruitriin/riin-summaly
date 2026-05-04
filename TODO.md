@@ -13,7 +13,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 |---|---|---|:---:|---|
 | 4 | 4.2 | [docs/plans/phase4.2-inflight-dedup.md](docs/plans/phase4.2-inflight-dedup.md) — Fastify モードの in-flight dedup（thundering herd 緩和） | S〜M | 未着手 |
 | 7 | 7.1 | [docs/plans/phase7.1-dev-server.md](docs/plans/phase7.1-dev-server.md) — Dev サーバ（動作確認 UI / プラグインのワンクリック検証） | M | 未着手 |
-| 8 | 8.1 | [docs/plans/phase8.1-toml-config.md](docs/plans/phase8.1-toml-config.md) — TOML ベースの設定ファイル (config.example.toml) への移行 | M | 未着手 |
+| 8 | 8.1 | [docs/plans/phase8.1-toml-config.md](docs/plans/phase8.1-toml-config.md) — TOML ベースの設定ファイル (config.example.toml) への移行 | M | 未着手（phase4.2 / phase7.1 完了後に着手） |
 | — | 6.1 | [docs/plans/phase6.1-plugin-twitter.md](docs/plans/phase6.1-plugin-twitter.md) — twitter プラグイン | S | 保留（運用判断待ち） |
 
 ### 並列実行マップ
@@ -31,7 +31,8 @@ phase5.1  完了
    ↓
 phase4.2  ─┐  次に着手可（phase4.1 の thundering herd 残課題）
 phase7.1  ─┤  次に着手可（dev サーバ・並列可）
-phase8.1  ─┤  次に着手可（TOML 設定ファイル・並列可）
+           ↓
+phase8.1  ← phase4.2 / phase7.1 完了後（仕掛中の SummalyOptions 群が落ち着いてから整合性込みで TOML 化）
            ↓
 phase6.1  ← 採用判断後（保留）
 ```
