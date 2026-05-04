@@ -277,13 +277,13 @@ export interface PluginContext<C = unknown> {
 
 rewrite 規模なので **「現状維持」は採らない**。以下 3 候補から選ぶ:
 
-#### 候補 A: Vite Plus
+#### 候補 A: Vite Plus（Node 前提）
 
-[Vite Plus](https://viteplus.dev/guide/) は Vite / Vitest / Oxlint / Oxfmt / Rolldown / **tsdown** / Vite Task を統合した「**統一ツールチェーン**」。
+[Vite Plus](https://viteplus.dev/guide/) は Vite / Vitest / Oxlint / Oxfmt / Rolldown / **tsdown** / Vite Task を統合した「**統一ツールチェーン**」。**公式ドキュメントが「Vite+ will manage your global Node.js runtime and package manager」と明記している通り、Node ランタイム前提**（Bun / Deno のサポートは公式記述なし）。
 
 | 領域 | 採用後 |
 |---|---|
-| runtime | Node |
+| runtime | **Node 固定**（Vite Plus が管理対象としている） |
 | bundler | tsdown (Vite Plus 経由) |
 | test | vitest (Vite Plus 経由) |
 | lint | **Oxlint** (Rust 製、ESLint の **50-100x 速い**) |
@@ -300,8 +300,11 @@ rewrite 規模なので **「現状維持」は採らない**。以下 3 候補�
 - Node ランタイム維持 → upstream cherry-pick 容易性が比較的高い
 
 **弱み**:
+- **Bun ランタイムを runtime に取れない**（Vite Plus 自体が Node 管理を前提）。Bun の runtime 速度メリットを取るなら候補 C へ
 - Oxlint の rule カバレッジは ESLint 8/9 の全 rule をカバーしていない → fallback で eslint も併走させる選択肢あり
 - 新興ツールのため Misskey エコシステムでの採用例は少ない
+
+> **補足**: 中身の個別ツール（Vite / Vitest / tsdown / Oxlint / Oxfmt）は単体なら Bun でも動かせるので、「Vite Plus というメタキットを使わずに、同じ構成を Bun ランタイムで組む」ことは可能 → それが候補 C に相当する。Vite Plus を使う = Node 固定。
 
 #### 候補 B: Bun + Biome
 
@@ -351,6 +354,7 @@ rewrite 規模なので **「現状維持」は採らない**。以下 3 候補�
 
 | 軸 | A: Vite Plus | B: Bun + Biome | C: Bun + Oxlint |
 |---|---|---|---|
+| runtime | **Node 固定** | Bun | Bun |
 | runtime 速度 | ○ Node | ◎ Bun | ◎ Bun |
 | CI 速度 | ○ | ◎ | ◎ |
 | 既存 ESLint config の継承 | ○ Oxlint 互換 | △ Biome 独自 | ○ Oxlint 互換 |
@@ -358,6 +362,8 @@ rewrite 規模なので **「現状維持」は採らない**。以下 3 候補�
 | upstream Node cherry-pick | ◎ | △ Bun 差分 | △ Bun 差分 |
 | 運用実績 | △ 新興 | ○ 増加中 | △ 少ない |
 | 設定ファイル数 | 複数 (Vite Plus 統合) | 最小 (Biome 一体) | 中 |
+
+> **「Vite Plus + Bun runtime」は採れない**（Vite Plus が Node を管理対象として明記）。Bun runtime + Vite/Vitest/Oxlint 個別構成にしたいなら候補 C を選ぶ。
 
 #### 推奨
 
