@@ -1,0 +1,69 @@
+# summaly Fastify モードの設定例。
+# 運用時は `cp config.example.toml config.toml` で複製して値を調整する。
+# `pnpm serve [config.toml]` で読み込まれる。
+#
+# 環境変数との関係:
+#   - `SUMMALY_CONFIG_PATH`           : ファイルパスを上書き（CLI 引数 > env > "./config.toml"）
+#   - `SUMMALY_ALLOW_PRIVATE_IP=true` : プライベート IP 許可（テスト用、TOML には対応キーなし）
+#   - `SUMMALY_FAMILY=4` / `=6`        : IP family 強制
+#   - `SUMMALY_ENABLE_PDF=true`        : PDF 有効化（`[summaly.pdf].enabled` を明示すれば TOML が優先）
+
+[server]
+# Fastify の bind 設定。SSRF を防ぐためデフォルトはループバックに留める。
+# nginx などの前段プロキシから受ける運用では 127.0.0.1 のままで OK。
+host = "127.0.0.1"
+port = 3000
+
+[summaly]
+# 共通 SummalyOptions（リクエスト個別の挙動）
+# userAgent = "SummalyBot/5.4"        # 省略すると `SummalyBot/<version>` が使われる
+responseTimeout = 20000               # ミリ秒。フェーズごと（DNS解決・接続・レスポンス各々）
+operationTimeout = 60000              # ミリ秒。リクエスト全体
+contentLengthLimit = 10485760         # 10 MiB。受信前に Content-Length を見て弾く + 受信中も監視
+contentLengthRequired = false         # true で Content-Length 未指定のレスポンスを拒否
+useRange = false                      # true で `Range: bytes=0-N-1` を送る（帯域節約、サーバ未対応時はフルボディ fallback）
+
+[summaly.cache]
+# Cache-Control ヘッダ + プロセス内 LRU キャッシュ + in-flight dedup
+maxAge = 604800                       # 成功レスポンスの max-age (秒、デフォルト 1 週間)
+errorMaxAge = 3600                    # エラーレスポンスの max-age (秒、デフォルト 1 時間)
+inMemory = true                       # プロセス内 LRU キャッシュを有効化
+inMemoryMaxEntries = 1000             # LRU の最大エントリ数（1 エントリ数 KB 想定）
+inFlightDedup = true                  # 同一 URL の並列リクエストを 1 本化（thundering herd 緩和）
+
+[summaly.pdf]
+# PDF レスポンスのタイトル取得（オプトイン）。
+# 値を明示すれば環境変数 SUMMALY_ENABLE_PDF より優先される（`enabled = false` で env=true を上書き可能）。
+# キーをコメントアウト or 削除すると env を見るフォールバックが効く。
+enabled = false
+
+[plugins]
+# 利用許可するプラグイン名の配列。
+#   - 配列が無い / 省略  → 全プラグイン有効（互換挙動）
+#   - 配列を指定        → オプトイン許可リスト（記載のないプラグインは無効）
+#   - 空配列 `[]`       → 組み込み全 disable（汎用 OG パスのみで動作）
+allowed = [
+  "amazon",
+  "bluesky",
+  "wikipedia",
+  "branchio-deeplinks",
+  "youtube",
+  "spotify",
+  # 性的コンテンツを含むサイトの組み込みプラグイン。除外したい場合はコメントアウトのまま:
+  # "dlsite",
+  # "iwara",
+  # "komiflo",
+  # "nijie",
+]
+
+# プラグイン別の設定セクション（将来拡張用 placeholder）。
+# 現状の組み込みプラグインはハードコードのため、これらのテーブルは **本フェーズでは何も読まない**。
+# 個別プラグインへの options 受け渡し機構が実装されたタイミングで読み始める想定。
+
+# [plugins.komiflo]
+# preferredVariant = "346_mobile"
+# apiBaseUrl = "https://api.komiflo.com"
+
+# [plugins.iwara]
+# descriptionMaxLength = 500
+# sensitiveHosts = ["ecchi.iwara.tv"]

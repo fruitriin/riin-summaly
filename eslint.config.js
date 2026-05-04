@@ -15,6 +15,7 @@ export default [ // eslint-disable-line import/no-default-export
 			'test',
 			'worktrees',
 			'dev',
+			'bin',
 		],
 	},
 	{

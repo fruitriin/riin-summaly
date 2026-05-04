@@ -38,40 +38,47 @@ git clone https://github.com/misskey-dev/summaly.git
 cd summaly
 pnpm install --frozen-lockfile
 pnpm build
-pnpm serve   # = fastify start ./built/index.js (デフォルト 0.0.0.0:3000)
+cp config.example.toml config.toml   # 設定をコピーして編集する
+pnpm serve config.toml               # = tsx bin/summaly-server.ts config.toml
 ```
 
-ポート / バインドアドレスを変更:
+`pnpm serve` は引数として TOML 設定ファイルのパスを受け取る。引数省略時は環境変数 `SUMMALY_CONFIG_PATH` → `./config.toml` の順にフォールバックする:
 
 ```bash
-pnpm exec fastify start ./built/index.js --address 127.0.0.1 --port 3000
+SUMMALY_CONFIG_PATH=/etc/summaly/config.toml pnpm serve
 ```
 
-オプション JSON を渡す（後述の Fastify モード固有のオプションを設定）:
+ポート / バインドアドレスは TOML の `[server]` セクションで指定する:
 
-```bash
-pnpm exec fastify start ./built/index.js --options summaly-config.json
+```toml
+[server]
+host = "127.0.0.1"
+port = 3000
 ```
 
-`summaly-config.json` のサンプルは [docs/deploy-examples/summaly-config.example.json](deploy-examples/summaly-config.example.json)。
+設定例: [config.example.toml](../config.example.toml) または [docs/deploy-examples/summaly-config.example.toml](deploy-examples/summaly-config.example.toml)。
+
+> **Migration note (phase8.1 / 5.4)**: 旧 fastify-cli `--options summaly-config.json` ベースは廃止しました。マイグレーション手順は [docs/deploy-examples/README.md](deploy-examples/README.md) を参照してください。
 
 Fastify モード固有のオプション
 ----------------------------------------------------------------
 
-`fastify.register(Summaly, opts)` または `--options config.json` で渡せるオプション。ライブラリ共通のオプション（`lang` / `userAgent` / `responseTimeout` / `operationTimeout` / `contentLengthLimit` / `agent` 等）は [README.md](../README.md) を参照。
+`fastify.register(Summaly, opts)` で渡せる関数オプション、または `config.toml` の `[summaly]` 系セクションに対応する設定。ライブラリ共通のオプション（`lang` / `userAgent` / `responseTimeout` / `operationTimeout` / `contentLengthLimit` / `agent` 等）は [README.md](../README.md) を参照。
 
-| プロパティ | 型 | 説明 | デフォルト |
-|:--|:--|:--|:--|
-| **cacheMaxAge** | *number* | 成功レスポンスの `Cache-Control: public, max-age=<秒>`。`0` で `no-store` | `604800` (1 週間) |
-| **cacheErrorMaxAge** | *number* | エラーレスポンスの `Cache-Control` | `3600` (1 時間) |
-| **inMemoryCache** | *boolean* | プロセス内 LRU キャッシュを有効化 | `false` |
-| **inMemoryCacheMaxEntries** | *number* | LRU の最大エントリ数 | `1000` |
-| **inFlightDedup** | *boolean* | 同一 URL の並列リクエストを 1 本化（thundering herd 緩和） | `true` |
-| **useRange** | *boolean* | `Range: bytes=0-N-1` で先頭領域だけ取得（帯域節約） | `false` |
-| **allowedPlugins** | *string[]* | 利用許可するプラグイン名の配列 | `undefined` (全有効) |
-| **enablePdf** | *boolean* | PDF レスポンスのタイトル取得を有効化 | `false` |
+| プロパティ (関数) | TOML キー | 型 | 説明 | デフォルト |
+|:--|:--|:--|:--|:--|
+| **cacheMaxAge** | `[summaly.cache] maxAge` | *number* | 成功レスポンスの `Cache-Control: public, max-age=<秒>`。`0` で `no-store` | `604800` (1 週間) |
+| **cacheErrorMaxAge** | `[summaly.cache] errorMaxAge` | *number* | エラーレスポンスの `Cache-Control` | `3600` (1 時間) |
+| **inMemoryCache** | `[summaly.cache] inMemory` | *boolean* | プロセス内 LRU キャッシュを有効化 | `false` |
+| **inMemoryCacheMaxEntries** | `[summaly.cache] inMemoryMaxEntries` | *number* | LRU の最大エントリ数 | `1000` |
+| **inFlightDedup** | `[summaly.cache] inFlightDedup` | *boolean* | 同一 URL の並列リクエストを 1 本化（thundering herd 緩和） | `true` |
+| **useRange** | `[summaly] useRange` | *boolean* | `Range: bytes=0-N-1` で先頭領域だけ取得（帯域節約） | `false` |
+| **allowedPlugins** | `[plugins] allowed` | *string[]* | 利用許可するプラグイン名の配列 | `undefined` (全有効) |
+| **enablePdf** | `[summaly.pdf] enabled` | *boolean* | PDF レスポンスのタイトル取得を有効化 | `false` |
 
-`SUMMALY_FAMILY` / `SUMMALY_ENABLE_PDF` / `SUMMALY_ALLOW_PRIVATE_IP` は環境変数。後述。
+`SUMMALY_ALLOW_PRIVATE_IP` / `SUMMALY_FAMILY` には対応する TOML キーが**ない**（環境変数のみ）。`SUMMALY_ENABLE_PDF` は `[summaly.pdf] enabled` 未指定時のフォールバックとして読まれる（明示すれば TOML が優先）。
+
+`SUMMALY_FAMILY` / `SUMMALY_ENABLE_PDF` / `SUMMALY_ALLOW_PRIVATE_IP` の詳細は後述。
 
 キャッシュ戦略
 ----------------------------------------------------------------

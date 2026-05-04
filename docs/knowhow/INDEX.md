@@ -34,3 +34,9 @@
 | ファイル | 要約 | キーワード |
 |---|---|---|
 | [dev-server-tsx-pattern.md](dev-server-tsx-pattern.md) | tsx で TS を直接走らせる dev サーバ構築。tsdown の build-time 定数 `_VERSION_` を side-effect import で globalThis に注入する ESM 評価順テクニック、本番 bundle / typecheck / lint への混入防止、HOST/PORT の defensive validation で SSRF リレーを防ぐ、`SUMMALY_ALLOW_PRIVATE_IP` をプロセス内で限定する | tsx, dev サーバ, _VERSION_, globalThis, side-effect import, ESM 評価順序, depth-first, tsconfig.dev.json, @fastify/static, Vanilla JS, SUMMALY_ALLOW_PRIVATE_IP, HOST バリデーション, SSRF リレー |
+
+## summaly 設定（TOML）
+
+| ファイル | 要約 | キーワード |
+|---|---|---|
+| [toml-config-loader-pattern.md](toml-config-loader-pattern.md) | fastify-cli `--options config.json` から TOML ベースに移行したときの設計。loader を `bin/` 配下に置いて npm 公開 bundle への混入を防ぐ、smol-toml の選定理由、`host=""` の SSRF リレー対策、未知キーを silently 無視する forward-compat 設計、`parseTomlConfigString` を export してファイル I/O 抜きにテスト、`[plugins.<name>]` placeholder の扱い | TOML, smol-toml, config-loader, fastify-cli 廃止, [server], [summaly.cache], [plugins.allowed], [plugins.<name>] placeholder, expectNonNegativeFiniteNumber, host 空文字, SSRF リレー, breaking change, JSON マイグレーション |

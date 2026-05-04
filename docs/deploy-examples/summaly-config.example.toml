@@ -1,0 +1,33 @@
+# summaly Fastify モードの設定例（deploy 向け）。
+# `pnpm serve /etc/summaly/config.toml` で読み込む想定。
+# 詳細は /config.example.toml またはリポジトリの docs/SETUP.md を参照。
+
+[server]
+host = "127.0.0.1"
+port = 3000
+
+[summaly]
+responseTimeout = 20000
+operationTimeout = 60000
+contentLengthLimit = 10485760
+useRange = true
+
+[summaly.cache]
+maxAge = 604800
+errorMaxAge = 3600
+inMemory = true
+inMemoryMaxEntries = 1000
+inFlightDedup = true
+
+[summaly.pdf]
+enabled = false
+
+[plugins]
+allowed = [
+  "amazon",
+  "bluesky",
+  "wikipedia",
+  "branchio-deeplinks",
+  "youtube",
+  "spotify",
+]

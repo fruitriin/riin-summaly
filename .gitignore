@@ -1,6 +1,7 @@
 /node_modules
 /built
 npm-debug.log
+config.toml
 
 # --- ADDF Framework (do not remove) ---
 .claude/commands/*.exp.md

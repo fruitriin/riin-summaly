@@ -1,6 +1,6 @@
 # Phase 8.1 — TOML ベースの設定ファイル (`config.toml`) への移行
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: 運用基盤 / 設定 UX
 > サイズ: **M**
 > 依存: [phase4.2](phase4.2-inflight-dedup.md) / [phase7.1](phase7.1-dev-server.md)（仕掛中の `SummalyOptions` 拡張が落ち着いてから整合性込みで TOML 化するため、両方の完了後に着手）
@@ -200,34 +200,21 @@ function mapTomlToSummalyOptions(cfg: TomlRoot): SummalyOptions {
 
 各ステップで `pnpm eslint && pnpm typecheck && pnpm test` を通す。
 
-- [ ] **Step 1 — `smol-toml` 依存追加**
-  - `pnpm add smol-toml`
-- [ ] **Step 2 — TOML スキーマと loader 実装**
-  - [`src/config-loader.ts`](../../src/config-loader.ts) を新設
-    - `parseTomlConfig(path: string): SummalyOptions & { server?: ServerOptions }`
-    - 不正値は `RangeError` / `TypeError` で early fail（メッセージで該当キーを明示）
-  - 単体テスト: 正常系・空ファイル・型違い・未知キーは無視・[plugins.<name>] セクションは現状無視
-- [ ] **Step 3 — 起動エントリ `bin/summaly-server.ts`**
-  - 引数 `process.argv[2]` または `process.env.SUMMALY_CONFIG_PATH` から TOML パス読み込み
-  - `[server]` の host / port で listen
-  - graceful shutdown (`SIGTERM` / `SIGINT` → `app.close()`)
-- [ ] **Step 4 — `pnpm serve` script の置換**
-  - `package.json` の `scripts.serve` を `tsx bin/summaly-server.ts` に変更
-  - 旧 fastify-cli は **devDependencies からは外さない**（テスト等で利用している場合に備えて）。実運用パスから外すだけ
-- [ ] **Step 5 — `config.example.toml` をリポジトリルートに配置**
-  - スキーマ全項目をコメント付きで列挙
-  - `config.toml` を `.gitignore` に追加
-- [ ] **Step 6 — `docs/deploy-examples/` の更新**
-  - 旧 `summaly-config.example.json` は残しつつ `summaly-config.example.json` 冒頭にコメントで「TOML への移行を推奨」と明記
-  - nginx 設定例 / systemd 設定例から `--options ...json` を削除して `tsx bin/summaly-server.ts /etc/summaly/config.toml` 等に書き換え
-- [ ] **Step 7 — テスト**
-  - TOML パース正常系 / 異常系
-  - mapTomlToSummalyOptions が SummalyOptions に正しくマッピングされる
-  - `[plugins.<name>]` セクションが存在しても現状はスルーされる（将来拡張のための placeholder）
-- [ ] **Step 8 — README / SETUP.md 更新**
-  - [`docs/SETUP.md`](../SETUP.md) の「最小起動」と「Fastify モード固有のオプション」を TOML 例に書き換え
-  - [`README.md`](../../README.md) の「Misskey 管理人として導入する場合」も更新
-  - 環境変数との優先順位を表で整理
+- [x] **Step 1 — `smol-toml` 依存追加** — devDep として `1.6.1`
+- [x] **Step 2 — TOML スキーマと loader 実装** — **`bin/config-loader.ts`** に配置（`src/` ではなく、本番 bundle / npm 公開物への混入リスクを完全に断つため）。`parseTomlConfigString(toml)` / `parseTomlConfig(path)` を export、不正値は TypeError / RangeError / ConfigError で fail-fast
+- [x] **Step 3 — 起動エントリ `bin/summaly-server.ts`** — CLI 引数 > `SUMMALY_CONFIG_PATH` env > `./config.toml` の優先順位、`bin/setup-version.ts` で `_VERSION_` 注入、SIGTERM/SIGINT で graceful shutdown
+- [x] **Step 4 — `pnpm serve` script 置換** — `tsx bin/summaly-server.ts`、`pnpm test` も `vitest run` に拡張（複数テストファイル対応）
+- [x] **Step 5 — `config.example.toml`** — リポジトリルート、`.gitignore` に `config.toml` 追加
+- [x] **Step 6 — `docs/deploy-examples/` 更新** — `summaly-config.example.toml` 新設、`.json` に DEPRECATED コメント、systemd 例を tsx ベースに、README にマイグレーション表
+- [x] **Step 7 — テスト** — `test/config-loader.test.ts` で 12 件（正常系・型違い・負数・ポート範囲・空ホスト・[plugins.<name>] 無視・空 allowed・未知キー無視等）
+- [x] **Step 8 — README / SETUP.md / CHANGELOG** — TOML 起動への切替を反映、関数オプション ↔ TOML キーの対応表、Breaking Change を CHANGELOG に明記
+
+## 実装結果メモ
+
+- **`bin/` 配置**: 元プランは `src/config-loader.ts` だったが、code-review agent の指摘で `bin/config-loader.ts` に変更。`src/` 配置だと将来 `src/index.ts` が誤って import するリスクがあり、`smol-toml` が npm 公開 bundle に混入する可能性がある。`bin/` は `tsdown` の entry 外、`tsconfig.dev.json` で typecheck のみ
+- **`server.host` 空文字列を弾く**: dev サーバの knowhow（`dev-server-tsx-pattern.md`）と同じ問題。`host = ""` は Fastify の listen で `::` (IPv6 全インターフェース) になり、`SUMMALY_ALLOW_PRIVATE_IP=true` と組み合わさると SSRF リレーになりうる。loader 段階で `RangeError` で弾く
+- **TOML キー命名**: `cacheMaxAge` → `[summaly.cache] maxAge` のようにセクション分割で冗長プレフィックスを削る形に。SETUP.md の対応表で 1:1 マッピングを示す
+- **Plan の細部からの逸脱**: (1) loader を `src/` → `bin/` に移動、(2) テストを 7 件 → 12 件に拡充（host 空文字ケース等）、(3) `parseTomlConfigString` を export してファイル I/O 抜きにテスト
 
 ---
 

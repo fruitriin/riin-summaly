@@ -5,13 +5,12 @@
 
 phase 番号は **着手順**（数値が小さいほど先）。同じ大番号内（例: 2.1 と 2.2）は並列着手可能。
 
-## 現在のフェーズ: phase8.1（次に着手可、phase6.1 は保留中）
+## 現在のフェーズ: 次タスク確認待ち（phase6.1 は保留中）
 
 ## バックログ
 
 | 優先度 | Phase | 計画ファイル | サイズ | 状態 |
 |---|---|---|:---:|---|
-| 8 | 8.1 | [docs/plans/phase8.1-toml-config.md](docs/plans/phase8.1-toml-config.md) — TOML ベースの設定ファイル (config.example.toml) への移行 | M | 未着手 |
 | — | 6.1 | [docs/plans/phase6.1-plugin-twitter.md](docs/plans/phase6.1-plugin-twitter.md) — twitter プラグイン | S | 保留（運用判断待ち） |
 
 ### 並列実行マップ
@@ -28,11 +27,12 @@ phase4.1  完了
 phase4.2  完了
 phase5.1  完了
 phase7.1  完了
+phase8.1  完了
    ↓
-phase8.1  ─┐  次に着手可（TOML 設定移行）
-           ↓
 phase6.1  ← 採用判断後（保留）
 ```
+
+> **次の Plan 候補がない**: 全アクティブフェーズが完了。次の作業候補があればオーナーが新規 Plan を docs/plans/ に追加するか、phase6.1 の運用判断を行う。
 
 ---
 
@@ -50,3 +50,4 @@ phase6.1  ← 採用判断後（保留）
 | 4.2 | [docs/plans/phase4.2-inflight-dedup.md](docs/plans/phase4.2-inflight-dedup.md) — Fastify in-flight dedup（thundering herd 緩和） | 完了 (2026-05-04)、Progress: [.claude/Progresses/2026-05-04-phase4.2-inflight-dedup.md](.claude/Progresses/2026-05-04-phase4.2-inflight-dedup.md) |
 | 5.1 | [docs/plans/phase5.1-pdf-support.md](docs/plans/phase5.1-pdf-support.md) — PDF 対応（オプトイン+ハング対策5層） | 完了 (2026-05-04)、Progress: [.claude/Progresses/2026-05-04-phase5.1-pdf-support.md](.claude/Progresses/2026-05-04-phase5.1-pdf-support.md) |
 | 7.1 | [docs/plans/phase7.1-dev-server.md](docs/plans/phase7.1-dev-server.md) — Dev サーバ（動作確認 UI） | 完了 (2026-05-05)、Progress: [.claude/Progresses/2026-05-05-phase7.1-dev-server.md](.claude/Progresses/2026-05-05-phase7.1-dev-server.md) |
+| 8.1 | [docs/plans/phase8.1-toml-config.md](docs/plans/phase8.1-toml-config.md) — TOML ベースの設定ファイルへの移行 | 完了 (2026-05-05)、Progress: [.claude/Progresses/2026-05-05-phase8.1-toml-config.md](.claude/Progresses/2026-05-05-phase8.1-toml-config.md) |

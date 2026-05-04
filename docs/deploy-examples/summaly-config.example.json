@@ -1,4 +1,5 @@
 {
+	"_comment_": "DEPRECATED: phase8.1 (リリース 5.4) で TOML 設定 (config.toml) に移行しました。新規導入は summaly-config.example.toml と pnpm serve config.toml を使ってください。本ファイルは下位互換のため残置していますが、リリース 1 サイクル後に削除予定です。",
 	"useRange": true,
 	"allowedPlugins": ["amazon", "bluesky", "wikipedia", "branchio-deeplinks"],
 	"cacheMaxAge": 604800,

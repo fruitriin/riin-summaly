@@ -41,10 +41,11 @@ git clone https://github.com/fruitriin/summaly.git
 cd summaly
 pnpm install --frozen-lockfile
 pnpm build
-pnpm serve   # = fastify start ./built/index.js
+cp config.example.toml config.toml   # TOML 設定をコピーして編集
+pnpm serve config.toml               # = tsx bin/summaly-server.ts config.toml
 ```
 
-詳細なセットアップ手順、Fastify モード固有のオプション（キャッシュ・PDF・プラグイン絞り込み・nginx + systemd デプロイ例）、SSRF 既定値、運用上の注意点は **[docs/SETUP.md](docs/SETUP.md)** を参照してください。
+詳細なセットアップ手順、TOML 設定スキーマ、Fastify モード固有のオプション（キャッシュ・PDF・プラグイン絞り込み・nginx + systemd デプロイ例）、SSRF 既定値、運用上の注意点は **[docs/SETUP.md](docs/SETUP.md)** を参照してください。
 
 対応サイト（プラグイン一覧）
 ----------------------------------------------------------------
@@ -85,7 +86,7 @@ pnpm build       # tsdown で ./built に出力
 pnpm test        # vitest
 pnpm eslint      # ESLint
 pnpm typecheck   # tsc --noEmit (src + test + dev の 3 構成)
-pnpm serve       # Fastify サーバ起動（事前に build 必須）
+pnpm serve config.toml  # Fastify サーバ起動（TOML 設定）
 pnpm dev         # 動作確認 UI（http://127.0.0.1:3000、tsx で src/ を直接実行）
 ```
 
