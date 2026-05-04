@@ -6,209 +6,159 @@ summaly
 [![][himawari-badge]][himasaku]
 [![][sakurako-badge]][himasaku]
 
-Installation
+URL を渡すと、その Web ページのプレビュー（タイトル・説明・サムネイル・oEmbed プレーヤー等）を返す Node.js ライブラリです。Misskey の Note プレビュー生成に使われています。
+
+- 関数として利用するか、Fastify プラグインとして HTTP サーバ化して利用できます
+- OpenGraph / Twitter Card / oEmbed / `<title>` / `<meta>` / `<link rel="icon">` から優先順位付きでメタ情報を抽出
+- サイト固有のプラグインで高速・正確な結果を返せる（YouTube / Spotify / Amazon / Wikipedia / dlsite 等）
+- PDF レスポンスのタイトル取得（オプトイン）
+- SSRF 対策（プライベート IP 拒否、レスポンスサイズ上限、結果 URL のスキーム検証）
+
+詳細ドキュメント:
+- **[Plugins.md](Plugins.md)** — 組み込みプラグインの詳細とカスタムプラグインの作り方
+- **[SETUP.md](SETUP.md)** — Misskey 管理人など Fastify サーバとして運用する人向けの設定ガイド
+
+インストール
 ----------------------------------------------------------------
+
 ```
 npm install @misskey-dev/summaly
 ```
 
-Usage
+使い方
 ----------------------------------------------------------------
-As a function:
 
-```javascript
-import { summaly } from 'summaly';
-
-summaly(url[, opts])
-```
-
-As Fastify plugin:
-(will listen `GET` of `/`)
-
-```javascript
-import Summaly from 'summaly';
-
-fastify.register(Summaly[, opts])
-```
-
-Run the server:
-
-```
-git clone https://github.com/misskey-dev/summaly.git
-cd summaly
-NODE_ENV=development npm install
-npm run build
-npm run serve
-```
-
-#### opts (SummalyOptions)
-
-| Property                  | Type                   | Description                                                                                                                                                                         | Default                |
-|:--------------------------|:-----------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------------|
-| **lang**                  | *string*               | Accept-Language for the request                                                                                                                                                     | `null`                 |
-| **followRedirects**       | *boolean*              | Whether follow redirects                                                                                                                                                            | `true`                 |
-| **plugins**               | *plugin[]* (see below) | Custom plugins                                                                                                                                                                      | `null`                 |
-| **agent**                 | *Got.Agents*           | Custom HTTP agent (see below)                                                                                                                                                       | `null`                 |
-| **userAgent**             | *string*               | User-Agent for the request                                                                                                                                                          | `SummalyBot/[version]` |
-| **responseTimeout**       | *number*               | Set timeouts for each phase, such as host name resolution and socket communication.                                                                                                 | `20000`                |
-| **operationTimeout**      | *number*               | Set the timeout from the start to the end of the request.                                                                                                                           | `60000`                |
-| **contentLengthLimit**    | *number*               | If set to true, an error will occur if the content-length value returned from the other server is larger than this parameter (or if the received body size exceeds this parameter). | `10485760`             |
-| **contentLengthRequired** | *boolean*              | If set to true, it will be an error if the other server does not return content-length.                                                                                             | `false`                |
-| **cacheMaxAge**           | *number*               | Fastify mode only. `Cache-Control: public, max-age=<n>` (seconds) for successful responses. Set to `0` to emit `Cache-Control: no-store`.                                           | `604800` (1 week)      |
-| **cacheErrorMaxAge**      | *number*               | Fastify mode only. `Cache-Control: public, max-age=<n>` (seconds) for error responses. Set to `0` to emit `Cache-Control: no-store`.                                                | `3600` (1 hour)        |
-| **useRange**              | *boolean*              | Send `Range: bytes=0-N-1` to fetch only the head of the document. Servers that ignore Range fall back to full body (still capped by `contentLengthLimit`).                            | `false`                |
-| **allowedPlugins**        | *string[]*             | Opt-in allowlist of builtin plugin names. `undefined` = all enabled. Empty array `[]` = all builtins disabled (general path only). Custom `plugins` are not filtered.                 | `undefined`            |
-| **inMemoryCache**         | *boolean*              | Fastify mode only. Enable in-process LRU cache so repeated requests for the same URL are served from memory. Useful when an HTTP client (e.g. Got, node-fetch) ignores `Cache-Control`. | `false`                |
-| **inMemoryCacheMaxEntries** | *number*             | Fastify mode only. Maximum number of entries in the in-memory cache. Each entry is typically a few KB, but a long `description` or `data:` thumbnail can push it higher; size accordingly. | `1000`                 |
-| **enablePdf**             | *boolean*              | Opt-in: extract title from `application/pdf` responses via `pdf-parse`. Falls back to hostname on parse failure / timeout. Also enabled by env `SUMMALY_ENABLE_PDF=true`; explicit option wins.  | `false`                |
-
-#### Server caching
-
-When summaly is used as a Fastify plugin (`fastify.register(Summaly, opts)`), every response includes a `Cache-Control` header so that upstream caches (nginx `proxy_cache`, Cloudflare, etc.) can serve repeated lookups without round-tripping to the origin site. Successful responses default to `public, max-age=604800` (1 week) and error responses to `public, max-age=3600` (1 hour). Caching errors briefly avoids amplifying repeated requests for broken URLs (related to the [Mastodon link-preview DDoS issue](https://github.com/mastodon/mastodon/issues/23662)).
-
-Override the durations with `cacheMaxAge` / `cacheErrorMaxAge`, or set them to `0` to opt out (`Cache-Control: no-store`). Note that some HTTP clients (e.g. Got, node-fetch) do not honor `Cache-Control`; if you need application-level caching, run summaly behind nginx / a CDN, or use the in-process LRU cache below.
-
-#### In-process LRU cache
-
-Set `inMemoryCache: true` (Fastify mode) to enable an in-process LRU cache backed by `lru-cache`. Repeat requests for the same URL within `cacheMaxAge` are served from memory and never reach the origin site. Errors are cached separately for `cacheErrorMaxAge` to amplify-protect against repeated bad URLs.
-
-Cache key: URL with the fragment (`#...`) stripped, plus the `lang` query value (`ja` and `en` are separate entries to avoid serving Japanese results to English users). Cap entries via `inMemoryCacheMaxEntries`. Each response includes `X-Cache: HIT` or `X-Cache: MISS`.
-
-**Caveats**:
-- 5xx errors are also cached for `cacheErrorMaxAge` (default 1 hour). If an upstream site recovers from an outage, summaly will continue returning the cached error until the TTL expires. Restart the process or lower `cacheErrorMaxAge` to mitigate.
-- Concurrent requests for the same URL each hit the origin until the first response populates the cache (no in-flight dedup).
-- Cache lives for the process lifetime only; restart the server to flush. For persistent or shared caches across replicas, run summaly behind nginx / Varnish / a CDN that honours the emitted `Cache-Control` header.
-
-#### PDF responses
-
-Set `enablePdf: true` (or env `SUMMALY_ENABLE_PDF=true`) to extract titles from `application/pdf` responses. The implementation is hardened against hangs:
-
-- `getInfo()` only reads document-level metadata (no per-page text extraction)
-- Hard 5-second timeout via `Promise.race`
-- `contentLengthLimit` (default 10 MiB) cancels oversized PDFs before they reach the parser
-- Combine with `useRange: true` to fetch only the head bytes when the origin supports HTTP Range
-- Title missing / parse fails / timeout → falls back to `hostname` for `title` plus a fixed SVG PDF icon as `data:` URI
-
-Default off because `pdf-parse` pulls in `pdfjs-dist` (large dep) and PDF parsing can stress CPU/memory; flip on once you've sized the operational envelope. The explicit option wins over the env var, so passing `enablePdf: false` always disables PDF even when `SUMMALY_ENABLE_PDF=true` is set.
-
-#### Plugin
-
-``` typescript
-interface SummalyPlugin {
-	test: (url: URL) => boolean;
-	summarize: (url: URL) => Promise<Summary>;
-}
-```
-
-urls are WHATWG URL since v4.
-
-#### Custom HTTP agent for proxy
-You can specify agents to be passed to Got for proxy use, etc.  
-https://github.com/sindresorhus/got/blob/v12.6.0/documentation/tips.md#proxying
-
-**⚠️If you set some agent, local IP rejecting will not work.⚠️**  
-(Summaly usually rejects local IPs.)
-
-(Summaly currently does not support http2.)
-
-When `setAgent` is **not** called, summaly uses a built-in keep-alive agent (HTTP / HTTPS) to amortize TCP/TLS handshakes for high-frequency preview workloads. Set `SUMMALY_FAMILY=4` or `SUMMALY_FAMILY=6` to force IPv4 / IPv6 only.
-
-#### Production deployment
-
-For running summaly as a standalone Fastify server behind nginx + systemd, see [docs/deploy-examples/](docs/deploy-examples/) — nginx reverse proxy, systemd unit, and JSON config samples (treat as starting points; verify against your environment).
-
-### Returns
-
-A Promise of an Object that contains properties below:
-
-※ Almost all values are nullable. player should not be null.
-
-#### SummalyResult
-
-| Property        | Type               | Description                                                |
-|:----------------|:-------------------|:-----------------------------------------------------------|
-| **title**            | *string* \| *null* | The title of the web page                                  |
-| **icon**             | *string* \| *null* | The url of the icon of the web page                        |
-| **description**      | *string* \| *null* | The description of the web page                            |
-| **thumbnail**        | *string* \| *null* | The url of the thumbnail of the web page                   |
-| **sitename**         | *string* \| *null* | The name of the web site                                   |
-| **player**           | *Player*           | The player of the web page                                 |
-| **sensitive**        | *boolean*          | Whether the url is sensitive                               |
-| **activityPub**      | *string* \| *null* | The url of the ActivityPub representation of that web page |
-| **fediverseCreator** | *string* \| *null* | The pages fediverse handle                                 |
-| **medias**           | *string[]* \| *undefined* | Additional media URLs (e.g. multi-photo posts). Consumers should prefer `medias` when set, fall back to `thumbnail` otherwise. |
-| **url**              | *string*           | The url of the web page                                    |
-
-#### Summary
-
-`Omit<SummalyResult, "url">`
-
-#### Player
-
-| Property   | Type               | Description                                     |
-|:-----------|:-------------------|:------------------------------------------------|
-| **url**    | *string* \| *null* | The url of the player                           |
-| **width**  | *number* \| *null* | The width of the player                         |
-| **height** | *number* \| *null* | The height of the player                        |
-| **allow**  | *string[]*         | The names of the allowed permissions for iframe |
-
-Currently the possible items in `allow` are:
-
-* `autoplay`
-* `clipboard-write`
-* `fullscreen`
-* `encrypted-media`
-* `picture-in-picture`
-* `web-share`
-
-See [Permissions Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Permissions_Policy) in MDN for details of them.
-
-### Example
+### 関数として
 
 ```javascript
 import { summaly } from 'summaly';
 
 const summary = await summaly('https://www.youtube.com/watch?v=NMIEAhH_fTU');
-
 console.log(summary);
 ```
 
-will be ... ↓
+出力例:
 
 ```json
 {
-	"title": "【アイドルマスター】「Stage Bye Stage」(歌：島村卯月、渋谷凛、本田未央)",
-	"icon": "https://www.youtube.com/favicon.ico",
-	"description": null,
-	"thumbnail": "https://i.ytimg.com/vi/NMIEAhH_fTU/maxresdefault.jpg",
-	"player": {
-		"url": "https://www.youtube.com/embed/NMIEAhH_fTU?feature=oembed",
-		"width": 200,
-		"height": 113,
-		"allow": [
-			"autoplay",
-			"clipboard-write",
-			"encrypted-media",
-			"picture-in-picture",
-			"web-share",
-			"fullscreen"
-		]
-	},
-	"sitename": "YouTube",
-	"activityPub": null,
-	"fediverseCreator": null,
-	"url": "https://www.youtube.com/watch?v=NMIEAhH_fTU"
+  "title": "【アイドルマスター】「Stage Bye Stage」(歌：島村卯月、渋谷凛、本田未央)",
+  "icon": "https://www.youtube.com/favicon.ico",
+  "description": null,
+  "thumbnail": "https://i.ytimg.com/vi/NMIEAhH_fTU/maxresdefault.jpg",
+  "player": {
+    "url": "https://www.youtube.com/embed/NMIEAhH_fTU?feature=oembed",
+    "width": 200,
+    "height": 113,
+    "allow": ["autoplay", "clipboard-write", "encrypted-media", "picture-in-picture", "web-share", "fullscreen"]
+  },
+  "sitename": "YouTube",
+  "activityPub": null,
+  "fediverseCreator": null,
+  "url": "https://www.youtube.com/watch?v=NMIEAhH_fTU"
 }
 ```
 
-Note: Since v5.4 (phase3.1), YouTube / Spotify URLs are processed via the dedicated oEmbed plugins which do not include a `description` field (oEmbed responses do not provide one). For the previous behavior of pulling description from OG meta, set `allowedPlugins: ['amazon', 'bluesky', 'wikipedia', 'branchio-deeplinks']` to disable the youtube/spotify plugins and fall back to the general path.
+### Fastify プラグインとして（`GET /` を受ける）
 
-Testing
-----------------------------------------------------------------
-`npm run test`
+```javascript
+import Summaly from 'summaly';
 
-License
+fastify.register(Summaly, opts);
+```
+
+スタンドアロンの HTTP サーバとして起動する場合は **[SETUP.md](SETUP.md)** を参照してください。
+
+### opts (`SummalyOptions`) — ライブラリ利用時の主要オプション
+
+| プロパティ | 型 | 説明 | デフォルト |
+|:--|:--|:--|:--|
+| **lang** | *string* | リクエストの `Accept-Language` | `null` |
+| **followRedirects** | *boolean* | リダイレクトを追跡するか（Fastify モードでは強制 `false`） | `true` |
+| **plugins** | *SummalyPlugin[]* | カスタムプラグイン（組み込みより後ろに連結。詳細は [Plugins.md](Plugins.md)） | `null` |
+| **userAgent** | *string* | リクエストの `User-Agent` | `SummalyBot/[version]` |
+| **responseTimeout** | *number* | フェーズ単位のタイムアウト（DNS解決・接続・レスポンス各々）ミリ秒 | `20000` |
+| **operationTimeout** | *number* | リクエスト全体のタイムアウト ミリ秒 | `60000` |
+| **contentLengthLimit** | *number* | レスポンスサイズ上限（content-length ヘッダ + ストリーミング両方で検査） | `10485760` (10 MiB) |
+| **contentLengthRequired** | *boolean* | true なら content-length 未返却サーバをエラー扱い | `false` |
+| **agent** | *Got.Agents* | カスタム HTTP エージェント（プロキシ用途。設定するとプライベート IP 拒否は無効化される） | `null` |
+
+Fastify モード固有のオプション（`cacheMaxAge` / `inMemoryCache` / `enablePdf` / `useRange` / `allowedPlugins` 等）は **[SETUP.md](SETUP.md)** に集約しています。
+
+戻り値
 ----------------------------------------------------------------
+
+ほぼ全フィールドが nullable です（`player` のみ非 null）。
+
+### `SummalyResult`
+
+| プロパティ | 型 | 説明 |
+|:--|:--|:--|
+| **title** | *string* \| *null* | ページのタイトル |
+| **icon** | *string* \| *null* | ページのアイコン URL |
+| **description** | *string* \| *null* | ページの説明 |
+| **thumbnail** | *string* \| *null* | ページのサムネイル URL |
+| **sitename** | *string* \| *null* | サイト名 |
+| **player** | *Player* | 埋め込みプレーヤー情報 |
+| **sensitive** | *boolean* | 成人向け等、機微なコンテンツの可能性 |
+| **activityPub** | *string* \| *null* | ページの ActivityPub 表現の URL |
+| **fediverseCreator** | *string* \| *null* | Fediverse の作者ハンドル |
+| **medias** | *string[]* \| *undefined* | 追加メディア URL（マルチ写真投稿等）。設定があれば `medias` を優先、無ければ `thumbnail` を使う想定 |
+| **url** | *string* | リダイレクト解決後の最終的なページ URL |
+
+### `Summary`
+
+`Omit<SummalyResult, "url">`。プラグインの `summarize()` が返す型。`summaly()` のラッパが解決後の `url` を付与して `SummalyResult` を生成する。
+
+### `Player`
+
+| プロパティ | 型 | 説明 |
+|:--|:--|:--|
+| **url** | *string* \| *null* | プレーヤーの URL（iframe `src`） |
+| **width** | *number* \| *null* | プレーヤーの幅 |
+| **height** | *number* \| *null* | プレーヤーの高さ |
+| **allow** | *string[]* | iframe に許可する permissions |
+
+`allow` に入りうる値: `autoplay` / `clipboard-write` / `fullscreen` / `encrypted-media` / `picture-in-picture` / `web-share`。詳細は MDN の [Permissions Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Permissions_Policy) 参照。
+
+対応サイト（プラグイン一覧）
+----------------------------------------------------------------
+
+サイト固有プラグインは登録順にマッチし、最初に当たったものが採用されます。マッチしなかった URL は汎用パス (`general()`) で OG / Twitter Card / oEmbed から抽出されます。
+
+| プラグイン名 | 対象 | 概要 |
+|:--|:--|:--|
+| `amazon` | `www.amazon.{com, co.jp, ...}` | DOM から商品タイトル・画像を直接取得 |
+| `bluesky` | `bsky.app` | HEAD が 404 になるため GET のみで取得 |
+| `wikipedia` | `*.wikipedia.org` | MediaWiki API から intro テキスト取得 |
+| `branchio-deeplinks` | `*.app.link` / `spotify.link` | `$web_only=true` を付けて Web 版にリダイレクトさせ汎用パスへ |
+| `youtube` | `(www\|m).youtube.com/{watch,v,playlist,shorts}` / `youtu.be` | oEmbed エンドポイント直叩きで 1 リクエスト取得 |
+| `spotify` | `open.spotify.com` | oEmbed エンドポイント直叩き |
+| `dlsite` | `www.dlsite.com` | `/announce/` ↔ `/work/` の 404 リトライ + パス分類で sensitive 判定 |
+| `iwara` | `(www\|ecchi).iwara.tv` | description / thumbnail を DOM から補完、`ecchi.` ホストで sensitive |
+| `komiflo` | `komiflo.com/comics/<id>` | thumbnail フォールバック時に `api.komiflo.com` から取得 + sensitive |
+| `nijie` | `nijie.info/view.php` | JSON-LD `ImageObject` から description / thumbnail を補完 + sensitive |
+
+各プラグインの詳細仕様・カスタムプラグインの書き方・共通ユーティリティ（`getJson` / `BROWSER_UA` / `KNOWN_SHORT_HOSTS` / `PLAYER_ALLOW_OEMBED` 等）は **[Plugins.md](Plugins.md)** にあります。
+
+`allowedPlugins` で組み込みプラグインを絞り込めます（オプトイン許可リスト）。詳細は [SETUP.md](SETUP.md) を参照。
+
+開発
+----------------------------------------------------------------
+
+```bash
+git clone https://github.com/misskey-dev/summaly.git
+cd summaly
+pnpm install
+pnpm build       # tsdown で ./built に出力
+pnpm test        # vitest
+pnpm eslint      # ESLint
+pnpm typecheck   # tsc --noEmit (src + test 両方)
+pnpm serve       # Fastify サーバ起動（事前に build 必須）
+```
+
+ライセンス
+----------------------------------------------------------------
+
 [MIT](LICENSE)
 
 [mit]:            http://opensource.org/licenses/MIT
