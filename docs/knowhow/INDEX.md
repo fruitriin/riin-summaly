@@ -28,3 +28,9 @@
 | ファイル | 要約 | キーワード |
 |---|---|---|
 | [inflight-dedup-pattern.md](inflight-dedup-pattern.md) | in-flight Map で同 URL の並列リクエストを 1 本化。Promise の resolve 値にエラーを埋め込んで finally / non-null-assertion を回避するパターン、LRU set → inFlight delete の順序、X-Cache: HIT-COALESCED のテスト方法 | in-flight dedup, thundering herd, LRU, Promise, CacheEntry, kind union, X-Cache, HIT-COALESCED, Fastify, Misskey ストリーミング, no-non-null-assertion |
+
+## summaly 開発体験（dev サーバ）
+
+| ファイル | 要約 | キーワード |
+|---|---|---|
+| [dev-server-tsx-pattern.md](dev-server-tsx-pattern.md) | tsx で TS を直接走らせる dev サーバ構築。tsdown の build-time 定数 `_VERSION_` を side-effect import で globalThis に注入する ESM 評価順テクニック、本番 bundle / typecheck / lint への混入防止、HOST/PORT の defensive validation で SSRF リレーを防ぐ、`SUMMALY_ALLOW_PRIVATE_IP` をプロセス内で限定する | tsx, dev サーバ, _VERSION_, globalThis, side-effect import, ESM 評価順序, depth-first, tsconfig.dev.json, @fastify/static, Vanilla JS, SUMMALY_ALLOW_PRIVATE_IP, HOST バリデーション, SSRF リレー |

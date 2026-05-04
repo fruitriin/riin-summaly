@@ -84,9 +84,21 @@ pnpm install
 pnpm build       # tsdown で ./built に出力
 pnpm test        # vitest
 pnpm eslint      # ESLint
-pnpm typecheck   # tsc --noEmit (src + test 両方)
+pnpm typecheck   # tsc --noEmit (src + test + dev の 3 構成)
 pnpm serve       # Fastify サーバ起動（事前に build 必須）
+pnpm dev         # 動作確認 UI（http://127.0.0.1:3000、tsx で src/ を直接実行）
 ```
+
+### 動作確認 UI (`pnpm dev`)
+
+`pnpm dev` で `http://127.0.0.1:3000` に動作確認用の Web UI が立ち上がります。本番 bundle (`./built/`) には含まれない dev 専用ツールです。
+
+- URL を入力 → JSON / Misskey 風カード / iframe プレーヤーの 3 タブで結果を確認できる
+- 組み込みプラグイン対応サイトのサンプル URL をワンクリックで入力欄に流し込める
+- `lang` / `useRange` / `enablePdf` / `allowedPlugins` をリクエスト単位で切り替えできる
+- ローカル URL をプレビューできるよう `SUMMALY_ALLOW_PRIVATE_IP=true` を **dev サーバ内で限定的に** 設定する。シェル env は汚染しないため、`pnpm serve`（本番）には影響しない
+
+`PORT` / `HOST` 環境変数で待ち受けを変更可能（デフォルト `127.0.0.1:3000`）。
 
 ライセンス
 ----------------------------------------------------------------

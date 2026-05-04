@@ -1,6 +1,6 @@
 # Phase 7.1 — Dev サーバ（動作確認 UI）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: 開発体験 / 検証ツール
 > サイズ: **M**
 > 依存: なし（既存 Fastify モードと並走するか単独ツールにするかは設計判断）
@@ -132,37 +132,21 @@ Misskey の `MkUrlPreview.vue` を参考に、本フェーズでは以下の最�
 
 各ステップで `pnpm eslint && pnpm typecheck` を通す。
 
-- [ ] **Step 1 — `dev/` ディレクトリ構成**
-  - [`dev/server.ts`](../../dev/server.ts) — Fastify 起動 + summaly プラグイン mount
-  - [`dev/public/index.html`](../../dev/public/index.html) — UI 本体
-  - [`dev/public/app.js`](../../dev/public/app.js) — フロントエンドロジック（fetch / タブ切替 / サンプル URL 流し込み）
-  - [`dev/public/style.css`](../../dev/public/style.css) — スタイル
-  - [`dev/sample-urls.ts`](../../dev/sample-urls.ts) — プラグイン名 → サンプル URL 配列のマッピング
-- [ ] **Step 2 — `pnpm dev` script 追加**
-  - `package.json` の `scripts` に `"dev": "tsx dev/server.ts"` を追加（`tsx` を devDependencies に）
-  - 既存の `pnpm serve` は本番用（`fastify start ./built/index.js`）として残す
-- [ ] **Step 3 — Fastify サーバ実装**
-  - [`dev/server.ts`](../../dev/server.ts):
-    - `@fastify/static` で `dev/public` を配信
-    - summaly プラグインを `/api/summaly` 配下に mount（プレフィックス指定）
-    - `SUMMALY_ALLOW_PRIVATE_IP=true` を `process.env` に明示的に設定（dev 用、ローカル URL でテストできるように）。本番の serve では設定しない
-- [ ] **Step 4 — UI 実装**
-  - URL 入力フォーム + 「取得」ボタン
-  - 結果タブ（JSON / カード / iframe）
-  - プラグイン対応サイトの **ワンクリック URL リスト**
-  - オプションフォーム（collapse 可能）
-  - エラー表示エリア
-- [ ] **Step 5 — Misskey 風カードプレビュー**
-  - 既存組み込みプラグインで取れるフィールドを並べる
-  - thumbnail がない場合 icon を代用
-  - sensitive フラグが立っているとカードに「⚠ センシティブな内容」のラベル
-- [ ] **Step 6 — iframe レンダリング**
-  - `player.url` がある場合のみ iframe をマウント
-  - `width` / `height` / `allow` / `sandbox` / `referrerpolicy` を Misskey-dev の最新実装に揃える（参照リンクをコメントに残す）
-  - 不正な URL（`http://` / `data:` 等）は iframe を出さない（`SummalyResult` は出口で sanitize 済みのはず、念のため UI 側でも検証）
-- [ ] **Step 7 — README / SETUP 更新**
-  - [`README.md`](../../README.md) の「開発」セクションに `pnpm dev` を追記
-  - [`docs/SETUP.md`](../SETUP.md) は本番運用ドキュメントなので dev サーバには触れない（明確な責務分離）
+- [x] **Step 1 — `dev/` ディレクトリ構成** — `server.ts` / `setup-version.ts` / `sample-urls.ts` / `public/{index.html,app.js,style.css}` を新設
+- [x] **Step 2 — `pnpm dev` script 追加** — `tsx` / `@fastify/static` を devDependencies に、`pnpm dev` script + typecheck 拡張
+- [x] **Step 3 — Fastify サーバ実装** — Fastify プラグイン mount ではなく、`summaly()` 関数を request 単位で叩く `/api/summaly` ハンドラに変更（UI のチェックボックスを即時反映するため）
+- [x] **Step 4 — UI 実装** — URL 入力 / JSON・カード・iframe の 3 タブ / サンプル URL ワンクリック / オプションフォーム / エラー表示
+- [x] **Step 5 — Misskey 風カードプレビュー**
+- [x] **Step 6 — iframe レンダリング** — `https:` 限定、`player.height == null` で非表示、sandbox: `allow-scripts allow-same-origin allow-presentation allow-popups`
+- [x] **Step 7 — README 更新**
+
+## 実装結果メモ
+
+- **`_VERSION_` シム**: tsdown の build-time 定数 `_VERSION_` が tsx 直実行で `ReferenceError` になる。`dev/setup-version.ts` を side-effect import で先頭に置き、ESM の depth-first 評価順序を使って `globalThis._VERSION_` に注入。詳細は `docs/knowhow/dev-server-tsx-pattern.md`
+- **オプションをリクエスト単位で切り替えられる**: 元プランは「summaly プラグインを mount」だったが、Fastify プラグインは register 時に options が固定されるため、dev では `summaly()` 関数を直接叩く形に変更。UI のチェックボックスが即時反映できる
+- **HOST/PORT の defensive validation**: `process.env.HOST ?? '127.0.0.1'` だと `HOST=''` で `::` バインドになり SSRF リレー化リスク。空文字も fallback 対象にする。`PORT` も数値検証（`Number('')` = 0、`Number('abc')` = NaN のサイレント誤動作回避）
+- **`builtinPluginNames` を動的取得**: 元プランは `dev/sample-urls.ts` に手動同期だったが、`src/plugins/index.ts` から `plugins.map(p => p.name)` で動的取得に変更（プラグイン追加時の漏れ防止）
+- **本番 bundle への混入防止**: `tsdown.config.ts` の entry / `tsconfig.json` の include / `package.json` `files` / eslint ignore のすべてが `dev/` を本番スコープから除外している。typecheck だけ `tsconfig.dev.json` で別途検証
 
 ---
 

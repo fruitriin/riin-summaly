@@ -18,10 +18,12 @@
     "build": "tsdown",
     "eslint": "eslint",
     "test": "vitest run ./test/index.test.ts",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "serve": "fastify start ./built/index.js"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.dev.json",
+    "serve": "fastify start ./built/index.js",
+    "dev": "tsx dev/server.ts"
   },
   "devDependencies": {
+    "@fastify/static": "8.2.0",
     "@misskey-dev/eslint-plugin": "2.1.0",
     "@types/debug": "4.1.13",
     "@types/encoding-japanese": "2.2.1",
@@ -34,6 +36,7 @@
     "fastify": "5.8.5",
     "fastify-cli": "8.0.0",
     "tsdown": "0.21.10",
+    "tsx": "4.20.6",
     "typescript": "6.0.3",
     "vitest": "4.1.5"
   },

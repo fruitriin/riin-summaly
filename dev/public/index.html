@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>summaly dev</title>
+	<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+	<header>
+		<h1>summaly dev</h1>
+		<p class="subtitle">URL を入力して <code>SummalyResult</code> の見え方を検証する</p>
+	</header>
+
+	<main>
+		<section class="input-pane">
+			<form id="form">
+				<label for="url-input">URL</label>
+				<input type="url" id="url-input" name="url" placeholder="https://..." required autocomplete="off">
+
+				<details class="options">
+					<summary>オプション</summary>
+					<div class="option-row">
+						<label for="lang-input">lang</label>
+						<input type="text" id="lang-input" name="lang" placeholder="ja, en, ...">
+					</div>
+					<div class="option-row checkbox">
+						<input type="checkbox" id="useRange" name="useRange">
+						<label for="useRange">useRange (Range リクエストで先頭領域のみ取得)</label>
+					</div>
+					<div class="option-row checkbox">
+						<input type="checkbox" id="enablePdf" name="enablePdf">
+						<label for="enablePdf">enablePdf (PDF レスポンスのタイトル取得を有効化)</label>
+					</div>
+					<div class="option-row">
+						<label>allowedPlugins</label>
+						<div id="allowed-plugins" class="plugin-checkboxes" aria-label="allowedPlugins"></div>
+						<small class="hint">いずれもチェックしないと <code>undefined</code>（全プラグイン有効）。1 件以上チェックすればチェックされたものだけ有効。</small>
+					</div>
+				</details>
+
+				<button type="submit" id="fetch-button">取得</button>
+			</form>
+
+			<div id="error" class="error" hidden></div>
+
+			<aside class="samples" aria-label="サンプル URL 集">
+				<h2>サンプル URL</h2>
+				<div id="sample-groups"></div>
+			</aside>
+		</section>
+
+		<section class="result-pane">
+			<div class="tabs" role="tablist">
+				<button type="button" class="tab active" data-tab="json" role="tab" aria-selected="true">JSON</button>
+				<button type="button" class="tab" data-tab="card" role="tab" aria-selected="false">カードプレビュー</button>
+				<button type="button" class="tab" data-tab="player" role="tab" aria-selected="false">iframe プレーヤー</button>
+			</div>
+			<div class="tab-panes">
+				<pre id="pane-json" class="tab-pane active" role="tabpanel">URL を入力して「取得」を押してください。</pre>
+				<div id="pane-card" class="tab-pane" role="tabpanel" hidden></div>
+				<div id="pane-player" class="tab-pane" role="tabpanel" hidden></div>
+			</div>
+		</section>
+	</main>
+
+	<script type="module" src="/app.js"></script>
+</body>
+</html>
