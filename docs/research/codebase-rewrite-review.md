@@ -419,6 +419,64 @@ const hostQueue = new Map<string, PQueue>();
 
 現状 `normalizeCacheKey` は fragment 除去 + lang のみ。**utm_*** や `?ref=...` のようなトラッキングパラメータを削除するオプションを足すとキャッシュヒット率が向上する。**過剰正規化のリスク**は phase4.1 のコメントが指摘している通りなので、**opt-in** で。
 
+### 3.6 rewrite 規模なら検討する「メタツールチェーン一括差し替え」
+
+3.4 では「個別ツール (bundler / test / lint / typecheck) の現状維持で十分」と結論づけたが、**rewrite 規模で一気に作り直すなら、ツールチェーン全体を統合パッケージに置き換える** 選択肢が現実味を帯びる。代表例 2 つ:
+
+#### 候補 1: Vite Plus (Node 維持シナリオの上位互換)
+
+[Vite Plus](https://viteplus.dev/guide/) は Vite / Vitest / Oxlint / Oxfmt / Rolldown / **tsdown** / Vite Task を統合した「**統一ツールチェーン**」。本フォークは既に tsdown / Vitest を採用しているため**親和性が高い**。
+
+| 領域 | 現状 | Vite Plus 採用後 |
+|---|---|---|
+| bundler | tsdown | tsdown (Vite Plus 経由) |
+| test | vitest | vitest (Vite Plus 経由) |
+| lint | ESLint 9 | **Oxlint** (Rust 製、ESLint の **50-100x 速い**、ただし rule カバレッジでまだ ESLint に劣る) |
+| format | (なし) | **Oxfmt** (Rust 製、Prettier 相当を超高速) |
+| dev server | (なし) | Vite (phase7.1 dev サーバ用に直接利用可能) |
+| task runner | npm scripts | Vite Task (依存タスクのオーケストレーション) |
+
+**速度・品質のバランス**:
+- ✅ 既存 tsdown / Vitest を維持できる (ノウハウロスゼロ)
+- ✅ Oxlint で lint が桁違いに速い (CI 時間圧縮)
+- ✅ phase7.1 dev サーバが Vite ベースで自然に組める (HMR が効く)
+- ⚠ Oxlint は ESLint の全 rule をカバーしていない → 既存 `@misskey-dev/eslint-plugin` のルールを fallback で eslint に残す or oxlint 対応の rule に書き換える必要
+- ⚠ 新興ツールのため Misskey エコシステムでの採用例は少ない (= 学習コスト中)
+
+→ **シナリオ A (Node 維持) のサブオプションとして強く検討に値する**。
+
+#### 候補 2: Bun + Biome (シナリオ B のフルスタック版)
+
+| 領域 | 現状 | Bun + Biome 採用後 |
+|---|---|---|
+| ランタイム | Node | **Bun** (起動 -50%、fetch throughput +20-30%) |
+| bundler | tsdown | **`bun build`** (esbuild ベース、超高速) |
+| test | vitest | **`bun test`** (jest 互換 API、超高速) |
+| lint | ESLint 9 | **Biome** (Rust 製、ESLint + Prettier 相当を一括、**ESLint の 25x 速い**) |
+| format | (なし) | **Biome** |
+| package manager | pnpm | **`bun install`** (npm の 10-30x 速い) |
+| dev server | (なし) | Bun の HTTP サーバ (Hono と組み合わせ) |
+
+**速度・品質のバランス**:
+- ✅ ツールチェーン全体が Rust / Zig / native binding ベースで CI 時間が劇的に短縮 (体感 5-10x)
+- ✅ Misskey ecosystem が将来 Bun 化する可能性に先回り
+- ✅ Biome は ESLint + Prettier の両機能を 1 つの設定で扱え、設定の見通しが良い
+- ⚠ pdf-parse / pdfjs-dist の Bun 互換性は要検証 (worker 経由なら回避可能)
+- ⚠ Misskey 配布環境への Bun ランタイム要件追加 (運用者の学習コスト)
+- ⚠ Biome は ESLint の全 rule カバーではない (`@misskey-dev/eslint-plugin` の互換性検証必要)
+
+→ **シナリオ B (Bun) を採用するなら Biome もセットで採用するのが自然**。半端に Bun + ESLint より、Bun + Biome の方が tooling 一貫性が高い。
+
+#### 統合判断マトリクス
+
+| シナリオ | bundler | test | lint/format | runtime | 向き先 |
+|---|---|---|---|---|---|
+| A (現状維持リファクタ) | tsdown | vitest | ESLint | Node | 漸進改修 |
+| **A + Vite Plus** | tsdown (Vite Plus) | vitest (Vite Plus) | **Oxlint + Oxfmt** | Node | rewrite 規模、Node 維持 |
+| **B (Bun + Biome)** | bun build | bun test | **Biome** | Bun | rewrite 規模、配布環境変更可 |
+
+**推奨**: rewrite を実施するなら、**「A + Vite Plus」を第一候補**、「B (Bun + Biome)」を Misskey 管理人の Bun 受容性次第での選択肢として併記する。シナリオ 5 章の優先順位もこれに合わせて更新可能。
+
 ---
 
 ## 4. 観点 2: 他言語で作り直すなら
@@ -526,7 +584,8 @@ BEAM の障害分離 (per-request process) で「PDF パースで暴走しても
 **優先順位: 1**
 
 - 既存テスト 1,871 行 + 既存 plugin 10 個を **段階的に新構造へ移植** していく
-- 依存スリム化 (got → undici, encoding-japanese 削除, escape-regexp 自前化)
+- 依存入れ替え (got → undici, encoding-japanese 削除, jschardet → chardetng-js, pdf-parse → 自前 + フォールバック, escape-regexp 自前化)
+- **ツールチェーン: Vite Plus に統合**（tsdown + Vitest を維持しつつ Oxlint + Oxfmt + Vite dev server を入れる）
 - ファイル構成を `core` / `http` / `server` 三層分離
 - worker_threads で PDF 隔離
 - in-flight dedup を rewrite で標準化（phase4.2 の DoD を統合）
@@ -536,13 +595,13 @@ BEAM の障害分離 (per-request process) で「PDF パースで暴走しても
 
 リスク: 既存 fork ユーザー（カスタムプラグイン作者）への影響。`SummalyPlugin.name` 必須化と `PluginContext` 導入は破壊的。**メジャーバージョン 6.0** として明示。
 
-### シナリオ B（次点）: Bun ランタイム + シナリオ A
+### シナリオ B（次点）: Bun + Biome + シナリオ A の設計思想
 
 **優先順位: 2**
 
-- シナリオ A の TS コードを Bun で動かす
-- got を fetch (Bun ネイティブ) に置換、`Bun.Worker` で PDF 隔離
-- pdf-parse の互換性検証が必要
+- シナリオ A の TS / アーキテクチャ設計をそのままに、**ランタイム = Bun、ツールチェーン = Bun + Biome** に置換
+- `bun build` / `bun test` / **Biome (lint + format)** / `bun install` で CI 時間を 5-10x 短縮
+- got を Bun ネイティブ fetch に置換、`Bun.Worker` で PDF 隔離 (pdf-parse の Bun 互換性は要検証)
 - パフォーマンス改善 (起動時間 -50%、並列スループット +20-30%)
 - Misskey エコシステムからの距離が増えるので「Bun 推奨だが Node でも動く」のデュアル対応が望ましい
 - 期間: **シナリオ A + 1 ヶ月**
