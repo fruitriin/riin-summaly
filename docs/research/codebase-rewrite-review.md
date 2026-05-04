@@ -60,8 +60,19 @@
 
 ### スコープ外
 
-- ライブラリ用の `summaly()` 関数 API は「**HTTP インターフェース凍結だけ**」が要件であり、ライブラリ API は完全互換でなくてもよい（rewrite 時に同等機能を別 API で提供してよい）。ただし「現実的な移行コスト」の観点からは互換性が高い方が良い。
+- ライブラリ用の `summaly()` 関数 API、`SummalyPlugin` interface、`SummalyOptions` の型 ── **これらは互換性を保つ必要なし**。HTTP URL パラメータ (`?url=...&lang=...`) と JSON レスポンスのスキーマ凍結だけが要件。
 - npm パッケージ名 `@misskey-dev/summaly` は維持を**前提としない**（fork なので独自配布で構わない）。
+
+### フォーク stance とメンテナンス前提
+
+このフォークの設計判断に影響する前提:
+
+1. **upstream へのバックポートは考慮不要**: 設計の純度・読みやすさを最優先してよい。upstream の慣習に合わせる必要なし。
+2. **メンテナーは fork オーナー自身のみ**: 「外部プラグイン作者向けの破壊的変更回避」「カスタム拡張ユーザーへの配慮」は **不要**。`SummalyPlugin.name` 必須化や `PluginContext` 導入のような破壊的 API 変更を遠慮なくやってよい。
+3. **取り込みは「upstream / 他 fork → 自分たち」の一方向のみ**: 上流で開発が進んだ機能・バグ修正を cherry-pick できる構造は維持したい。ただし「rewrite による綺麗な再構成」と「cherry-pick の merge 容易性」はトレードオフ。**rewrite 後は cherry-pick 容易性は失う**前提で設計してよい（ただし「上流のどのコミットを取り込んだか」を doc に残す規律は維持）。
+4. **中間デプロイなし**: 段階的リリースを挟まないので、**big-bang rewrite で OK**。phase 分割や後方互換 shim 一切不要。
+5. **LLM 駆動でビッグバン書き換え**: 期間見積もりは不要（人間月数ではなく「LLM が一気に書ききる」スタイル）。「3 〜 5 ヶ月」のような時間軸は **本ドキュメントから削除**。
+6. **唯一気にする後方互換**: HTTP リクエスト形式 (`GET /?url=...&lang=...`) と `SummalyResult` JSON のスキーマ。**それ以外は全て自由**。
 
 ---
 
@@ -579,11 +590,11 @@ BEAM の障害分離 (per-request process) で「PDF パースで暴走しても
 
 ## 5. 統合レコメンド
 
-### シナリオ A（推奨）: Node 維持 + 観点 1 の TS 再設計
+前提として 1 章「フォーク stance」のとおり、**big-bang rewrite + LLM 一気書き** を想定。期間見積もり / 段階的移行 / 後方互換 shim はいずれも不要。**HTTP インターフェース凍結だけ**を満たせばよい。
 
-**優先順位: 1**
+### シナリオ A（第一候補）: Node 維持 + 観点 1 の TS 再設計 + Vite Plus
 
-- 既存テスト 1,871 行 + 既存 plugin 10 個を **段階的に新構造へ移植** していく
+- 既存テスト 1,871 行 + 既存 plugin 10 個を **挙動互換テストとして読み直し**、新構造でゼロから書き起こす（big-bang rewrite）
 - 依存入れ替え (got → undici, encoding-japanese 削除, jschardet → chardetng-js, pdf-parse → 自前 + フォールバック, escape-regexp 自前化)
 - **ツールチェーン: Vite Plus に統合**（tsdown + Vitest を維持しつつ Oxlint + Oxfmt + Vite dev server を入れる）
 - ファイル構成を `core` / `http` / `server` 三層分離
@@ -591,47 +602,50 @@ BEAM の障害分離 (per-request process) で「PDF パースで暴走しても
 - in-flight dedup を rewrite で標準化（phase4.2 の DoD を統合）
 - プラグイン別 config 機構（phase8.1 TOML の placeholder 解消）
 - OpenTelemetry / pino / OpenAPI スキーマ自動化
-- 期間: **3 〜 5 ヶ月**
-
-リスク: 既存 fork ユーザー（カスタムプラグイン作者）への影響。`SummalyPlugin.name` 必須化と `PluginContext` 導入は破壊的。**メジャーバージョン 6.0** として明示。
+- **`SummalyPlugin` interface の破壊的変更を遠慮なく実施**（`name` 必須化、`PluginContext` 導入、`scpaping` のリネーム等）
 
 ### シナリオ B（次点）: Bun + Biome + シナリオ A の設計思想
-
-**優先順位: 2**
 
 - シナリオ A の TS / アーキテクチャ設計をそのままに、**ランタイム = Bun、ツールチェーン = Bun + Biome** に置換
 - `bun build` / `bun test` / **Biome (lint + format)** / `bun install` で CI 時間を 5-10x 短縮
 - got を Bun ネイティブ fetch に置換、`Bun.Worker` で PDF 隔離 (pdf-parse の Bun 互換性は要検証)
 - パフォーマンス改善 (起動時間 -50%、並列スループット +20-30%)
-- Misskey エコシステムからの距離が増えるので「Bun 推奨だが Node でも動く」のデュアル対応が望ましい
-- 期間: **シナリオ A + 1 ヶ月**
+- 配布環境に Bun ランタイムを要求してよい（Misskey エコシステムからの距離が増えるが fork スタンスでは許容範囲）
 
-### シナリオ C（特殊条件下）: Go single binary 化
+### シナリオ C: Go single binary 化
 
-**優先順位: 3**
+- 配布性 (single binary) とパフォーマンスが最高
+- プラグインの動的追加性を諦め、組み込み 10 個 + 「カスタムプラグインは webhook で外部 dispatch」モデル（fork スタンスではカスタム拡張ユーザーを考慮しなくてよいので障壁低）
+- HTTP インターフェース凍結のため `SummalyResult` を Go の構造体に手で再定義する必要あり（TS 型からの自動生成不可）
+- **upstream cherry-pick が完全に途絶える**ため、上流の進化を取り込みたいなら不利
 
-- Misskey インスタンス管理者が「summaly を独立 HTTP サービスとして k8s / systemd で配るときに Node ランタイムを入れたくない」要件があるとき
-- プラグインの動的追加性を諦め、組み込み 10 個 + 「カスタムプラグインは webhook で外部 dispatch」モデルに切り替える
-- パフォーマンスと配布性が最高、ただし **fork メンテナンスコストとプラグイン作者参入障壁が劇的に上がる** ので Misskey コミュニティ全体での合意形成が必要
-- 期間: **6 〜 9 ヶ月**
-
-### 採用判断のフローチャート
+### 採用判断のフローチャート（fork スタンス前提）
 
 ```
-Q1. 既存プラグイン互換性は重要か？
-  Yes → シナリオ A or B
-  No  → Q2
+Q1. upstream / 他 fork からの cherry-pick を将来も使いたいか？
+  Yes → Q2 (TS 系のみ検討)
+  No  → Q2 と Q3 両方検討可
 
-Q2. single binary 配布が要求されるか？
-  Yes → シナリオ C
-  No  → シナリオ A or B
+Q2. ツールチェーン全体を置換してでも CI / 開発体験を最速化したいか？
+  Yes → シナリオ B (Bun + Biome)
+  No  → シナリオ A (Vite Plus)
 
-Q3. パフォーマンスとデプロイ容易性で +20% 欲しいか？
-  Yes → シナリオ B
-  No  → シナリオ A
+Q3. 配布バイナリ 1 つで完結させたい運用要件があるか？
+  Yes → シナリオ C (Go)
+  No  → A or B
 ```
 
-→ **多くの Misskey 管理人にとってはシナリオ A が現実的最適解**。
+→ **fork スタンスとして「upstream cherry-pick を維持しつつ最大限の構造改善」狙いなら シナリオ A 第一候補、「ツールチェーン速度を最優先」なら シナリオ B**。シナリオ C は「Go バイナリを別途配布する」という独立価値が要求されたときのみ。
+
+### fork メンテナンス容易性のための設計指針
+
+big-bang rewrite 後に upstream / 他 fork からの cherry-pick を続けるための注意:
+
+1. **「upstream のどのコミットまで取り込んだか」を `docs/upstream-sync.md` のような台帳で管理**: rewrite で diff が完全に乖離するため、cherry-pick は「コミットの意図を読んで自分たちの構造に手で適用」する形になる。台帳がないと取りこぼす
+2. **upstream 由来の機能はテストケース名にコミット参照を残す**: 例 `test('mei23 #39: ISO-2022-JP decode (upstream commit abc123 から取り込み)')`
+3. **プラグイン単位の独立性を最大化**: 各プラグインを `src/plugins/<name>/{index.ts, fixture.html, test.ts}` のディレクトリに閉じ込め、新規プラグイン追加 = 1 ディレクトリ追加で済む構造に
+4. **upstream の `general.ts` 改変を取り込みやすくするため、汎用抽出ロジックは「upstream の構造を参考に薄くラップする」**: 大幅に書き直すなら upstream cherry-pick 諦め前提
+5. **依存ライブラリは upstream とのバージョン乖離を年 1 回程度棚卸し**: `cheerio` / `iconv-lite` 等のメジャー更新時に挙動差を確認
 
 ---
 
