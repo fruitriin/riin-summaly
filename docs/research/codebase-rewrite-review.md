@@ -3,18 +3,16 @@
 > 状態: **参考資料 / レビュー**
 > 種別: アーキテクチャ評価
 > サイズ: **L**（評価のみ、実装スコープなし）
-> 想定読者: 本リポジトリのメンテナ、将来 fork してゼロベース再設計を検討する人
+> 想定読者: 本フォークのメンテナ、ゼロベース再設計を検討する人
 > 作成日: 2026-05-04
 
-このドキュメントは「現状の summaly コードベースを **機能と Misskey 側から見える HTTP インターフェース ( `GET /?url=...&lang=...` → SummalyResult JSON ) を完全に保ちつつ全て作り直す**」場合の設計レビューです。実装計画ではなく、**評価と提案** が目的。
+このドキュメントは「現状の summaly コードベースを **HTTP インターフェース ( `GET /?url=...&lang=...` → `SummalyResult` JSON ) を保ちつつ全て作り直す**」場合の設計レビューです。実装計画ではなく **評価と提案**。
 
 ---
 
 ## 1. 前提・スコープ
 
 ### 凍結する外部インターフェース
-
-以下は「Misskey から見える契約」であり、**いかなる rewrite シナリオでも変えない**:
 
 #### HTTP
 
@@ -48,7 +46,7 @@
 }
 ```
 
-#### 動作要件（変えない）
+#### 動作要件（凍結）
 
 - **OG / Twitter Card / oEmbed の優先順位** で抽出
 - **サイト固有プラグインのマッチ順固定**（amazon → bluesky → wikipedia → branchio-deeplinks → youtube → spotify → dlsite → iwara → komiflo → nijie）
@@ -58,25 +56,27 @@
 - **`KNOWN_SHORT_HOSTS`**: `followRedirects: false` でも HEAD で解決する公式短縮 URL 集合
 - **Cache-Control**: 200 と 4xx/5xx のデフォルト値・`0 → no-store` 規約
 
-### スコープ外
-
-- ライブラリ用の `summaly()` 関数 API、`SummalyPlugin` interface、`SummalyOptions` の型 ── **これらは互換性を保つ必要なし**。HTTP URL パラメータ (`?url=...&lang=...`) と JSON レスポンスのスキーマ凍結だけが要件。
-- npm パッケージ名 `@misskey-dev/summaly` は維持を**前提としない**（fork なので独自配布で構わない）。
-
 ### フォーク stance とメンテナンス前提
 
-このフォークの設計判断に影響する前提:
+本フォークの設計判断に直接影響する前提:
 
 1. **upstream へのバックポートは考慮不要**: 設計の純度・読みやすさを最優先してよい。upstream の慣習に合わせる必要なし。
 2. **メンテナーは fork オーナー自身のみ**: 「外部プラグイン作者向けの破壊的変更回避」「カスタム拡張ユーザーへの配慮」は **不要**。`SummalyPlugin.name` 必須化や `PluginContext` 導入のような破壊的 API 変更を遠慮なくやってよい。
-3. **取り込みは「upstream / 他 fork → 自分たち」の一方向のみ**: 上流で開発が進んだ機能・バグ修正を cherry-pick できる構造は維持したい。ただし「rewrite による綺麗な再構成」と「cherry-pick の merge 容易性」はトレードオフ。**rewrite 後は cherry-pick 容易性は失う**前提で設計してよい（ただし「上流のどのコミットを取り込んだか」を doc に残す規律は維持）。
+3. **取り込みは upstream / 他 fork → 自分たちの一方向のみ**: 上流で開発が進んだ機能・バグ修正を cherry-pick できる構造は維持したい。**rewrite 後は cherry-pick 容易性は失う**前提で設計してよい（「上流のどのコミットを取り込んだか」を doc 台帳で管理する規律は残す）。
 4. **中間デプロイなし**: 段階的リリースを挟まないので、**big-bang rewrite で OK**。phase 分割や後方互換 shim 一切不要。
-5. **LLM 駆動でビッグバン書き換え**: 期間見積もりは不要（人間月数ではなく「LLM が一気に書ききる」スタイル）。「3 〜 5 ヶ月」のような時間軸は **本ドキュメントから削除**。
-6. **唯一気にする後方互換**: HTTP リクエスト形式 (`GET /?url=...&lang=...`) と `SummalyResult` JSON のスキーマ。**それ以外は全て自由**。
+5. **LLM 駆動でビッグバン書き換え**: 期間見積もりは不要。「人間月数」概念を本ドキュメント全体から排除する。
+6. **凍結対象は HTTP のみ**: HTTP リクエスト形式 (`GET /?url=...&lang=...`) と `SummalyResult` JSON のスキーマだけ凍結。それ以外（ライブラリ API / プラグイン interface / 環境変数 / 内部型）は全て自由に再設計可能。
+
+### スコープ外
+
+- npm パッケージ名 `@misskey-dev/summaly` の維持を**前提としない**（fork なので独自配布で構わない）。
+- 本ドキュメントは設計指針のみで、実装手順 / TODO / phase 分割は別ドキュメントの責務。
 
 ---
 
 ## 2. 現コードベースの構造的特徴
+
+> このセクションは rewrite で**全捨てる前提**だが、再設計時の対比資料として残す。
 
 ### サイズ感
 
@@ -89,13 +89,7 @@ src/                        2,803 行 (TypeScript only, blank/comment 含む)
 ├─ utils/sanitize-url.ts      40 行  ← https/http/data: のフィルタ
 ├─ utils/agent.ts             39 行  ← keep-alive Agent + family
 ├─ utils/cleanup-title.ts     26 行  ← 「タイトル | サイト名」末尾の剥がし
-├─ utils/clip.ts              16 行  ← 文字列クリップ
-├─ utils/short-urls.ts        17 行  ← 公式短縮 URL の Set
-├─ utils/player-allow.ts      18 行  ← oEmbed 用 allow safelist
-├─ utils/status-error.ts      14 行
-├─ utils/null-or-empty.ts     12 行
-├─ utils/pdf-icon.ts           8 行  ← SVG data URL
-├─ utils/user-agents.ts        9 行  ← Chrome UA
+├─ utils/{clip,short-urls,player-allow,status-error,null-or-empty,pdf-icon,user-agents}.ts 計 ~94 行
 ├─ summary.ts                 85 行  ← 型定義
 ├─ iplugin.ts                 13 行  ← SummalyPlugin 型
 └─ plugins/ (10 個)           ~510 行 ← サイト固有
@@ -109,28 +103,27 @@ docs/plans/                  2,097 行 (12 個の phase ドキュメント)
 - `escape-regexp` 0.0.1 / `html-entities` 2.6.0 / `ipaddr.js` 2.3.0 / `lru-cache` 11.3.5 / `pdf-parse` 2.4.5
 - optional: `fastify` 5.8.5
 
-### 良い点
+### 良い点（rewrite 後も継承したい）
 
-1. **責務分離が明確**: `utils/*` は単機能の小さなユーティリティ群（10〜50 行）が並び、テスタビリティが高い。`general.ts` の `parseGeneral` は plugin から再利用される正しい粒度。
-2. **SSRF 多段防御**: ヘッダで size 確認、ストリーミング中 `downloadProgress` で size 監視（AbortController）、レスポンス IP の private 判定、type filter、結果 URL の sanitize、HTTP/2 無効、no-retry ── 一通り入っている。
-3. **PDF 隔離設計**: opt-in、5 秒 hard timeout、`getInfo()` のみ（本文解析しない）、`finally` で `destroy()`。「危険物の扱い方」を意識して設計されている。
-4. **テスト網羅性**: 1,871 行の単一テストファイルにフィクスチャ HTML / oEmbed JSON / PDF が揃っている。プラグインごと・SSRF・キャッシュ・エンコーディングを広くカバー。
-5. **ESM + tsdown**: 現代的な ESM only 構成、tsdown で `.d.ts` ごと出力する小さい bundle。
-6. **`docs/plans/` で意思決定が言語化されている**: 12 個の phase ドキュメントが「なぜそう設計したか」「リスクと open question」を残しており、保守者の認知負荷が低い。
+1. **責務分離が明確な utils**: 単機能の小さなユーティリティ群（10〜50 行）が並びテスタビリティが高い
+2. **SSRF 多段防御**: ヘッダ / ストリーミング / IP / type / sanitize / HTTP/2 / no-retry が一通り入っている
+3. **PDF 隔離設計の意識**: opt-in、5 秒 hard timeout、`getInfo()` のみ、`finally` での `destroy()`
+4. **テストフィクスチャ群**: HTML / oEmbed JSON / PDF が揃っており、挙動互換テストとして再利用可能
+5. **`docs/plans/` で意思決定が言語化**: 12 個の phase ドキュメントが「なぜそう設計したか」を残しており、rewrite 時の指針として価値が高い
 
-### 構造的な弱点
+### 構造的な弱点（rewrite で解消すべき）
 
-1. **`src/index.ts` が肥大化**: `SummalyOptions` 型定義 + `summaly()` 関数 + Fastify ルート + LRU キャッシュロジック + キャッシュキー正規化 + エラー直列化 ── 4 〜 5 個の責務が 1 ファイルに同居（373 行）。**「ライブラリの本体」と「Fastify ルートハンドラ」の境界が曖昧**。
-2. **`src/utils/got.ts` も肥大化**: HTTP 層 + SSRF + PDF パース + JSON ヘルパ + agent 管理 + timeout race ── 351 行に集約されすぎている。`scpaping` のタイポを含めて「公開 API」が拡散している。
-3. **モジュールレベルの可変状態**: `let agent: Got.Agents = {};` がモジュールスコープにある。`setAgent()` で書き換え、`isExternalAgentSet()` でその副作用として SSRF ガードまで切れる。**テスト並列実行や複数インスタンス共存に致命的**。
-4. **`SummalyOptions` の責務混在**: `lang` / `userAgent` のような per-request オプションと、`cacheMaxAge` / `inMemoryCacheMaxEntries` のような Fastify サーバ設定、`enablePdf` のような機能フラグが flat に並ぶ。phase8.1 で TOML 化するときにグループ分けで悩むのはこれが原因。
-5. **プラグインインターフェースが素朴すぎる**: `name` が optional、`test/summarize` だけ。プラグイン別 config（komiflo の `preferredVariant` 等）の渡し口がなく、定数がコード内ハードコード。
-6. **誤字 `scpaping` の固定化**: 半ば公開 API として固定されており、外部プラグインからも参照されている可能性。CLAUDE.repo.md にも「リネームしないこと」と明記されている。
-7. **`getOEmbedPlayer()` が `general.ts` 内にハードコード**: oEmbed の DOM 検証ロジックが汎用パスに紛れ込んでいて、テストや差し替えが難しい。`utils/oembed.ts` のような独立モジュールに切り出すべき。
-8. **`Summary` と `SummalyResult` の関係が曖昧**: `default export` で `Summary`、named export で `SummalyResult`。プラグイン作者は `default export` 名 `Summary` を `summary` (lowercase) で import するパターンが既存プラグインにある（amazon.ts）── TypeScript 的に不健全。
-9. **エラーハンドリングが粗い**: `failed summarize` という string error、`StatusError` 一種、Fastify 層で `JSON.stringify(Error) → {}` 問題に対する patch（`serializableError`）── 体系化されていない。
-10. **テストファイル単一**: 1,871 行 1 ファイルでメンテナンス困難。プラグイン単位 / レイヤー単位での分割が遅れている。
-11. **「呼ばれたときの HTTP インターフェース」の型がない**: ライブラリ側 `SummalyOptions` と Fastify サーバの設定が混在し、HTTP リクエスト形式 (`?url=...&lang=...`) や JSON レスポンスのスキーマが TypeScript 型として独立して切り出されていない。OpenAPI / JSON Schema もない。
+1. **`src/index.ts` が肥大化** (373 行、4-5 個の責務同居): ライブラリ本体と Fastify ルートの境界が曖昧
+2. **`src/utils/got.ts` も肥大化** (351 行): HTTP / SSRF / PDF / JSON / agent / timeout が集約されすぎ。`scpaping` のタイポも含めて拡散
+3. **モジュールレベルの可変状態**: `let agent: Got.Agents = {};` がモジュールスコープに。テスト並列実行や複数インスタンス共存に致命的
+4. **`SummalyOptions` の責務混在**: per-request / Fastify 専用 / 機能フラグが flat に同居 → phase8.1 TOML 設計の苦労の原因
+5. **プラグインインターフェースの素朴さ**: `name` optional、config 渡し口なし、サイト別定数がコード内ハードコード
+6. **`scpaping` 誤字の固定化**: 半ば公開 API として固定、内部リネームすら避けられている
+7. **`getOEmbedPlayer()` の `general.ts` 内ハードコード**: oEmbed DOM 検証が汎用パスに紛れ込んでテスト困難
+8. **`Summary` / `SummalyResult` の関係曖昧**: default export と named export が混在、プラグイン側で `Summary` を `summary` (lowercase) で import する不健全パターンあり
+9. **エラーハンドリングが粗い**: string error / `StatusError` / Fastify 層 `serializableError` patch が体系化されていない
+10. **テストファイル単一**: 1,871 行 1 ファイルでメンテナンス困難
+11. **HTTP インターフェースの型定義なし**: `?url=...&lang=...` や JSON レスポンスのスキーマが TS 型として独立して存在しない（OpenAPI も無し）
 
 ---
 
@@ -138,51 +131,42 @@ docs/plans/                  2,097 行 (12 個の phase ドキュメント)
 
 ### 3.1 依存ライブラリの見直し
 
-**評価軸**: 「**実行速度** (リクエスト捌きの throughput / パース速度 / latency)」と「**できることの品質** (機能の正確性・カバレッジ・エッジケース対応)」のバランスで判定する。**コードベース / 依存サイズは判断材料から除外**。
+**評価軸**: 「**実行速度** (throughput / parse 速度 / latency)」と「**できることの品質** (機能の正確性・カバレッジ・エッジケース対応)」のバランス。**コードベース / 依存サイズは判断材料から除外**。
 
 | 現状 | 速度 | 品質 | 総評 / 推奨アクション |
 |---|---|---|---|
-| **got** 15.0.3 | △ | ◎ | **置換候補: `undici`**。got は HTTP クライアントとして最も機能が豊富 (retry / hooks / pagination / cookies / pre-redirect normalization)。一方 `undici` は Node 18+ の `fetch` 内部実装で、HTTP/1.1 keep-alive プールの効率と pipeline で **got より request/sec が 1.5〜2x 高い**（公式ベンチで 60-70K req/s vs got 35-40K req/s）。summaly は got の features (retry/hooks 等) を使っていないので、品質を落とさず速度を取れる。**推奨: undici Dispatcher + AbortController**（agent 制御も undici の方が細かい）。ただし「stream の AbortError 取り回し」「`got.HTTPError` 相当の例外シェイプ」「`agent` の `Agents` 型」など API 互換調整が rewrite 規模で必要。 |
-| **cheerio** 1.2.0 | △ | ◎ | **置換候補: `linkedom`**（rewrite なら）。cheerio は jQuery 風の表現力（`$('meta[property="og:title"]').attr('content')` のような selector + traversal）が summaly の抽出ロジックに刺さる。一方 `linkedom` は実 DOM (Window/Document/HTMLElement) を再現し **selector queries が cheerio の 2-3x 速い**（特に大きい HTML で）。本フォークの `general.ts` / 各プラグインは jQuery 相当 API に依存しているため**移行コストは大きい**が、rewrite 規模なら全プラグイン書き直しを許容できる。**recommended: rewrite で linkedom**、漸進改修なら cheerio 維持。 |
-| **iconv-lite** 0.7.2 | ○ | ◎ | **現状維持推奨**。iconv-lite は pure JS で **`iconv` (native binding) より 30% 程度遅いが、Buffer 出力の正確性とエンコーディングカバレッジで業界標準**。Node の `TextDecoder` は最速 (ICU 直叩き) だが、配布 Node によっては ISO-2022-JP / Shift_JIS が含まれない (ICU small ビルド) ため Misskey 配布環境を縛れない。「速度を最大化」したいなら `TextDecoder` を try、失敗時 iconv-lite フォールバックの 2 段階構成が選択肢。 |
-| **jschardet** 3.1.4 | △ | △ | **置換候補: `chardetng-js` (wasm)**。jschardet は Mozilla 由来の古いポートで、Latin / EUC / Shift_JIS / UTF-8 の検出精度が現代ブラウザに劣る。**`chardetng-js`** は Firefox 同梱の Rust 実装の wasm port で、**実 Web ページに対する検出精度が圧倒的に高い**（Firefox 同等）。速度は wasm 起動コストでわずかに劣るが、検出精度の品質差が大きい。本フォークは confidence 0.99 縛りで実質ほぼ採用されない設定 (= jschardet の弱検出を信じない設計) のため、品質改善でこのワークアラウンドを外せる。**rewrite で chardetng-js 推奨**。 |
-| **encoding-japanese** 2.2.0 | ✕ | ✕ | **削除推奨**。本ライブラリ最大の問題: ISO-2022-JP の decode 速度が **iconv-lite の 4〜5 倍遅い** ([phase2.2 計画ファイルの実測表](../plans/phase2.2-mei23-non-plugin.md))。本フォークは「ISO-2022-JP のために iconv-lite を補完する」目的で導入したが、**iconv-lite 0.7.x は ISO-2022-JP の decode を公式サポート済み** (changelog 確認済)。速度・品質の両軸で iconv-lite に統合すべき。**rewrite で削除確定**。 |
-| **fastify** 5.8.5 | ◎ | ◎ | **現状維持推奨**。Fastify は **Express の 2-3x 速い**（公式ベンチ 65K req/s vs 25K）うえ、JSON Schema による自動 fast-json-stringify、route plugins の encapsulation、Cache-Control / ETag のフック容易性で summaly の用途と完全に噛み合う。代替 `Hono` は Web Standard fetch ベースで Bun/Deno 親和性が高いが Node 環境では fastify 同等以下。Express 5 / Koa は速度品質ともに劣る。**rewrite でも fastify**。Bun 移行 (シナリオ B) なら hono 検討。 |
-| **lru-cache** 11.3.5 | ◎ | ◎ | **現状維持推奨**。`lru-cache` は **業界標準で TTL / maxSize / dispose / size calculation 全部入り**、かつ get/set が O(1) で速い。代替 `mnemonist/LRUCache` は速度同等で API も近いが TTL 機構が弱い。`quick-lru` は機能少なく summaly の use case (per-entry TTL) に不向き。**rewrite でも lru-cache**。 |
-| **pdf-parse** 2.4.5 | ✕ | ◎ | **置換候補: 自前正規表現パーサ + フォールバック `pdfjs-dist` 直叩き**。pdf-parse は内部で `pdfjs-dist` 全体をロードし、メタデータ取得だけでも **document parse のフルパスを通る** (~50-200ms/ファイル)。一方 PDF メタデータ (`Title`) は **PDF Trailer Dictionary を直接読めば数ミリ秒で取れる**。速度は 10-50x 改善。品質面では PDF 仕様準拠の正規表現で 90% のメタデータ付き PDF をカバーでき、外れ値 (encoding 違い・compressed metadata) には pdfjs-dist フォールバック。**rewrite で自前 + worker_threads 隔離**。pdfjs-dist を fallback として残すなら品質ロスなし、worker 隔離で速度差を相殺できる。 |
-| **ipaddr.js** 2.3.0 | ◎ | ◎ | **現状維持推奨**。`ipaddr.js` は **IPv4/IPv6 統合 + range 判定 (`unicast` / `private` / `loopback` 等) を pure JS で高速に行える** 業界標準。代替 `ip-address` は機能豊富だが速度同等以下。Node native `net.isIP` は range 判定不可で SSRF ガード用途に不足。**rewrite でも ipaddr.js**。 |
-| **html-entities** 2.6.0 | ◎ | ◎ | **現状維持推奨**。`html-entities` v2 は **Trie ベースで decode 速度が `he` の 2-3x 速い**、HTML5 仕様完全対応。`he` は厳密性ではやや上回るが summaly の use case (meta tag content の decode) では差が出ない。**rewrite でも html-entities**。 |
-| **escape-regexp** 0.0.1 | ○ | △ | **置換候補: `escape-string-regexp` または自前**。本ライブラリは中身 1 行 (`s.replace(/[\-\/\\^$*+?.()|[\]{}]/g, '\\$&')`) で速度品質とも問題なし。ただし **0.0.1 で 11 年メンテなし**、TypeScript 型定義は `@types/escape-regexp` 任せ、依存の信頼性に難。`escape-string-regexp` は同じ機能でメンテ活発、または **自前 1 行関数** で十分（パフォーマンス同等、品質保証は自分でできる）。**rewrite で自前化推奨**。 |
-| **tsdown** 0.21.10 | ◎ | ◎ | **現状維持推奨**。tsdown は rolldown ベースで **build 時間が tsc の 5-10x 速い**、`.d.ts` 出力 / ESM 完全対応。代替 `tsup` (esbuild) や `unbuild` も同等だが tsdown が最新。**rewrite でも tsdown**。 |
-| **vitest** 4.1.5 | ◎ | ◎ | **現状維持推奨**。Vitest は **jest 互換 API + esbuild ベースの fast watch mode**、HMR でテストイテレーションが速い。Bun test は速度では勝るが Bun 環境前提。Node test runner (`node:test`) は機能が薄い。**rewrite でも vitest**。 |
-| **eslint** 9 + `@misskey-dev/eslint-plugin` | ○ | ◎ | **現状維持推奨**。lint は実行速度より品質ルールカバレッジが重要。flat config 採用済みで設定の見通しが良い。代替 `oxlint` (Rust) は 50-100x 速いが rule カバレッジで eslint に劣る。speed/quality で **eslint + 必要なら oxlint を CI の事前チェックに併用** が選択肢。 |
-| **typescript** 6.0.3 | ◎ | ◎ | **現状維持推奨**。tsc は速度では Babel/swc に劣るが**型システムの品質はオリジナル**。代替なし。 |
-| **@types/encoding-japanese** | — | — | encoding-japanese を削除すれば不要。 |
+| **got** 15.0.3 | △ | ◎ | **置換: `undici`**。got は機能豊富 (retry / hooks / pagination 等) だが summaly は使っていない。`undici` は Node 18+ の `fetch` 内部実装で **request/sec が got の 1.5〜2x 高い** (公式ベンチ 60-70K vs 35-40K req/s)。AbortController / Dispatcher で agent 制御も細かい。 |
+| **cheerio** 1.2.0 | △ | ◎ | **置換: `linkedom`**。cheerio は jQuery 風表現力が高いが selector パフォーマンスは中程度。`linkedom` は実 DOM (Window/Document) を再現し **selector が cheerio の 2-3x 速い**（特に大きい HTML）。プラグイン全書き直し前提なので rewrite で採用。 |
+| **iconv-lite** 0.7.2 | ○ | ◎ | **現状維持**。pure JS で `iconv` (native) より 30% 遅いが安定。Node `TextDecoder` は ICU full ビルドが必要で配布環境を縛る。「速度最大化」したいなら `TextDecoder` try → iconv-lite フォールバックの 2 段。 |
+| **jschardet** 3.1.4 | △ | △ | **置換: `chardetng-js` (wasm)**。Firefox 同梱の Rust 実装の wasm port。**実 Web ページに対する検出精度が圧倒的**（Firefox 同等）。本フォークは `confidence: 0.99` 縛りで実質ほぼ採用されない設定 → 品質改善でこの workaround を外せる。 |
+| **encoding-japanese** 2.2.0 | ✕ | ✕ | **削除**。ISO-2022-JP の decode 速度が **iconv-lite の 4〜5 倍遅い** ([phase2.2 計画ファイル実測表](../plans/phase2.2-mei23-non-plugin.md))。**iconv-lite 0.7.x は ISO-2022-JP を公式サポート済み**。速度・品質の両軸で iconv-lite に統合。 |
+| **fastify** 5.8.5 | ◎ | ◎ | **現状維持**。Express の 2-3x 速い (公式ベンチ 65K req/s)、JSON Schema による fast-json-stringify、route plugins の encapsulation、Cache-Control / ETag フックが summaly に完全マッチ。Bun 系なら `Hono` 検討。 |
+| **lru-cache** 11.3.5 | ◎ | ◎ | **現状維持**。TTL / maxSize / dispose / size calculation 全部入り、O(1) 高速。代替なし。 |
+| **pdf-parse** 2.4.5 | ✕ | ◎ | **置換: 自前 PDF Trailer parser + `pdfjs-dist` 直叩きフォールバック**。pdf-parse は metadata 取得だけで pdfjs-dist 全体ロード + parse フルパス (~50-200 ms)。**PDF Trailer Dictionary 直読みで数 ms に短縮 (10-50x)**。エッジケース (encoding 違い・compressed metadata) は pdfjs-dist フォールバックで品質担保。worker_threads 隔離もセット。 |
+| **ipaddr.js** 2.3.0 | ◎ | ◎ | **現状維持**。IPv4/IPv6 統合 + range 判定 (`unicast` / `private` / `loopback`) を pure JS で高速。SSRF ガード用途に必須。 |
+| **html-entities** 2.6.0 | ◎ | ◎ | **現状維持**。v2 は Trie ベースで `he` の 2-3x 速い、HTML5 仕様完全対応。 |
+| **escape-regexp** 0.0.1 | ○ | △ | **置換: 自前 1 行**。中身は 1 行なので依存にする必要なし。`escape-string-regexp` でも可。 |
 
-#### 推奨入れ替え方針 (速度 + 品質バランス重視)
+#### 推奨入れ替え方針 (ROI 順)
 
-優先順:
+1. **encoding-japanese → 削除 (iconv-lite 一本化)**: 速度 4-5x 改善、リスクなし
+2. **pdf-parse → 自前 PDF Trailer parser + pdfjs-dist フォールバック**: 速度 10-50x 改善
+3. **jschardet → chardetng-js (wasm)**: 検出精度が Firefox 同等に向上
+4. **got → undici Dispatcher**: throughput 1.5-2x、機能ロスなし
+5. **cheerio → linkedom**: selector 速度 2-3x、プラグイン全書き直し前提
+6. **escape-regexp → 自前**: 速度品質変化なし、依存信頼性向上のみ
 
-1. **encoding-japanese → 削除 (iconv-lite 一本化)**: 速度 4-5x 改善 + 品質変化なし。最も ROI 高い。
-2. **pdf-parse → 自前 PDF Trailer parser + pdfjs-dist フォールバック**: 速度 10-50x 改善、品質はフォールバックで担保。
-3. **jschardet → chardetng-js (wasm)**: 検出精度が大きく向上 (Firefox 同等)。confidence 0.99 縛りを外せて品質向上。
-4. **got → undici Dispatcher**: throughput 1.5-2x 改善、機能ロスなし (summaly は got の advanced features を使っていない)。
-5. **cheerio → linkedom**: selector 速度 2-3x 改善。ただしプラグイン全書き直しが必要なので **rewrite 規模でのみ採用**。
-6. **escape-regexp → 自前 / escape-string-regexp**: 速度品質変化なし、依存の信頼性向上のみ。
-
-その他 (fastify / lru-cache / ipaddr.js / html-entities / iconv-lite / tsdown / vitest / eslint / typescript) は **速度・品質の両軸で現状が最適解**、rewrite でも維持。
+その他 (fastify / lru-cache / ipaddr.js / html-entities / iconv-lite) は速度・品質の両軸で**現状が最適解**。
 
 ### 3.2 ファイル構成の見直し
-
-#### 提案ディレクトリツリー
 
 ```
 src/
 ├─ index.ts                      ← public re-export のみ（型 + summaly + Fastify plugin）
 ├─ types/
 │   ├─ summary.ts                ← Summary / SummalyResult / Player
-│   ├─ options.ts                ← SummalyOptions（per-request）
-│   ├─ server-options.ts         ← FastifyServerOptions（cache/PDF/inMemory 等）
+│   ├─ options.ts                ← RequestOptions / SummalyOptions
+│   ├─ server-options.ts         ← SummalyServerOptions（cache/PDF/inMemory 等）
 │   └─ plugin.ts                 ← SummalyPlugin (name 必須化、config 渡し追加)
 │
 ├─ core/
@@ -196,8 +180,8 @@ src/
 │   ├─ ssrf.ts                   ← private IP guard (ipaddr.js)
 │   ├─ size-limit.ts             ← content-length + streaming guard
 │   ├─ type-filter.ts            ← typeFilter / Accept ヘッダ生成
-│   ├─ encoding.ts               ← detect + toUtf8
-│   ├─ agent.ts                  ← keep-alive Dispatcher (mutable global を排除)
+│   ├─ encoding.ts               ← detect (chardetng-js) + toUtf8 (iconv-lite)
+│   ├─ agent.ts                  ← per-request Dispatcher（mutable global を排除）
 │   └─ pdf.ts                    ← PDF metadata（worker_threads で隔離）
 │
 ├─ server/
@@ -207,56 +191,28 @@ src/
 │   └─ error-payload.ts          ← serializableError 等
 │
 ├─ utils/
-│   ├─ clip.ts
-│   ├─ cleanup-title.ts
-│   ├─ sanitize-url.ts
-│   ├─ short-urls.ts
-│   ├─ player-allow.ts
-│   ├─ pdf-icon.ts
-│   ├─ user-agents.ts
-│   ├─ escape-regexp.ts          ← 自前実装
-│   └─ status-error.ts
+│   ├─ clip.ts / cleanup-title.ts / sanitize-url.ts / short-urls.ts
+│   ├─ player-allow.ts / pdf-icon.ts / user-agents.ts
+│   └─ escape-regexp.ts / status-error.ts
 │
 └─ plugins/
     ├─ index.ts
-    ├─ amazon.ts
-    ├─ bluesky.ts
-    ├─ ... (10 個)
+    ├─ <name>/
+    │   ├─ index.ts
+    │   ├─ fixture.html (or oEmbed.json)
+    │   └─ test.ts
     └─ shared/                   ← プラグイン共通 (oembed builder, sensitive 判定)
 ```
 
 #### 設計判断のポイント
 
-- **`core` / `http` / `server` の三層分離**: ライブラリ呼び出しは `core` だけで成立、Fastify サーバは `server` を上に乗せる。HTTP 層 (`http/`) はテスト時にモック可能。
-- **`http/agent.ts` の mutable global を排除**: `setAgent()` を「`summaly()` 呼び出し時に opts.agent を毎回受け取り、その都度 Dispatcher を構築」する関数型に変える（per-request agent）。**`setAgent` は deprecated にして残し、内部で warning**。
-- **`server/cache.ts` と `server/inflight-dedup.ts` の独立**: phase4.2 で本来やる分離を rewrite で先取り。
-- **`http/pdf.ts` を完全に隔離**: 後述「3.5 worker_threads」で詳細。
-- **テスト**: `test/` も `test/core/`、`test/http/`、`test/server/`、`test/plugins/` にレイヤー対応で分割。1,871 行を 200 〜 400 行 × 5 〜 8 ファイル相当に。
+- **`core` / `http` / `server` の三層分離**: ライブラリ呼び出しは `core` だけで成立、Fastify サーバは `server` を上に乗せる。HTTP 層 (`http/`) はテスト時にモック可能
+- **`http/agent.ts` の mutable global を排除**: `setAgent()` を「`summaly()` 呼び出し時に opts.agent を毎回受け取り、その都度 Dispatcher を構築」する関数型に変える（per-request agent）。**`setAgent` は廃止** (fork stance なので破壊的変更可)
+- **`server/cache.ts` と `server/inflight-dedup.ts` の独立**: phase4.2 を rewrite で先取り
+- **プラグインを 1 ディレクトリ単位で閉じ込め**: `plugins/<name>/{index,fixture,test}.ts` で「新規プラグイン追加 = 1 ディレクトリ追加」に。upstream cherry-pick 時の merge 単位もシンプルに
+- **テスト分割**: `test/core/`、`test/http/`、`test/server/`、`test/plugins/<name>/` のレイヤー対応
 
 ### 3.3 型設計の見直し
-
-#### 現状の問題
-
-```ts
-// 現状
-export type SummalyOptions = {
-  lang?: string | null;
-  followRedirects?: boolean;
-  plugins?: SummalyPlugin[];
-  agent?: GotAgents;
-  userAgent?: string;
-  // ...
-  cacheMaxAge?: number;          // ← Fastify only
-  cacheErrorMaxAge?: number;     // ← Fastify only
-  inMemoryCache?: boolean;       // ← Fastify only
-  inMemoryCacheMaxEntries?: number; // ← Fastify only
-  // ...
-};
-```
-
-→ ライブラリ用と Fastify 用が混在。phase8.1 の TOML 設計でも groupings に苦労する。
-
-#### 提案
 
 ```ts
 // types/options.ts — per-request (ライブラリ・Fastify 両用)
@@ -285,6 +241,7 @@ export type SummalyServerOptions = {
   plugins?: {
     custom?: SummalyPlugin[];
     allowed?: string[];
+    config?: Record<string, unknown>;  // [plugins.<name>] TOML から流し込み
   };
   cache?: {
     maxAge?: number;
@@ -295,48 +252,124 @@ export type SummalyServerOptions = {
   };
 };
 
-// types/plugin.ts — name 必須化、config 渡し追加 (将来拡張)
+// types/plugin.ts — name 必須化、config + http context 渡し
 export interface SummalyPlugin<C = unknown> {
-  name: string;                 // 必須化
+  name: string;
+  configSchema?: ConfigSchema<C>;   // zod / typebox（プラグイン別 config 検証）
   test: (url: URL) => boolean;
-  summarize: (
-    url: URL,
-    ctx: PluginContext<C>,
-  ) => Promise<Summary | null>;
+  summarize: (url: URL, ctx: PluginContext<C>) => Promise<Summary | null>;
 }
 
 export interface PluginContext<C = unknown> {
   options: RequestOptions;
-  config?: C;                   // プラグイン別 config (TOML から流し込み可能)
-  http: PluginHttpClient;       // scpaping / getJson の代わり
+  config?: C;
+  http: PluginHttpClient;       // scpaping / getJson の代わり、新名前
 }
 ```
 
-#### `Summary` / `SummalyResult` の整理
+#### `Summary` / `SummalyResult`
 
-- **`default export` をやめる**: `import type { Summary } from '@misskey-dev/summaly'` で揃える
-- **`SummalyResult = Summary & { url: string }`** の関係を明示し、プラグインは `Summary` を返し、ラッパが `url` を補う規約を型で表現
-- **JSON Schema 自動生成**: `zod` または `@sinclair/typebox` で `SummalyResult` を定義し、Fastify の `schema.response` に渡す。OpenAPI 出力も自動化。
+- **`default export` を廃止**: `import type { Summary, SummalyResult } from '@misskey-dev/summaly'` で揃える
+- **`SummalyResult = Summary & { url: string }`** の関係を型で明示し、プラグインは `Summary` を返し、ラッパが `url` を補う規約を強制
+- **JSON Schema 自動生成**: `zod` または `@sinclair/typebox` で `SummalyResult` を定義し、Fastify の `schema.response` に渡す。OpenAPI 自動出力もここから
 
-### 3.4 ツールチェーンの見直し
+### 3.4 ツールチェーンの選択肢
 
-| ツール | 現状 | 見直し提案 |
-|---|---|---|
-| **bundler** | tsdown | **現状維持**。`.d.ts` 含めて高速、ESM 出力に強い。 |
-| **test runner** | vitest | **現状維持**。ただし test ファイルを分割し、`coverage` (`@vitest/coverage-v8`) を CI 必須に。 |
-| **lint** | ESLint 9 (flat config) + `@misskey-dev/eslint-plugin` | **現状維持**。`eslint-plugin-import` の rule で循環依存を catch するルールを足すと層分離が劣化しない。 |
-| **typecheck** | `tsc --noEmit` × 2 (src + test) | **現状維持**。`isolatedModules: true` も継続。 |
-| **runtime** | Node.js (ESM) | **Node 22 LTS + `--experimental-permission`** で ファイル / network を制限する案あり。本番運用時に SSRF とは別の防御層になる。 |
-| **format** | （Prettier 等の設定なし、editorconfig のみ） | **`@biomejs/biome`** か `prettier` 導入検討。lint/format 統合で開発体験向上。 |
-| **CI** | （設定確認していない） | **GitHub Actions** で `pnpm typecheck` + `pnpm test` + `pnpm eslint` + `pnpm build` の matrix（Node 20 / 22 / 24）。`pnpm audit` も。 |
-| **bench** | なし | **mitata** や **vitest bench** で `summaly()` の HTML サイズ別 latency を track。phase4.2 で dedup の効果を可視化。 |
-| **コンテナ** | なし | **`Dockerfile` + multi-stage build** を `docs/deploy-examples/` に追加。Misskey デプロイ環境（k8s / docker-compose）への配布が容易になる。 |
+rewrite 規模なので **「現状維持」は採らない**。以下 3 候補から選ぶ:
+
+#### 候補 A: Vite Plus
+
+[Vite Plus](https://viteplus.dev/guide/) は Vite / Vitest / Oxlint / Oxfmt / Rolldown / **tsdown** / Vite Task を統合した「**統一ツールチェーン**」。
+
+| 領域 | 採用後 |
+|---|---|
+| runtime | Node |
+| bundler | tsdown (Vite Plus 経由) |
+| test | vitest (Vite Plus 経由) |
+| lint | **Oxlint** (Rust 製、ESLint の **50-100x 速い**) |
+| format | **Oxfmt** (Rust 製) |
+| dev server | Vite (phase7.1 dev サーバが HMR 付きで自然に組める) |
+| task runner | Vite Task |
+| package manager | pnpm (現状維持) |
+
+**強み**:
+- 既存 tsdown / Vitest を維持できる（rewrite 後の親和性が最も高い）
+- Oxlint で lint が桁違いに速い → CI 時間圧縮
+- phase7.1 dev サーバが Vite ベースで HMR 効く
+- Oxlint は **ESLint plugin の rule を一部互換** で読める（`@misskey-dev/eslint-plugin` の継承容易性が高い）
+- Node ランタイム維持 → upstream cherry-pick 容易性が比較的高い
+
+**弱み**:
+- Oxlint の rule カバレッジは ESLint 8/9 の全 rule をカバーしていない → fallback で eslint も併走させる選択肢あり
+- 新興ツールのため Misskey エコシステムでの採用例は少ない
+
+#### 候補 B: Bun + Biome
+
+| 領域 | 採用後 |
+|---|---|
+| runtime | **Bun** (起動 -50%、fetch throughput +20-30%) |
+| bundler | **`bun build`** (esbuild ベース、超高速) |
+| test | **`bun test`** (jest 互換 API) |
+| lint | **Biome** (Rust 製、ESLint + Prettier 相当を一括、ESLint の **25x 速い**) |
+| format | **Biome** (lint と一体管理) |
+| dev server | Bun の HTTP サーバ (Hono 推奨) |
+| package manager | **`bun install`** (npm の 10-30x 速い) |
+
+**強み**:
+- ツールチェーン全体が native ベースで CI 時間が劇的に短縮（体感 5-10x）
+- Biome は **lint + format を 1 設定で扱え**、設定ファイル数を最小化できる
+- `bun install` の速度はビルド/テスト loop を快適に
+
+**弱み**:
+- Biome は **独自 rule** で `@misskey-dev/eslint-plugin` を直接継承できない → 相当 rule の手動再現が必要
+- pdf-parse / pdfjs-dist の Bun 互換性は要検証（worker_threads 経由で回避は可能）
+- Bun ランタイム要件が増える → upstream Node コードの cherry-pick で挙動差を踏む可能性
+
+#### 候補 C: Bun + Oxlint + Oxfmt
+
+| 領域 | 採用後 |
+|---|---|
+| runtime | **Bun** |
+| bundler | **`bun build`** |
+| test | **`bun test`** |
+| lint | **Oxlint** (ESLint 互換 rule を活かしやすい) |
+| format | **Oxfmt** |
+| dev server | Bun の HTTP サーバ |
+| package manager | **`bun install`** |
+
+**強み**:
+- Bun の速度メリットを取りつつ、**Oxlint で ESLint 移行コスト最小**（`@misskey-dev/eslint-plugin` の継承容易性が Biome より高い）
+- 候補 A と候補 B の中間で、「Bun の速度」と「Vite Plus と同じ Oxlint/Oxfmt」を両取り
+- lint と format の責務が分離（Biome 一体型より柔軟）
+
+**弱み**:
+- Bun + Vite/Oxlint の組合せは**運用例が少ない**（Bun 公式は Biome 推し、Vite Plus は Node 前提）
+- 候補 A の「Vite dev server で phase7.1 を組む」便益が薄れる（Bun の HTTP サーバで代替）
+- 設定ファイルが Biome より 1 つ多い
+
+#### 比較サマリー
+
+| 軸 | A: Vite Plus | B: Bun + Biome | C: Bun + Oxlint |
+|---|---|---|---|
+| runtime 速度 | ○ Node | ◎ Bun | ◎ Bun |
+| CI 速度 | ○ | ◎ | ◎ |
+| 既存 ESLint config の継承 | ○ Oxlint 互換 | △ Biome 独自 | ○ Oxlint 互換 |
+| dev server 体験 (phase7.1) | ◎ Vite HMR | △ 自前 Bun HTTP | △ 自前 Bun HTTP |
+| upstream Node cherry-pick | ◎ | △ Bun 差分 | △ Bun 差分 |
+| 運用実績 | △ 新興 | ○ 増加中 | △ 少ない |
+| 設定ファイル数 | 複数 (Vite Plus 統合) | 最小 (Biome 一体) | 中 |
+
+#### 推奨
+
+- **第一候補: A (Vite Plus)** — 既存 tsdown/Vitest をそのまま継承、Oxlint で ESLint 移行容易、phase7.1 dev サーバを Vite で自然に組める、upstream cherry-pick も比較的容易
+- **第二候補: C (Bun + Oxlint)** — runtime 速度を最優先しつつ、ESLint 移行コストを最小化したい場合
+- **第三候補: B (Bun + Biome)** — Biome の lint+format 一体管理を強く好む場合のみ
 
 ### 3.5 アーキテクチャ強化
 
 #### a. in-flight dedup（phase4.2 を rewrite で先取り）
 
-`server/inflight-dedup.ts` を独立モジュールに。
+`server/inflight-dedup.ts` を独立モジュールに:
 
 ```ts
 export class InFlightDedup<K, V> {
@@ -359,37 +392,28 @@ phase4.2 の DoD（5 並列で origin 1 ヒット、`X-Cache: HIT-COALESCED`）�
 
 #### b. worker_threads / 別プロセスによる PDF 隔離
 
-**現状の弱点**: `pdf-parse` は in-process で動き、5 秒 timeout はあるものの、悪意ある PDF で `pdfjs-dist` が CPU を吸ったり OOM を引き起こすと **Fastify サーバ全体が止まる**。
+**現状の弱点**: PDF パースが in-process で、悪意ある PDF で `pdfjs-dist` が CPU を吸ったり OOM すると **Fastify サーバ全体が止まる**。
 
 **rewrite 提案**:
 
 - `http/pdf.ts` を **`worker_threads.Worker`** で起動する別スレッドに切り出し、Buffer を `transferList` で渡す
-- Worker は 1 プロセスに 1 個固定 (warm worker)、5 秒で `worker.terminate()` できる
-- メモリ上限を `resourceLimits: { maxOldGenerationSizeMb: 128 }` で hard cap
-- さらに堅実なら **child_process で別 PID** にして OOM kill が main を巻き込まない構成に
+- Worker は warm 維持、5 秒で `worker.terminate()` 可能
+- `resourceLimits: { maxOldGenerationSizeMb: 128 }` でメモリ hard cap
+- 堅実版なら **`child_process` で別 PID** にして OOM kill が main を巻き込まない構成に
 
-**コスト**: 起動オーバーヘッド（warm 化で吸収）、メッセージング遅延（数 ms）。**価値**: PDF パーサのバグで Fastify が落ちなくなる。
+**コスト**: 起動オーバーヘッド（warm 化で吸収）、メッセージング遅延（数 ms）。**価値**: PDF パーサのバグで Fastify が落ちない。
 
 #### c. OpenTelemetry / 構造化ロギング
 
-- **`@opentelemetry/api`** + auto-instrumentation で `summaly()` の各段階（HEAD redirect / scpaping / plugin / oEmbed / sanitize）に span を張る
-- **`pino`** （Fastify と相性良い）で構造化ログ。`{ url, plugin, latency, cacheStatus, sizeBytes }` を JSON line で出す
-- Misskey 運用視点で「どのプラグインが遅い / どのサイトが落ちている」が dashboard で見える
+- **`@opentelemetry/api`** + auto-instrumentation で `summaly()` の各段階に span を張る（HEAD redirect / scpaping / plugin / oEmbed / sanitize）
+- **`pino`** で構造化ログ。`{ url, plugin, latency, cacheStatus, sizeBytes }` を JSON line で出力
+- 「どのプラグインが遅い / どのサイトが落ちている」が dashboard で見える
 
 #### d. プラグイン別 config 機構
 
-phase8.1 で TOML スキーマに placeholder されている `[plugins.komiflo]` を **rewrite では本格対応**:
+phase8.1 の TOML スキーマで placeholder されている `[plugins.komiflo]` を**本格対応**:
 
 ```ts
-// types/plugin.ts
-export interface SummalyPlugin<C = unknown> {
-  name: string;
-  configSchema?: ConfigSchema<C>;   // zod / typebox
-  test: (url: URL) => boolean;
-  summarize: (url: URL, ctx: PluginContext<C>) => Promise<Summary | null>;
-}
-
-// plugins/komiflo.ts
 export const komiflo: SummalyPlugin<{ preferredVariant: string; apiBaseUrl: string }> = {
   name: 'komiflo',
   configSchema: z.object({
@@ -404,7 +428,7 @@ export const komiflo: SummalyPlugin<{ preferredVariant: string; apiBaseUrl: stri
 };
 ```
 
-これで komiflo の `346_mobile` 変更や iwara の `descriptionMaxLength` を **コード変更なしで TOML から差し替え可能** になる。
+→ `346_mobile` 等のサイト固有値を **コード変更なしで TOML から差し替え可能**。
 
 #### e. キャッシュ層の階層化
 
@@ -413,80 +437,21 @@ export const komiflo: SummalyPlugin<{ preferredVariant: string; apiBaseUrl: stri
 - L3: Redis / Memcached（オプション、複数 Fastify インスタンス間で共有）
 - L4: HTTP `Cache-Control` → 前段 nginx / CDN
 
-L3 は plugin として `cache: SummalyCacheBackend` interface を渡せる形にしておくと、Misskey 管理人が選択可能。
+L3 は plugin として `cache: SummalyCacheBackend` interface を渡せる形に。
 
 #### f. リクエスト並列度制限
 
-phase4.2 の open question にある「異なる URL の同時数は無制限」を、`p-queue` 相当で **per-host concurrency** を導入するとさらに堅牢。
+phase4.2 の open question にある「異なる URL の同時数は無制限」を、**per-host concurrency** (`p-queue` 相当) で制限すると堅牢:
 
 ```ts
-// 同一ホストへの同時リクエストは 4 本まで
-const hostQueue = new Map<string, PQueue>();
+const hostQueue = new Map<string, PQueue>();   // 同一ホストへの同時リクエストは N 本まで
 ```
 
-「YouTube に同時 100 リクエスト」のような状況でも origin に優しい挙動になる。
+「YouTube に同時 100 リクエスト」のような状況でも origin に優しい。
 
 #### g. URL 正規化の精度向上
 
-現状 `normalizeCacheKey` は fragment 除去 + lang のみ。**utm_*** や `?ref=...` のようなトラッキングパラメータを削除するオプションを足すとキャッシュヒット率が向上する。**過剰正規化のリスク**は phase4.1 のコメントが指摘している通りなので、**opt-in** で。
-
-### 3.6 rewrite 規模なら検討する「メタツールチェーン一括差し替え」
-
-3.4 では「個別ツール (bundler / test / lint / typecheck) の現状維持で十分」と結論づけたが、**rewrite 規模で一気に作り直すなら、ツールチェーン全体を統合パッケージに置き換える** 選択肢が現実味を帯びる。代表例 2 つ:
-
-#### 候補 1: Vite Plus (Node 維持シナリオの上位互換)
-
-[Vite Plus](https://viteplus.dev/guide/) は Vite / Vitest / Oxlint / Oxfmt / Rolldown / **tsdown** / Vite Task を統合した「**統一ツールチェーン**」。本フォークは既に tsdown / Vitest を採用しているため**親和性が高い**。
-
-| 領域 | 現状 | Vite Plus 採用後 |
-|---|---|---|
-| bundler | tsdown | tsdown (Vite Plus 経由) |
-| test | vitest | vitest (Vite Plus 経由) |
-| lint | ESLint 9 | **Oxlint** (Rust 製、ESLint の **50-100x 速い**、ただし rule カバレッジでまだ ESLint に劣る) |
-| format | (なし) | **Oxfmt** (Rust 製、Prettier 相当を超高速) |
-| dev server | (なし) | Vite (phase7.1 dev サーバ用に直接利用可能) |
-| task runner | npm scripts | Vite Task (依存タスクのオーケストレーション) |
-
-**速度・品質のバランス**:
-- ✅ 既存 tsdown / Vitest を維持できる (ノウハウロスゼロ)
-- ✅ Oxlint で lint が桁違いに速い (CI 時間圧縮)
-- ✅ phase7.1 dev サーバが Vite ベースで自然に組める (HMR が効く)
-- ⚠ Oxlint は ESLint の全 rule をカバーしていない → 既存 `@misskey-dev/eslint-plugin` のルールを fallback で eslint に残す or oxlint 対応の rule に書き換える必要
-- ⚠ 新興ツールのため Misskey エコシステムでの採用例は少ない (= 学習コスト中)
-
-→ **シナリオ A (Node 維持) のサブオプションとして強く検討に値する**。
-
-#### 候補 2: Bun + Biome (シナリオ B のフルスタック版)
-
-| 領域 | 現状 | Bun + Biome 採用後 |
-|---|---|---|
-| ランタイム | Node | **Bun** (起動 -50%、fetch throughput +20-30%) |
-| bundler | tsdown | **`bun build`** (esbuild ベース、超高速) |
-| test | vitest | **`bun test`** (jest 互換 API、超高速) |
-| lint | ESLint 9 | **Biome** (Rust 製、ESLint + Prettier 相当を一括、**ESLint の 25x 速い**) |
-| format | (なし) | **Biome** |
-| package manager | pnpm | **`bun install`** (npm の 10-30x 速い) |
-| dev server | (なし) | Bun の HTTP サーバ (Hono と組み合わせ) |
-
-**速度・品質のバランス**:
-- ✅ ツールチェーン全体が Rust / Zig / native binding ベースで CI 時間が劇的に短縮 (体感 5-10x)
-- ✅ Misskey ecosystem が将来 Bun 化する可能性に先回り
-- ✅ Biome は ESLint + Prettier の両機能を 1 つの設定で扱え、設定の見通しが良い
-- ⚠ pdf-parse / pdfjs-dist の Bun 互換性は要検証 (worker 経由なら回避可能)
-- ⚠ Misskey 配布環境への Bun ランタイム要件追加 (運用者の学習コスト)
-- ⚠ Biome は ESLint の全 rule カバーではない (`@misskey-dev/eslint-plugin` の互換性検証必要)
-
-→ **シナリオ B (Bun) を採用するなら Biome もセットで採用するのが自然**。半端に Bun + ESLint より、Bun + Biome の方が tooling 一貫性が高い。
-
-#### 統合判断マトリクス
-
-| シナリオ | bundler | test | lint/format | runtime | 向き先 |
-|---|---|---|---|---|---|
-| A (現状維持リファクタ) | tsdown | vitest | ESLint | Node | 漸進改修 |
-| **A + Vite Plus** | tsdown (Vite Plus) | vitest (Vite Plus) | **Oxlint + Oxfmt** | Node | rewrite 規模、Node 維持 |
-| **B (Bun + Biome)** | bun build | bun test | **Biome** | Bun | rewrite 規模、配布環境変更可 |
-
-**推奨**: rewrite を実施するなら、**「A + Vite Plus」を第一候補**、「B (Bun + Biome)」を Misskey 管理人の Bun 受容性次第での選択肢として併記する。シナリオ 5 章の優先順位もこれに合わせて更新可能。
+`normalizeCacheKey` に **`utm_*` / `?ref=...` 等のトラッキングパラメータ削除を opt-in で追加** すればキャッシュヒット率向上。過剰正規化リスクは phase4.1 の議論通りなので opt-in で。
 
 ---
 
@@ -494,130 +459,107 @@ const hostQueue = new Map<string, PQueue>();
 
 ### 4.1 候補言語マトリクス
 
-| 言語 | フィット度 | HTTP | HTML パース | oEmbed JSON | DOM 操作 | charset 検出 | PDF metadata | private IP 拒否 | keep-alive | LRU | プラグイン dispatch |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| **Bun (TS のまま)** | ★★★★★ | `Bun.fetch` 標準 | cheerio そのまま | 標準 | cheerio | iconv-lite が動く | pdf-parse がそのまま動く（ESM 互換注意） | ipaddr.js 動く | Bun の HTTP keep-alive 自動 | lru-cache 動く | 既存コードほぼそのまま |
-| **Deno** | ★★★★ | `fetch` 標準 | `deno-dom` / `linkedom` | 標準 | `deno-dom` | `TextDecoder` (Deno は ICU full) | `pdfjs-dist` 動かしにくい | npm: 互換で `ipaddr.js` 動く | 自動 keep-alive | npm 互換 | TS そのまま |
-| **Node 24 (現状)** | ★★★★★ | got / undici | cheerio | 標準 | cheerio | iconv-lite | pdf-parse | ipaddr.js | http.Agent | lru-cache | 既存通り |
-| **Go** | ★★★ | net/http | `golang.org/x/net/html` + `goquery` | encoding/json | goquery (cheerio に近い) | `golang.org/x/text/encoding` | `pdfcpu` / `unipdf` (重い) | net package で判定 | Transport で keep-alive | `hashicorp/golang-lru` | interface + factory pattern |
-| **Rust** | ★★ | reqwest / hyper | `scraper` (cheerio 風) / `html5ever` | serde_json | scraper | `encoding_rs` | `lopdf` (低レベル) / `pdf-extract` | `ipnet` crate | reqwest 自動 | `mokr` / `lru` | trait + dyn dispatch |
-| **Python** | ★★ | `httpx` (async) | `beautifulsoup4` / `lxml` / `parsel` | 標準 | parsel | `chardet` | `pypdf` / `pdfplumber` | `ipaddress` 標準 | httpx の Client で keep-alive | `cachetools` | abstract base class |
-| **Elixir** | ★★ | `Finch` / `Mint` | `Floki` | Jason | Floki | `chardetex` (薄い) | 弱い、Python 経由 | `:inet` で確認 | Finch pool | `Cachex` | behaviour |
+fork stance により「外部プラグイン作者参入障壁」「Misskey エコシステム合意形成」は判断軸から外す。残る判断軸: **実行性能 / 開発速度 / upstream cherry-pick の取り回し / PDF 隔離のしやすさ**。
 
-### 4.2 各言語の総評
+| 言語 | フィット度 | HTTP | HTML パース | charset 検出 | PDF metadata | ハング隔離 | upstream cherry-pick |
+|---|---|---|---|---|---|---|---|
+| **Bun** (TS のまま) | ★★★★★ | `Bun.fetch` 標準 | cheerio / linkedom | iconv-lite 動く | pdf-parse 互換性要検証 | `Bun.Worker` 可 | ◎ TS なのでほぼ可 |
+| **Node 24** (TS のまま) | ★★★★★ | undici | cheerio / linkedom | iconv-lite | 自前 + pdfjs-dist | `worker_threads` | ◎ |
+| **Deno** | ★★★ | `fetch` 標準 | `linkedom` | TextDecoder (ICU full) | pdfjs-dist 動かしにくい | Worker | ○ npm: 互換、要検証 |
+| **Go** | ★★★★ | net/http | `goquery` | `golang.org/x/text/encoding` | `pdfcpu` (重い) → 別プロセス | `os/exec` で別 process | ✕ 完全途絶 |
+| **Rust** | ★★ | reqwest / hyper | `scraper` | `encoding_rs` | `lopdf` / 別プロセス | tokio task + 別プロセス | ✕ 完全途絶 |
+| **Python** | ★★ | `httpx` | parsel / lxml | `chardet` | `pypdf` | プロセス分離 | ✕ 完全途絶 |
 
-#### Bun (TS のまま runtime 変更)
+### 4.2 各言語の総評（fork stance 反映後）
 
-**最有力候補**。コードベースをほぼそのまま移行できて、起動時間 / 起動メモリ / fetch スループットで明確に勝つ。pnpm 互換、Vitest 互換 (Bun test もある)、tsc 互換。**Misskey エコシステムは Node 中心だがランタイムだけ差し替えるのは比較的低リスク**。
+#### Bun (TS のまま runtime 変更) — ★★★★★
 
-懸念: pdf-parse / pdfjs-dist の互換性検証が必要。`worker_threads` 相当は `Bun.Worker` で動く。`net.Agent` 相当の細かい制御は Bun 1.x で揃ってきたが、got 相当の API 互換は完全ではない（fetch ベースに書き直す必要あり）。
+**rewrite で最も現実的な runtime 候補**。コードベースをほぼそのまま移行可、起動時間 / 起動メモリ / fetch スループットで明確に勝つ。pnpm 互換、Vitest 互換、tsc 互換。
 
-→ **rewrite するなら Bun + 観点 1 の TS 再設計を組み合わせるのが最も現実的**。
+懸念: pdf-parse / pdfjs-dist の Bun 互換性検証必要（worker 経由で回避可能）。`Bun.Worker` で PDF 隔離は十分。
 
-#### Deno
+→ **シナリオ B 候補（Bun + Biome or Bun + Oxlint）**。
 
-ランタイムの安全性 (`--allow-net=...`) で SSRF 防御層を追加できる。`linkedom` で cheerio を置換可能。**懸念**: Misskey 側が Node 前提の運用ガイドを持つため「Misskey 管理人が Deno を入れる学習コスト」が発生する。npm: 互換は使えるが pdfjs-dist が重い。
+#### Node.js (TS のまま) — ★★★★★
 
-→ **観点 1 の TS 再設計でセキュリティ堅牢度を最大化したい場合に検討**。
+**無難で安全な runtime**。エコシステム最大、upstream cherry-pick が一番容易。
 
-#### Node.js (Bun 不採用なら現状維持)
+→ **シナリオ A 候補（Node + Vite Plus）**。
 
-無難、エコシステム最大、Misskey 親和性 100%。**rewrite せずに観点 1 の TS 再設計で十分価値が出る**。
+#### Deno — ★★★
 
-#### Go
+ランタイム安全性 (`--allow-net=...`) で SSRF 防御の追加層を作れるが、`pdfjs-dist` の動作不確実性が痛い。Misskey エコシステムからやや遠い。
 
-パフォーマンスと運用配布性 (single binary) が圧倒的。Misskey デプロイ環境で systemd で 1 バイナリ配るのが容易。`goquery` は cheerio に近い API でプラグイン移植は中難度。**懸念**:
-- TypeScript の型定義からスキーマ自動生成しにくい（手書き再定義）
-- Misskey エコシステムは JS/TS 中心なので「fork で Go 化」のメンテナビリティが下がる
-- PDF パースは Go 側に強いライブラリが少なく `pdfcpu` も重い → どちらにせよ external process 隔離
+→ **採用しない**（Bun の方が同じ TS runtime として安全選択肢）。
 
-→ **「summaly を独立サーバとして他言語に置く」「複数 Misskey インスタンスで共有する HTTP サービスとして配布」の文脈なら Go が良い**。
+#### Go — ★★★★ (fork stance では上方修正)
 
-#### Rust
+single binary 配布が最大の強み。fork stance では「Misskey コミュニティ合意形成」「プラグイン作者参入障壁」が判断軸から外れるため、**過去レビューより 1 段階高評価**。残る最大の懸念は **upstream cherry-pick が完全に途絶える** こと。
 
-最高性能、メモリ安全、`reqwest` + `scraper` で実装可能。**懸念**: 学習コストと開発速度のトレードオフが summaly のようなスクレイピングプロダクト（**サイト固有の挙動変化に頻繁に追従する必要がある**）には合わない。プラグイン作者の参入障壁が高い。
+→ **「Go バイナリで配布したい」要件が独立価値として明確に立つ場合のみ**。upstream の進化を取り込みたいなら不利。
 
-→ **採用しない**。CPU バウンドなライブラリではないので Rust の旨味が薄い。
+#### Rust / Python / Elixir — ★★ 以下
 
-#### Python
+- **Rust**: 学習コスト・開発速度が summaly のスクレイピングプロダクト性質に合わない（サイト挙動変化への追従頻度が高い）
+- **Python**: 静的型と並列性能で TS / Bun に劣る
+- **Elixir**: BEAM の障害分離は魅力的だが、PDF / scraping エコシステムの薄さで開発体験が劣る
 
-scraping エコシステム（BeautifulSoup / parsel）が豊富で開発速度は早い。ASGI で `httpx` + `FastAPI` 構成にすれば一定の性能は出る。**懸念**: 静的型 (Pydantic) の充実は伸びてきたが TypeScript 比で型整合性は弱い。GIL 由来の並列性能で Node に劣る場面あり。Misskey エコシステムから遠い。
+→ **採用しない**。
 
-→ **採用しない**。型と Misskey 親和性で TS / Bun に劣る。
+### 4.3 パフォーマンス vs upstream cherry-pick のトレードオフ
 
-#### Elixir
+| 軸 | Node (TS) | Bun (TS) | Go |
+|---|---|---|---|
+| 起動時間 | 100-300 ms | 50-150 ms | 5-50 ms |
+| 並列リクエスト捌き | 高 | 高 | 最高 |
+| メモリ常駐 | 50-100 MB | 30-70 MB | 20-50 MB |
+| 開発スピード | 最高 | 最高 | 中 |
+| PDF 隔離 | worker_threads | Bun.Worker | os/exec 別 process |
+| デプロイ容易性 | npm / Docker | Bun bin / Docker | **single binary 最強** |
+| upstream cherry-pick | ◎ | ○ | ✕ |
 
-BEAM の障害分離 (per-request process) で「PDF パースで暴走しても他リクエストが死なない」が最大の強み。`Floki` は cheerio に近い。**懸念**: PDF は外部呼び出し前提、エコシステムから遠く、Misskey 管理人の学習コストが極めて高い。
-
-→ **採用しない**。長所はあるが summaly 単体では報われない。
-
-### 4.3 プラグインシステムを「エコシステムが薄い言語」でどう代替するか
-
-| 言語 | プラグイン代替案 |
-|---|---|
-| **Go** | `interface { Test(*url.URL) bool; Summarize(*url.URL, *Options) (*Summary, error) }` を定義。組み込みは `[]Plugin` を init() で登録。**動的 .so loading は CGo 制約があり非実用** → 「ビルド時に組み込み」モデルになる。**fork してプラグイン追加 = 再ビルド** のワークフロー。 |
-| **Rust** | `trait SummalyPlugin: Send + Sync { fn test(&self, url: &Url) -> bool; async fn summarize(...) }` + `Vec<Box<dyn SummalyPlugin>>`。動的 loading は `libloading` で出来るがクロスプラットフォームで脆い。同様にビルド時組み込み前提。 |
-| **Python** | `entry_points` (pyproject.toml) で動的 loading 可能。`importlib.metadata.entry_points("summaly.plugins")`。Python 的にはネイティブな仕組み。 |
-| **Elixir** | `behaviour @behaviour SummalyPlugin` + Application 起動時に config から `:plugins` を読んで dispatch。BEAM の hot reload もある。 |
-
-→ **Go / Rust への移行は「プラグインの動的追加」を諦める覚悟が必要**。summaly の場合は「組み込み 10 個 + 利用側のカスタムプラグイン」という二層構造なので、後者を **HTTP webhook** 化（外部サーバに dispatch）する設計に倒す案もある。ただし latency 増加。
-
-### 4.4 パフォーマンスと運用コストのトレードオフ
-
-| 軸 | Node/Bun TS | Deno | Go | Rust |
-|---|---|---|---|---|
-| 起動時間 | 100-300 ms | 100-300 ms | 5-50 ms | 5-50 ms |
-| 並列リクエスト捌き | 高 (libuv) | 高 | 最高 (goroutine) | 最高 |
-| メモリ常駐 | 50-100 MB | 50-80 MB | 20-50 MB | 10-30 MB |
-| 開発スピード | 最高 | 高 | 中 | 低 |
-| Misskey 親和性 | 最高 | 中 | 低 | 低 |
-| PDF 隔離 | worker_threads | worker | goroutine + 別プロセス | tokio task + 別プロセス |
-| デプロイ容易性 | npm 配布 / Docker | Deno bin / Docker | single binary 最強 | single binary 最強 |
-| プラグイン追加性 | 最高 (動的 import) | 最高 | 低 (要ビルド) | 低 (要ビルド) |
-
-### 4.5 ハング・暴走リスクの隔離しやすさ
-
-「PDF パースが暴走して Fastify が止まる」リスクの観点:
-
-- **Node/Bun**: `worker_threads` で `terminate()` 可能。`resourceLimits.maxOldGenerationSizeMb` でメモリ cap 可能。**実用十分**。
-- **Go**: goroutine は `terminate` できない（cooperative 前提）。PDF パースは外部 process (`os/exec`) で `Cmd.Process.Kill()` が確実。
-- **Rust**: tokio task 自体は cancel 可能だが PDF library が cooperative かは別問題。確実なのは別プロセス。
-- **Elixir**: BEAM の per-process kill が最強。PDF だけ「監視つき GenServer」に分離して `Process.exit(pid, :kill)` で確実停止。
-
-→ **PDF 隔離だけを最優先するなら Elixir or Go 別プロセス。それ以外の要件込みなら Bun + worker_threads が現実的**。
+→ **runtime の選択は「upstream cherry-pick 維持の必要性」と「single binary 配布要件」の二択でほぼ決まる**。
 
 ---
 
 ## 5. 統合レコメンド
 
-前提として 1 章「フォーク stance」のとおり、**big-bang rewrite + LLM 一気書き** を想定。期間見積もり / 段階的移行 / 後方互換 shim はいずれも不要。**HTTP インターフェース凍結だけ**を満たせばよい。
+前提: 1 章「フォーク stance」のとおり、**big-bang rewrite + LLM 一気書き** を想定。期間見積もり / 段階的移行 / 後方互換 shim はいずれも不要。**HTTP インターフェース凍結だけ**を満たせばよい。
 
-### シナリオ A（第一候補）: Node 維持 + 観点 1 の TS 再設計 + Vite Plus
+### シナリオ A（第一候補）: Node + Vite Plus + 観点 1 の TS 再設計
 
+- runtime: Node.js (現状維持)
+- ツールチェーン: **Vite Plus**（tsdown + Vitest + Oxlint + Oxfmt + Vite dev server + Vite Task の統合）
 - 既存テスト 1,871 行 + 既存 plugin 10 個を **挙動互換テストとして読み直し**、新構造でゼロから書き起こす（big-bang rewrite）
-- 依存入れ替え (got → undici, encoding-japanese 削除, jschardet → chardetng-js, pdf-parse → 自前 + フォールバック, escape-regexp 自前化)
-- **ツールチェーン: Vite Plus に統合**（tsdown + Vitest を維持しつつ Oxlint + Oxfmt + Vite dev server を入れる）
-- ファイル構成を `core` / `http` / `server` 三層分離
+- 依存入れ替え: got → undici / encoding-japanese 削除 / jschardet → chardetng-js / pdf-parse → 自前 + pdfjs-dist フォールバック / cheerio → linkedom / escape-regexp → 自前
+- ファイル構成を `core` / `http` / `server` 三層分離（プラグインはディレクトリ単位独立）
 - worker_threads で PDF 隔離
-- in-flight dedup を rewrite で標準化（phase4.2 の DoD を統合）
-- プラグイン別 config 機構（phase8.1 TOML の placeholder 解消）
-- OpenTelemetry / pino / OpenAPI スキーマ自動化
-- **`SummalyPlugin` interface の破壊的変更を遠慮なく実施**（`name` 必須化、`PluginContext` 導入、`scpaping` のリネーム等）
+- in-flight dedup（phase4.2）/ プラグイン別 config（phase8.1 解消）/ OpenTelemetry / pino / OpenAPI 自動化
+- **`SummalyPlugin` interface の破壊的変更を遠慮なく実施**（`name` 必須化、`PluginContext` 導入、`scpaping` リネーム、`setAgent` 廃止）
 
-### シナリオ B（次点）: Bun + Biome + シナリオ A の設計思想
+### シナリオ B（次点）: Bun + Oxlint + 観点 1 の TS 再設計
 
-- シナリオ A の TS / アーキテクチャ設計をそのままに、**ランタイム = Bun、ツールチェーン = Bun + Biome** に置換
-- `bun build` / `bun test` / **Biome (lint + format)** / `bun install` で CI 時間を 5-10x 短縮
-- got を Bun ネイティブ fetch に置換、`Bun.Worker` で PDF 隔離 (pdf-parse の Bun 互換性は要検証)
-- パフォーマンス改善 (起動時間 -50%、並列スループット +20-30%)
-- 配布環境に Bun ランタイムを要求してよい（Misskey エコシステムからの距離が増えるが fork スタンスでは許容範囲）
+- シナリオ A の TS / アーキテクチャ設計をそのまま、**ランタイム = Bun、ツールチェーン = Bun + Oxlint + Oxfmt** に置換
+- `bun build` / `bun test` / Oxlint + Oxfmt / `bun install` で CI 時間 5-10x 短縮
+- got → Bun ネイティブ fetch、`Bun.Worker` で PDF 隔離（pdf-parse 互換性要検証）
+- パフォーマンス改善（起動時間 -50%、並列スループット +20-30%）
+- 配布環境に Bun 要件追加（fork stance では許容）
+- ESLint config（`@misskey-dev/eslint-plugin`）の継承容易性を保ちたいので **Biome ではなく Oxlint** を選ぶ
+- dev server (phase7.1) は Bun の HTTP サーバ + Hono で構築
+
+### シナリオ B'（変種）: Bun + Biome
+
+- B の構成のうち lint/format を **Biome 一体型** に。設定ファイル数を最小化
+- ESLint config 継承を諦めて Biome 独自 rule に**書き直す覚悟**が必要
+- 「設定の見通しのよさ」を最優先する場合のみ
 
 ### シナリオ C: Go single binary 化
 
 - 配布性 (single binary) とパフォーマンスが最高
-- プラグインの動的追加性を諦め、組み込み 10 個 + 「カスタムプラグインは webhook で外部 dispatch」モデル（fork スタンスではカスタム拡張ユーザーを考慮しなくてよいので障壁低）
-- HTTP インターフェース凍結のため `SummalyResult` を Go の構造体に手で再定義する必要あり（TS 型からの自動生成不可）
-- **upstream cherry-pick が完全に途絶える**ため、上流の進化を取り込みたいなら不利
+- プラグインの動的追加性を諦め、組み込み 10 個 + 「カスタムプラグインは webhook」モデル（fork stance ではカスタム拡張ユーザーを考慮しなくてよいので障壁低）
+- `SummalyResult` を Go の構造体に手で再定義（TS 型からの自動生成不可）
+- **upstream cherry-pick が完全に途絶える** → 上流の進化を取り込みたいなら不利
+- ツールチェーンは Go 標準 (`go build` / `go test` / `gofmt` / `golangci-lint`)
 
 ### 採用判断のフローチャート（fork スタンス前提）
 
@@ -626,26 +568,29 @@ Q1. upstream / 他 fork からの cherry-pick を将来も使いたいか？
   Yes → Q2 (TS 系のみ検討)
   No  → Q2 と Q3 両方検討可
 
-Q2. ツールチェーン全体を置換してでも CI / 開発体験を最速化したいか？
-  Yes → シナリオ B (Bun + Biome)
-  No  → シナリオ A (Vite Plus)
+Q2. ランタイム速度を runtime レベルで稼ぎたいか？
+  Yes → Q2a (Bun 系)
+  No  → シナリオ A (Node + Vite Plus)
+
+  Q2a. ESLint config の継承容易性 vs Biome の lint+format 一体管理、どちらを優先？
+    継承容易性 → シナリオ B (Bun + Oxlint)
+    一体管理   → シナリオ B' (Bun + Biome)
 
 Q3. 配布バイナリ 1 つで完結させたい運用要件があるか？
   Yes → シナリオ C (Go)
-  No  → A or B
+  No  → A or B/B'
 ```
 
-→ **fork スタンスとして「upstream cherry-pick を維持しつつ最大限の構造改善」狙いなら シナリオ A 第一候補、「ツールチェーン速度を最優先」なら シナリオ B**。シナリオ C は「Go バイナリを別途配布する」という独立価値が要求されたときのみ。
+→ **fork スタンスの第一候補は シナリオ A（Node + Vite Plus）**。upstream cherry-pick の容易性を維持しつつ最大限の構造改善が得られる。**runtime 速度を取りに行くなら シナリオ B（Bun + Oxlint）**。
 
 ### fork メンテナンス容易性のための設計指針
 
 big-bang rewrite 後に upstream / 他 fork からの cherry-pick を続けるための注意:
 
-1. **「upstream のどのコミットまで取り込んだか」を `docs/upstream-sync.md` のような台帳で管理**: rewrite で diff が完全に乖離するため、cherry-pick は「コミットの意図を読んで自分たちの構造に手で適用」する形になる。台帳がないと取りこぼす
-2. **upstream 由来の機能はテストケース名にコミット参照を残す**: 例 `test('mei23 #39: ISO-2022-JP decode (upstream commit abc123 から取り込み)')`
-3. **プラグイン単位の独立性を最大化**: 各プラグインを `src/plugins/<name>/{index.ts, fixture.html, test.ts}` のディレクトリに閉じ込め、新規プラグイン追加 = 1 ディレクトリ追加で済む構造に
-4. **upstream の `general.ts` 改変を取り込みやすくするため、汎用抽出ロジックは「upstream の構造を参考に薄くラップする」**: 大幅に書き直すなら upstream cherry-pick 諦め前提
-5. **依存ライブラリは upstream とのバージョン乖離を年 1 回程度棚卸し**: `cheerio` / `iconv-lite` 等のメジャー更新時に挙動差を確認
+1. **`docs/upstream-sync.md` 台帳**: 「upstream のどのコミットまで取り込んだか」を記録。rewrite で diff が乖離するため、cherry-pick は「コミットの意図を読んで自分たちの構造に手で適用」する形になる
+2. **upstream 由来のテストケース名にコミット参照**: 例 `test('mei23 #39: ISO-2022-JP decode (upstream commit abc123 から取り込み)')`
+3. **プラグイン単位の独立性を最大化**: `src/plugins/<name>/{index.ts, fixture.html, test.ts}` のディレクトリに閉じ込める
+4. **依存ライブラリは upstream とのバージョン乖離を年 1 回程度棚卸し**: `cheerio` / `iconv-lite` 等のメジャー更新時に挙動差を確認
 
 ---
 
@@ -653,7 +598,7 @@ big-bang rewrite 後に upstream / 他 fork からの cherry-pick を続ける�
 
 ### 内部ドキュメント
 
-- [README.md](../../README.md) — ライブラリ概要と Misskey 管理人向け案内
+- [README.md](../../README.md) — Misskey 利用シナリオ中心の概要
 - [docs/SETUP.md](../SETUP.md) — Fastify サーバ運用ガイド
 - [docs/Plugins.md](../Plugins.md) — プラグイン仕様
 - [docs/Library.md](../Library.md) — ライブラリ用途リファレンス
@@ -674,22 +619,25 @@ big-bang rewrite 後に upstream / 他 fork からの cherry-pick を続ける�
 
 ### 外部参考
 
-- **Misskey 本体の URL プレビュー実装**:
-  - `packages/frontend-shared/js/url-preview.ts`
-  - `packages/frontend/src/components/MkUrlPreview.vue`
-  - HTTP インターフェース凍結の根拠
+- **Misskey 本体の URL プレビュー実装**: `packages/frontend-shared/js/url-preview.ts` / `packages/frontend/src/components/MkUrlPreview.vue` — HTTP インターフェース凍結の根拠
 - **Mastodon link-preview DDoS issue**: https://github.com/mastodon/mastodon/issues/23662 — エラーキャッシュ短期 TTL の根拠
 - **OWASP SSRF Prevention Cheat Sheet** — private IP guard 設計の根拠
-- **`undici` ドキュメント**: https://undici.nodejs.org — got からの移行候補
-- **`smol-toml`**: https://github.com/squirrelchat/smol-toml — phase8.1 採用候補
-- **OpenTelemetry Node SDK**: https://opentelemetry.io/docs/instrumentation/js/ — observability 強化の参考
-- **`@sinclair/typebox`** / **zod**: HTTP インターフェースのスキーマ定義（OpenAPI 自動化）
+- **Vite Plus**: https://viteplus.dev/guide/ — シナリオ A のツールチェーン候補
+- **Bun**: https://bun.sh — シナリオ B のランタイム候補
+- **Oxlint**: https://oxc.rs/docs/guide/usage/linter — Vite Plus / シナリオ B 共通の lint 候補
+- **Biome**: https://biomejs.dev — シナリオ B' の lint+format 一体候補
+- **`undici`**: https://undici.nodejs.org — got からの移行候補
+- **`linkedom`**: https://github.com/WebReflection/linkedom — cheerio からの移行候補
+- **`chardetng-js`**: https://github.com/akinomyoga/chardetng-js — jschardet からの移行候補
+- **`smol-toml`**: https://github.com/squirrelchat/smol-toml — phase8.1 TOML パーサ候補
+- **OpenTelemetry Node SDK**: https://opentelemetry.io/docs/instrumentation/js/
+- **`@sinclair/typebox`** / **`zod`**: HTTP インターフェースのスキーマ定義（OpenAPI 自動化）
 
-### 関連 issue（rewrite 検討時の事前確認）
+### 関連 issue
 
 - misskey-dev/summaly#39 — 文字エンコーディング検出（Shift_JIS / ISO-2022-JP の経緯）
-- 本フォークの phase ドキュメント全 12 件 — 過去 6 ヶ月の意思決定履歴
+- 本フォークの phase ドキュメント全 12 件 — 過去の意思決定履歴
 
 ---
 
-**結論**: 本ドキュメントは「シナリオ A（Node 維持 + TS 再設計）」を最優先推奨とする。観点 2 の他言語移行は「Misskey エコシステム全体での合意形成」が前提条件となるため、fork レベルでの判断としては観点 1 の改善で得られる便益（依存スリム化・PDF 隔離・プラグイン別 config・観測性）の方が ROI が高い。
+**結論**: fork スタンス（big-bang rewrite + LLM 一気書き + 後方互換は HTTP のみ + upstream → 自分たちの cherry-pick だけ維持）を踏まえると、**第一候補は シナリオ A（Node + Vite Plus）**。upstream cherry-pick 容易性と既存ツールチェーンの親和性を保ちつつ、Oxlint で CI 速度・Vite で dev 体験を底上げできる。**runtime レベルで速度を稼ぎたいなら シナリオ B（Bun + Oxlint）** へ拡張、「single binary を別途配布する」独立価値があるなら シナリオ C（Go）。シナリオ B'（Bun + Biome）は ESLint config 継承を諦めても良い場合の選択肢。
