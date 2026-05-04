@@ -1412,8 +1412,8 @@ describe('local tests', () => {
 			expect(getOriginHits()).toBe(hitsAfter1);
 		});
 
-		test('inMemoryCache 未指定（デフォルト false）では X-Cache が付かない', async () => {
-			await setupOriginAndProxy();
+		test('inMemoryCache・inFlightDedup 共に false では X-Cache が付かない（既存挙動）', async () => {
+			await setupOriginAndProxy({ inMemoryCache: false, inFlightDedup: false });
 			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
 			expect(r.statusCode).toBe(200);
 			expect(r.headers['x-cache']).toBeUndefined();
@@ -1488,6 +1488,167 @@ describe('local tests', () => {
 			const r2 = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: `${host}/#section2` } });
 			expect(r2.headers['x-cache']).toBe('HIT');
 			expect(getOriginHits()).toBe(hitsAfter1);
+		});
+	});
+
+	describe('Fastify in-flight dedup (phase4.2)', () => {
+		const proxyPort = port + 1;
+		let proxyApp: FastifyInstance | null = null;
+
+		afterEach(async () => {
+			if (proxyApp != null) {
+				await proxyApp.close();
+				proxyApp = null;
+			}
+		});
+
+		// origin 側に意図的なディレイを入れたサーバを立ち上げる。
+		// dedup の効きを「先頭リクエストが完了する前に並列リクエストが来ても origin ヒットは 1 件」で検証する。
+		async function setupSlowOriginAndProxy(opts: Partial<SummalyOptions> & {
+			delayMs?: number;
+			failWith?: number;
+		} = {}) {
+			let originHits = 0;
+			const { delayMs = 200, failWith, ...summalyOpts } = opts;
+
+			app = fastify();
+			app.get('/', async (_req, reply) => {
+				originHits++;
+				await new Promise(r => setTimeout(r, delayMs));
+				if (failWith != null) {
+					reply.header('content-type', 'text/plain');
+					return reply.status(failWith).send('boom');
+				}
+				const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+				reply.header('content-length', content.length);
+				reply.header('content-type', 'text/html');
+				return reply.send(content);
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, summalyOpts);
+			await proxyApp.listen({ port: proxyPort });
+
+			return { getOriginHits: () => originHits };
+		}
+
+		test('5 並列リクエストで origin ヒットは 1 件、4 件は HIT-COALESCED', async () => {
+			const { getOriginHits } = await setupSlowOriginAndProxy({ delayMs: 300 });
+
+			const responses = await Promise.all(Array.from({ length: 5 }, () =>
+				proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } })));
+
+			expect(getOriginHits()).toBe(1);
+			expect(responses.every(r => r.statusCode === 200)).toBe(true);
+
+			const cacheHeaders = responses.map(r => r.headers['x-cache']).sort();
+			// 先頭が MISS、残り 4 件が HIT-COALESCED
+			expect(cacheHeaders).toEqual(['HIT-COALESCED', 'HIT-COALESCED', 'HIT-COALESCED', 'HIT-COALESCED', 'MISS']);
+
+			// すべて同じ Summary（少なくとも url）を受け取る
+			const bodies = responses.map(r => JSON.parse(r.body));
+			expect(new Set(bodies.map(b => b.url)).size).toBe(1);
+		});
+
+		test('inFlightDedup: false なら 5 並列で origin が 5 回叩かれる（既存挙動）', async () => {
+			const { getOriginHits } = await setupSlowOriginAndProxy({ delayMs: 300, inFlightDedup: false });
+
+			const responses = await Promise.all(Array.from({ length: 5 }, () =>
+				proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } })));
+
+			expect(getOriginHits()).toBe(5);
+			expect(responses.every(r => r.statusCode === 200)).toBe(true);
+			// dedup 無効 + キャッシュ無効では X-Cache は付かない
+			expect(responses.every(r => r.headers['x-cache'] == null)).toBe(true);
+		});
+
+		test('in-flight 中のエラーが全 waiter に伝搬する', async () => {
+			const { getOriginHits } = await setupSlowOriginAndProxy({ delayMs: 200, failWith: 500 });
+
+			const responses = await Promise.all(Array.from({ length: 3 }, () =>
+				proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } })));
+
+			expect(getOriginHits()).toBe(1);
+			// summaly() がエラーを throw → 全 waiter で 500 を返す
+			expect(responses.every(r => r.statusCode === 500)).toBe(true);
+			const cacheHeaders = responses.map(r => r.headers['x-cache']).sort();
+			expect(cacheHeaders).toEqual(['HIT-COALESCED', 'HIT-COALESCED', 'MISS']);
+
+			// 全 waiter が同じ error を受け取る
+			const bodies = responses.map(r => JSON.parse(r.body));
+			const errorJson = bodies.map(b => JSON.stringify(b.error));
+			expect(new Set(errorJson).size).toBe(1);
+		});
+
+		test('inMemoryCache: true + inFlightDedup: true で 並列は HIT-COALESCED、後続は HIT', async () => {
+			const { getOriginHits } = await setupSlowOriginAndProxy({ delayMs: 300, inMemoryCache: true });
+
+			// 並列 3 件
+			const parallel = await Promise.all(Array.from({ length: 3 }, () =>
+				proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } })));
+			expect(getOriginHits()).toBe(1);
+			const cacheHeaders = parallel.map(r => r.headers['x-cache']).sort();
+			expect(cacheHeaders).toEqual(['HIT-COALESCED', 'HIT-COALESCED', 'MISS']);
+
+			// 完了後の追加リクエストは LRU HIT
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(200);
+			expect(r.headers['x-cache']).toBe('HIT');
+			expect(getOriginHits()).toBe(1);
+		});
+
+		test('URL 違いは別キーで dedup されない', async () => {
+			let originHits = 0;
+			app = fastify();
+			app.get('/a', async (_req, reply) => {
+				originHits++;
+				await new Promise(r => setTimeout(r, 200));
+				const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+				reply.header('content-length', content.length);
+				reply.header('content-type', 'text/html');
+				return reply.send(content);
+			});
+			app.get('/b', async (_req, reply) => {
+				originHits++;
+				await new Promise(r => setTimeout(r, 200));
+				const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+				reply.header('content-length', content.length);
+				reply.header('content-type', 'text/html');
+				return reply.send(content);
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, {});
+			await proxyApp.listen({ port: proxyPort });
+
+			const responses = await Promise.all([
+				proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/a` } }),
+				proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/b` } }),
+			]);
+			expect(responses.every(r => r.statusCode === 200)).toBe(true);
+			expect(originHits).toBe(2);
+			expect(responses.every(r => r.headers['x-cache'] === 'MISS')).toBe(true);
+		});
+
+		test('lang 違いは別キーで dedup されない', async () => {
+			const { getOriginHits } = await setupSlowOriginAndProxy({ delayMs: 200 });
+
+			const responses = await Promise.all([
+				proxyApp!.inject({ method: 'GET', url: '/', query: { url: host, lang: 'ja' } }),
+				proxyApp!.inject({ method: 'GET', url: '/', query: { url: host, lang: 'en' } }),
+			]);
+			expect(responses.every(r => r.statusCode === 200)).toBe(true);
+			expect(getOriginHits()).toBe(2);
+			expect(responses.every(r => r.headers['x-cache'] === 'MISS')).toBe(true);
+		});
+
+		test('inFlightDedup 未指定はデフォルト true で X-Cache: MISS が付く', async () => {
+			await setupSlowOriginAndProxy({ delayMs: 50 });
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(200);
+			expect(r.headers['x-cache']).toBe('MISS');
 		});
 	});
 

@@ -66,6 +66,7 @@ Fastify モード固有のオプション
 | **cacheErrorMaxAge** | *number* | エラーレスポンスの `Cache-Control` | `3600` (1 時間) |
 | **inMemoryCache** | *boolean* | プロセス内 LRU キャッシュを有効化 | `false` |
 | **inMemoryCacheMaxEntries** | *number* | LRU の最大エントリ数 | `1000` |
+| **inFlightDedup** | *boolean* | 同一 URL の並列リクエストを 1 本化（thundering herd 緩和） | `true` |
 | **useRange** | *boolean* | `Range: bytes=0-N-1` で先頭領域だけ取得（帯域節約） | `false` |
 | **allowedPlugins** | *string[]* | 利用許可するプラグイン名の配列 | `undefined` (全有効) |
 | **enablePdf** | *boolean* | PDF レスポンスのタイトル取得を有効化 | `false` |
@@ -75,11 +76,12 @@ Fastify モード固有のオプション
 キャッシュ戦略
 ----------------------------------------------------------------
 
-summaly のキャッシュは **3 段重ね** で考えるのが運用の基本:
+summaly のキャッシュ・流量制御は **4 段重ね** で考えるのが運用の基本:
 
 1. **`Cache-Control` ヘッダ（自動）** — 全レスポンスに `public, max-age=<cacheMaxAge>` が付く。前段の nginx `proxy_cache` / Cloudflare 等が尊重して再リクエストを減らす
-2. **インメモリ LRU キャッシュ（`inMemoryCache: true` でオプトイン）** — `Cache-Control` を解釈しない HTTP クライアント（Misskey の Got / node-fetch 等）でも summaly サーバ単独で重複アクセスを抑える
-3. **前段プロキシ / CDN（運用者が用意）** — nginx の `proxy_cache_path` + `proxy_cache_valid` で `Cache-Control` を尊重した永続キャッシュ
+2. **in-flight dedup（`inFlightDedup: true` がデフォルト）** — 同一 URL に並列で来たリクエストを先頭リクエストの結果に集約し、origin への同時アクセスを 1 本化する（thundering herd 緩和）
+3. **インメモリ LRU キャッシュ（`inMemoryCache: true` でオプトイン）** — `Cache-Control` を解釈しない HTTP クライアント（Misskey の Got / node-fetch 等）でも summaly サーバ単独で重複アクセスを抑える
+4. **前段プロキシ / CDN（運用者が用意）** — nginx の `proxy_cache_path` + `proxy_cache_valid` で `Cache-Control` を尊重した永続キャッシュ
 
 ### `Cache-Control`
 
@@ -108,13 +110,32 @@ summaly のキャッシュは **3 段重ね** で考えるのが運用の基本:
 - **キャッシュキー**: URL（フラグメント `#...` を除去）+ NULL byte + `lang` クエリ値。`ja` と `en` は別エントリ
 - **TTL**: 成功は `cacheMaxAge`、エラーは `cacheErrorMaxAge`
 - **エントリ上限**: `inMemoryCacheMaxEntries`（デフォルト 1000）。1 エントリは数 KB だが、長い `description` や `data:` thumbnail で大きくなる可能性あり
-- **`X-Cache` ヘッダ**: HIT / MISS が付く（無効時は付かない）
+- **`X-Cache` ヘッダ**: `HIT` / `MISS` / `HIT-COALESCED` が付く（dedup・LRU 共に無効時は付かない）
 
 #### 注意点
 
 - **5xx エラーもキャッシュされる**: 上流が一時障害から復旧しても `cacheErrorMaxAge` までエラーが返り続けます。プロセス再起動するか `cacheErrorMaxAge` を短く設定して緩和
-- **同時リクエストの dedup は行わない**（thundering herd 残課題、[phase4.2](plans/phase4.2-inflight-dedup.md) で対応予定）。キャッシュが完成する前に来た並列リクエストは全て origin に到達します。Misskey のユーザーストリーミング由来で同時集中が起きる場合は phase4.2 完了を待つか、前段に nginx `proxy_cache` を立てて吸収してください
 - **プロセス再起動でキャッシュは消えます**。永続キャッシュは別実装（要望次第で Redis 等を将来検討）
+
+### in-flight dedup
+
+`inFlightDedup: true`（デフォルト）で、**同一 URL の進行中リクエストの結果** を後続の並列リクエストにも共有し、origin への同時アクセスを 1 本化します。Misskey のユーザーストリーミング機能で 1 本の URL が同時に多数のクライアントから引かれるケースで発生する thundering herd を抑える機構です。
+
+- **動作**: 先頭リクエストが origin にスクレイピング中、後続の同 URL リクエストは Promise を共有して待機。完了時に全 waiter が同じ結果を受け取る
+- **`inMemoryCache` とは独立**: dedup だけ有効・キャッシュ無効でも「並列の集中」は止まる。両方有効が推奨（最初の集中は dedup、後続の重複は LRU で吸収）
+- **キャッシュキー**: LRU キャッシュと同一（URL（フラグメント除去）+ `lang`）
+- **エラー時**: 先頭リクエストの error が全 waiter に伝搬し、各 waiter が同じ `errorPayload` をレスポンスする
+- **`X-Cache: HIT-COALESCED`**: 並列待ちで取得したリクエストにこのヘッダが付き、dedup 効果を可視化できる
+- **完全に従来挙動に戻すには `inFlightDedup: false`**: dedup と LRU 両方を無効化したい場合は両方 `false` を明示
+
+| 状態 | X-Cache | 意味 |
+|---|---|---|
+| LRU HIT | `HIT` | キャッシュから返した |
+| in-flight 待ちで完了 | `HIT-COALESCED` | 並列リクエストの先頭結果を共有した（dedup 効果あり） |
+| 完全な MISS | `MISS` | 自分が origin に行った |
+| dedup・LRU 共に無効 | （ヘッダなし） | 既存挙動 |
+
+異なる URL の並列数に上限はかけません（dedup は同 URL のみ）。Fastify 全体のリクエストキューイングは上位レイヤ（nginx の `limit_conn` 等）の責務です。
 
 PDF 対応
 ----------------------------------------------------------------

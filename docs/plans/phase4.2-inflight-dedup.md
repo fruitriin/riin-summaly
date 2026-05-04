@@ -1,6 +1,6 @@
 # Phase 4.2 — Fastify モードの in-flight リクエスト dedup（thundering herd 緩和）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-04)**
 > 種別: 機能拡張 / 運用最適化
 > サイズ: **S〜M**
 > 依存: [phase4.1](phase4.1-fastify-in-memory-cache.md)（LRU キャッシュ）
@@ -95,26 +95,20 @@ LRU キャッシュは「結果を再利用」、in-flight dedup は「同時実
 
 各ステップで `pnpm eslint && pnpm typecheck && pnpm test` を通す。
 
-- [ ] **Step 1 — `SummalyOptions.inFlightDedup?: boolean` 追加**
-  - デフォルト `true`（dedup を有効）。`false` で完全に従来挙動に戻せる
-- [ ] **Step 2 — in-flight Map の導入**
-  - [src/index.ts](src/index.ts) Fastify ハンドラ内、LRU キャッシュ singleton と同じスコープに `Map<string, Promise<CacheEntry>>` を生成
-  - `inFlightDedup: false` のときは Map を作らずスキップ
-- [ ] **Step 3 — ハンドラのフロー改修**
-  - LRU HIT → `X-Cache: HIT`（既存）
-  - LRU MISS かつ in-flight HIT → `await` して結果を返す、`X-Cache: HIT-COALESCED`
-  - 両方 miss → Promise を `inFlight.set(key, ...)`、settle 後に `delete` + LRU `set()`、`X-Cache: MISS`
-  - エラー時も同じく Promise が reject で全 waiter に伝搬
-- [ ] **Step 4 — テスト**
-  - **ワーストケーステスト**: origin が応答に **2 秒** 遅延するモック。同時に 5 並列リクエストを発射し、**origin ヒット数が 1 件のみ** であること、全 5 リクエストが同じ Summary を受け取ることを assert
-  - dedup 無効時 (`inFlightDedup: false`) は 5 並列で origin が 5 回叩かれること（既存挙動）
-  - in-flight 中にエラーが起きた場合、全 waiter が同じエラーを受け取ること
-  - `inMemoryCache: true` + `inFlightDedup: true` の組み合わせで、in-flight 待ちは `HIT-COALESCED`、完了後の追加リクエストは `HIT` になること
-  - URL 違い / lang 違いでは dedup されないこと（別キー扱い）
-- [ ] **Step 5 — README / CHANGELOG 更新**
-  - 新オプション `inFlightDedup` の説明（デフォルト true）
-  - "In-process LRU cache" 節に dedup の挙動と `X-Cache: HIT-COALESCED` の意味を追記
-  - thundering herd リスクが解消された旨（phase4.1 の README に書いた "no in-flight dedup" を更新）
+- [x] **Step 1 — `SummalyOptions.inFlightDedup?: boolean` 追加**
+- [x] **Step 2 — in-flight Map の導入**
+- [x] **Step 3 — ハンドラのフロー改修**
+  - エラー伝搬は Promise の reject ではなく **resolve 値に `CacheEntry` (`kind: 'success' | 'error'`) を持たせる方式** で実装。`fetchEntry` が常に resolve するため `try/finally` を使わずに `inFlight.delete` の順序を制御できる
+- [x] **Step 4 — テスト** — `describe('Fastify in-flight dedup (phase4.2)')` で 7 テスト追加
+- [x] **Step 5 — README / CHANGELOG 更新** — `docs/SETUP.md` の「キャッシュ戦略」を 4 段重ねに改訂、`X-Cache` 値表追加、CHANGELOG に dedup エントリ追加
+
+## 実装結果メモ
+
+- **エラー伝搬の実装変更**: 元計画では「Promise reject + waiter で同じ error」を想定していたが、実装では `Promise<CacheEntry>` の resolve 値に成功/エラーをラップするタグ付き union を採用。これにより:
+  - `try/finally` の `entry` 変数の definite-assignment 問題（ESLint の `no-non-null-assertion` 違反）を回避できる
+  - 全 waiter が同一の `errorPayload` を確実に受け取る（`Error` インスタンスを serialize する局所性が leader 1 箇所だけになる）
+- **`emitCacheHeader = cache != null || inFlight != null`** で `X-Cache` ヘッダ付与の有無を判断。dedup または LRU のどちらかが有効なら付与。両方 `false` のときだけ既存互換でヘッダ無し
+- **`inFlightDedup` デフォルト true** により既存ユーザーの X-Cache レスポンスヘッダが増える。Plan 通り Breaking Change と見做さず CHANGELOG に明記
 
 ---
 

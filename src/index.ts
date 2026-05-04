@@ -5,7 +5,7 @@
 
 import got, { type Agents as GotAgents } from 'got';
 import { LRUCache } from 'lru-cache';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { SummalyResult as _SummalyResult } from '@/summary.js';
 import { SummalyPlugin as _SummalyPlugin } from '@/iplugin.js';
 import { general, type GeneralScrapingOptions } from '@/general.js';
@@ -109,6 +109,17 @@ export type SummalyOptions = {
 	 * 1 エントリ数 KB として 1000 で数 MB 程度のメモリ消費を見込む。
 	 */
 	inMemoryCacheMaxEntries?: number;
+
+	/**
+	 * Fastify プラグインモード**専用**の in-flight リクエスト dedup を有効化する。デフォルト true。
+	 * 同一 URL に並列でリクエストが来た場合、先頭リクエストの結果を後続も共有することで
+	 * origin への同時アクセスを 1 本化する（thundering herd 緩和）。
+	 * `inMemoryCache` とは独立に効くため、キャッシュ無効でも並列の集中だけは抑えられる。
+	 * 完全に従来挙動に戻すには `false` を明示する。
+	 *
+	 * Note: ライブラリの `summaly()` 関数を直接呼び出す利用法では参照されない（無視される）。
+	 */
+	inFlightDedup?: boolean;
 
 	/**
 	 * PDF レスポンスのタイトル取得を有効化する（オプトイン）。
@@ -309,6 +320,26 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		})
 		: null;
 
+	// in-flight リクエスト dedup の Map（プラグインスコープ singleton）。
+	// LRU と独立に効くため、キャッシュ無効でも同 URL の並列 origin アクセスを 1 本化できる。
+	// `inFlightDedup` 未指定はデフォルト true。
+	const dedupEnabled = options.inFlightDedup ?? true;
+	const inFlight: Map<string, Promise<CacheEntry>> | null = dedupEnabled
+		? new Map<string, Promise<CacheEntry>>()
+		: null;
+
+	// X-Cache ヘッダはキャッシュか dedup のどちらか有効なときに付与する（既存挙動: 両方無効なら付かない）
+	const emitCacheHeader = cache != null || inFlight != null;
+
+	function respondWithEntry(reply: FastifyReply, entry: CacheEntry) {
+		if (entry.kind === 'success') {
+			reply.header('Cache-Control', successCacheHeader);
+			return entry.value;
+		}
+		reply.header('Cache-Control', errorCacheHeader);
+		return reply.status(500).send({ error: entry.error });
+	}
+
 	fastify.get<{
 		Querystring: {
 			url?: string;
@@ -325,48 +356,69 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		}
 
 		const lang = req.query.lang as string | undefined;
-		// normalizeCacheKey が null を返す（不正 URL）場合はキャッシュをスキップして summaly() に委ねる
-		const cacheKey = cache ? normalizeCacheKey(url, lang) : null;
+		// normalizeCacheKey が null を返す（不正 URL）場合は LRU / dedup どちらもスキップして summaly() に委ねる
+		const cacheKey = emitCacheHeader ? normalizeCacheKey(url, lang) : null;
 
-		// キャッシュヒット
+		// 1. LRU キャッシュヒット
 		if (cache && cacheKey != null) {
 			const hit = cache.get(cacheKey);
 			if (hit != null) {
 				reply.header('X-Cache', 'HIT');
-				if (hit.kind === 'success') {
-					reply.header('Cache-Control', successCacheHeader);
-					return hit.value;
-				}
-				// エラーキャッシュヒット
-				reply.header('Cache-Control', errorCacheHeader);
-				return reply.status(500).send({ error: hit.error });
+				return respondWithEntry(reply, hit);
 			}
 		}
 
-		try {
-			const summary = await summaly(url, {
-				lang,
-				followRedirects: false,
-				...options,
-			});
-
-			if (cache && cacheKey != null) {
-				cache.set(cacheKey, { kind: 'success', value: summary }, { ttl: successMaxAge * 1000 });
-				reply.header('X-Cache', 'MISS');
+		// 2. in-flight 待ち（先頭リクエストの結果を共有して origin に行かない）
+		if (inFlight && cacheKey != null) {
+			const pending = inFlight.get(cacheKey);
+			if (pending != null) {
+				const entry = await pending;
+				reply.header('X-Cache', 'HIT-COALESCED');
+				return respondWithEntry(reply, entry);
 			}
-			reply.header('Cache-Control', successCacheHeader);
-			return summary;
-		} catch (e) {
-			const errorPayload = serializableError(e);
-			if (cache && cacheKey != null) {
-				cache.set(cacheKey, { kind: 'error', error: errorPayload }, { ttl: errorMaxAge * 1000 });
-				reply.header('X-Cache', 'MISS');
-			}
-			reply.header('Cache-Control', errorCacheHeader);
-			return reply.status(500).send({
-				error: errorPayload,
-			});
 		}
+
+		// 3. 完全な MISS（LRU・dedup どちらも HIT しなかった、または両方無効）。
+		//    dedup 有効時は先頭として inFlight にエントリを登録し、後続の並列リクエストに共有する。
+		const fetchEntry = async (): Promise<CacheEntry> => {
+			try {
+				const summary = await summaly(url, {
+					lang,
+					followRedirects: false,
+					...options,
+				});
+				return { kind: 'success', value: summary };
+			} catch (e) {
+				return { kind: 'error', error: serializableError(e) };
+			}
+		};
+
+		let entry: CacheEntry;
+		if (inFlight && cacheKey != null) {
+			// fetchEntry は内部で try/catch して常に resolve する（reject しない）ため
+			// await が throw する可能性は無く、明示的な try/finally は不要。
+			// 順序: LRU set → inFlight delete。delete 直後の新規リクエストが LRU HIT で拾えるよう
+			// LRU を先に埋めてから inFlight Map から外す。
+			const promise = fetchEntry();
+			inFlight.set(cacheKey, promise);
+			entry = await promise;
+			if (cache) {
+				const ttl = entry.kind === 'success' ? successMaxAge * 1000 : errorMaxAge * 1000;
+				cache.set(cacheKey, entry, { ttl });
+			}
+			inFlight.delete(cacheKey);
+		} else {
+			entry = await fetchEntry();
+			if (cache && cacheKey != null) {
+				const ttl = entry.kind === 'success' ? successMaxAge * 1000 : errorMaxAge * 1000;
+				cache.set(cacheKey, entry, { ttl });
+			}
+		}
+
+		if (emitCacheHeader) {
+			reply.header('X-Cache', 'MISS');
+		}
+		return respondWithEntry(reply, entry);
 	});
 
 	done();

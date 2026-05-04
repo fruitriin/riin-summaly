@@ -29,6 +29,12 @@
   * `inMemoryCacheMaxEntries` (デフォルト 1000) でエントリ数上限
   * レスポンスに `X-Cache: HIT` / `MISS` を付与（無効時は付かない）
   * キャッシュキーは URL（フラグメント除去）+ `lang`。プロセス再起動でキャッシュは消える
+* Fastify モードに **in-flight リクエスト dedup** を追加（thundering herd 緩和）:
+  * `inFlightDedup: true`（**デフォルト有効**）で、同一 URL の並列リクエストを先頭リクエストの結果に集約し、origin への同時アクセスを 1 本化する
+  * Misskey のユーザーストリーミング機能で同一リンクが多数のクライアントから同時に引かれるケースで origin が DDoS のように見える問題を抑制
+  * `inMemoryCache` とは独立に効くため、キャッシュ無効でも並列の集中だけは抑えられる（両方有効が推奨）
+  * `X-Cache: HIT-COALESCED` ヘッダで dedup 効果を可視化（並列待ちで取得したリクエストに付く）
+  * 完全に従来挙動に戻すには `inFlightDedup: false` を明示（`X-Cache` ヘッダの追加だけが純粋な互換性影響だが、改善方向のため Breaking Change と見做していない）
 * DOM 後処理系プラグインを追加（dlsite / iwara / komiflo / nijie）:
   * `dlsite`: `www.dlsite.com`。`/announce/` ↔ `/work/` で 404 のときに自動再取得、結果パスのカテゴリで `sensitive` を判定
   * `iwara`: `(www|ecchi).iwara.tv`。description を `.field-type-text-with-summary` から、thumbnail を `#video-player[poster]` 等から補完。`ecchi.` ホストで `sensitive`
