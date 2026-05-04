@@ -15,7 +15,7 @@ import { Agent as httpAgent } from 'node:http';
 import { Agent as httpsAgent } from 'node:https';
 import { expect, test, describe, beforeEach, afterEach, afterAll } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
-import summalyPlugin, { summaly, summalyDefaultOptions } from '@/index.js';
+import summalyPlugin, { summaly, summalyDefaultOptions, type SummalyOptions } from '@/index.js';
 import { StatusError } from '@/utils/status-error.js';
 import { getJson } from '@/utils/got.js';
 import { KNOWN_SHORT_HOSTS } from '@/utils/short-urls.js';
