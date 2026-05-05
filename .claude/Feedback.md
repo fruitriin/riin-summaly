@@ -52,6 +52,13 @@
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
 
+## phase11.4 (npmjs プラグイン / Cloudflare 配下 JSON API 直叩き) 知見
+
+- **2026-05-05 phase11.4 セッション**: 「Cloudflare Bot Management で蓋されているサイトでも公式 JSON API は素通し」というパターンが発見器として有効。npm の `www.npmjs.com` (HTML 403) ↔ `registry.npmjs.org` (JSON 200) は典型例。Plan で `curl -A SummalyBot/x.y.z` の事前検証コマンドを記録しておくと、レビュー段階で「実装前に検証済み」と確認できる。`docs/knowhow/plugin-infrastructure-patterns.md` に汎用化したパターンを追記済み
+- **2026-05-05 phase11.4 セッション**: `pkg.replace('/', '%2F')` の非 global `replace` がコードレビューで「`replaceAll` でない理由が自明でない」と指摘された。**呼出元の `extractPackageName` 正規表現で構造的に `/` が最大 1 件であることが保証されている**ためバグではないが、コメントで意図を補足することで将来のリファクタリング事故を防げる。「ロジック整合性は保証されているが知識が分散しているコード」へのコメント追加が有効
+- **2026-05-05 phase11.4 セッション**: Plan の方針からの逸脱（`dist-tags.latest` 不在時に throw ではなく null フォールバック）を実装段階で判断したが、Plan に書かれた選択肢を最終決定にしないこと自体は問題なし。**逸脱を Plan 完了状況更新時に明記する**（Step に「方針からの変更」と書く）と、後から trace できる。phase10.1 で `isFilteredFailure` を追加した時のパターンと同じ
+- **2026-05-05 phase11.4 セッション**: pure 関数の命名 (`extractPackageName / buildRegistryUrl / buildSummaryFromRegistry`) を「動詞 + 名詞句」で揃えると、テストの describe 名と export 名が綺麗に対応する。spotify の `buildSummaryFromOEmbed` も同パターン。新規プラグインの命名テンプレとして再利用できる
+
 ## phase11.5 (診断エンドポイント廃止) 知見
 
 - **2026-05-05 phase11.5 セッション (機能削除フェーズ)**: 「機能を撤去する」フェーズで `addf-code-review-agent` が「削除漏れチェック」を網羅的に実行できることを確認。`grep -rn parseFailureLogEndpoint\|__diagnostics` で全リポ走査して残存箇所を意図的（コメント / 履歴 / forward-compat テスト）と未削除に分類して報告するワークフローが綺麗に効いた。レビュー agent は「追加・変更」だけでなく「削除フェーズの検証」にも有効

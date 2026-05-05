@@ -1,5 +1,12 @@
 (unreleased)
 ------------------
+* **feat**: npmjs.com プラグインを追加 (phase11.4):
+  * `https://www.npmjs.com/package/<pkg>` および scoped `/package/@scope/name` で Cloudflare 配下の HTML スクレイプを諦め、Registry API (`https://registry.npmjs.org/<pkg>`) を直叩きして Summary を組み立てる
+  * `dist-tags.latest` の `name` / `description` を最優先、無ければ `versions[latest].description` にフォールバック
+  * バージョン指定パス (`/v/<ver>`) や `/tutorial` 等のサブパスでも latest の Summary を返す
+  * `sitename: 'npm'` 固定、icon/thumbnail は npm の固定 PNG (`static-production.npmjs.com/...`)
+  * `allowedPlugins` で `'npmjs'` を指定/除外可能
+  * 背景: npm は Cloudflare Bot Management で正規 bot UA も含めて 403 を返すが、Registry API は素通しで `application/json` を返してくれる。X / Discord が npm の OG カードを表示できているのは verified bot の IP allowlist 経由であり、HTTP レイヤでの突破は不可能
 * **BREAKING**: `parseFailureLogEndpoint` オプションと `GET /__diagnostics/parse-failures` HTTP エンドポイントを削除しました (phase11.5):
   * プライバシーリスク（過去 preview 試行 URL が前段 nginx の設定ミスで外部漏洩）を恒久排除するため、診断は **`parseFailureLogJsonlPath` で書き出される JSONL ファイル経由で実施** してください
   * 月次レビュー / プラグイン化候補発見の用途は `cat /var/log/summaly/parse-failures.jsonl | jq -r '.key' | sort | uniq -c | sort -rn | head -20` で代替可能

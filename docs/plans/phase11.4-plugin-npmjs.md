@@ -1,6 +1,6 @@
 # Phase 11.4 — npmjs.com プラグイン（Registry API 経由）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: 機能拡張 / プラグイン追加
 > サイズ: **S**
 > 依存: [phase2.1](phase2.1-plugin-infrastructure.md)（`getJson`、`name` フィールド規約）
@@ -91,7 +91,7 @@ return {
 
 各ステップで `pnpm eslint && pnpm test` を通す。
 
-- [ ] **Step 1 — プラグイン本体**
+- [x] **Step 1 — プラグイン本体**
   - [src/plugins/npmjs.ts](../../src/plugins/npmjs.ts) を新設
     - `export const name = 'npmjs';`
     - `test(url)`: ホスト `(www\.)?npmjs\.com$` かつ pathname が `^/package/` で始まる
@@ -102,7 +102,7 @@ return {
       - `Summary` を組み立て
       - `dist-tags.latest` が無い場合（unpublish 直後など）は throw（`failed summarize` を呼出側で表示）
   - [src/plugins/index.ts](../../src/plugins/index.ts) に登録（既存の amazon 〜 nijie の末尾に追加）
-- [ ] **Step 2 — フィクスチャベースのテスト**
+- [x] **Step 2 — フィクスチャベースのテスト**（spotify/youtube パターンに準拠して fastify モック不要、pure 関数 `extractPackageName / buildRegistryUrl / buildSummaryFromRegistry` を直接テスト）
   - [test/htmls/](../../test/htmls/) の隣（あるいは `test/jsons/` 新設）に Registry API レスポンスの JSON フィクスチャを配置
   - [test/index.test.ts](../../test/index.test.ts) に以下のケースを追加:
     - 通常パッケージ（`mfm-renderer` 風）の `/package/<name>`
@@ -111,24 +111,24 @@ return {
     - description が `versions[latest]` にしか無い場合のフォールバック
     - 不正な `/package/` パス（パッケージ名抽出失敗）→ `null` を返すか throw
   - テストハーネスのモックサーバ（fastify）に `registry.npmjs.org` 相当のルートを足す（既存の oEmbed テストパターンに合わせる）
-- [ ] **Step 3 — 動作確認 (dev サーバ)**
+- [x] **Step 3 — 動作確認 (dev サーバ)**
   - [dev/sample-urls.ts](../../dev/sample-urls.ts) に「npm パッケージ（registry API plugin）」グループを追加
     - `https://www.npmjs.com/package/mfm-renderer`
     - `https://www.npmjs.com/package/@misskey-dev/summaly`
     - `https://www.npmjs.com/package/react/v/19.0.0`（version パスでも latest が返ること）
-- [ ] **Step 4 — ドキュメント更新（4.5 のドキュメント突き合わせ）**
+- [x] **Step 4 — ドキュメント更新（4.5 のドキュメント突き合わせ）**: README プラグイン一覧 + Plugins.md 詳細セクション + CLAUDE.repo.md プラグイン表 + CHANGELOG feat エントリ
   - [CLAUDE.repo.md](../../CLAUDE.repo.md) の「対応形式（組み込みプラグイン）」表に `npmjs` 行を追加
     - マッチ条件: `(www.)?npmjs.com/package/...`
     - 挙動: Registry API (`https://registry.npmjs.org/<pkg>`) を直叩き。Cloudflare 保護を回避、HTML スクレイプを介さない
   - [CHANGELOG.md](../../CHANGELOG.md) unreleased セクションに追加
   - 必要なら [docs/Plugins.md](../../docs/Plugins.md) / [docs/Library.md](../../docs/Library.md) も
-- [ ] **Step 5 — knowhow 記録**
+- [x] **Step 5 — knowhow 記録**: `plugin-infrastructure-patterns.md` に「Cloudflare 配下サイトの公式 JSON API 直叩きパターン」セクション追加 + INDEX キーワード更新
   - 「Cloudflare Bot Management 配下のサイトでも公式 JSON API は素通しなことが多い → Registry API 直叩きパターン」を `docs/knowhow/` に
   - 既存 [docs/knowhow/plugin-pattern.md](../../docs/knowhow/plugin-pattern.md) 等があれば追記、無ければ新規
-- [ ] **Step 6 — 品質ゲート**
-  - `pnpm build && pnpm eslint && pnpm typecheck && pnpm test`
-  - `bash .claude/tests/run-all.sh`
-  - `addf-code-review-agent` / `addf-contribution-agent`
+- [x] **Step 6 — 品質ゲート**
+  - Stage 1: `pnpm build && pnpm eslint && pnpm typecheck && pnpm test` (277 passed) + `bash .claude/tests/run-all.sh` 通過
+  - Stage 2: `addf-code-review-agent` 通過 (Critical/High なし、Suggestion W-1/S-1/W-2 はコメント追記とテスト追加で対応済み)
+  - `addf-contribution-agent` はスキップ条件「`.claude/` `docs/knowhow/ADDF/` `templates/` を含まない」に合致のためスキップ
 
 ## 完了条件 (Definition of Done)
 

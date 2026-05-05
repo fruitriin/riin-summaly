@@ -9,6 +9,7 @@ import * as dlsite from './dlsite.js';
 import * as iwara from './iwara.js';
 import * as komiflo from './komiflo.js';
 import * as nijie from './nijie.js';
+import * as npmjs from './npmjs.js';
 import { SummalyPlugin } from '@/iplugin.js';
 
 export const plugins: SummalyPlugin[] = [
@@ -23,4 +24,5 @@ export const plugins: SummalyPlugin[] = [
 	iwara,
 	komiflo,
 	nijie,
+	npmjs,
 ];

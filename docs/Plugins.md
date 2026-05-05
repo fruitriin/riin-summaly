@@ -1,7 +1,7 @@
 Plugins.md — プラグイン詳細
 ================================================================
 
-summaly のプラグインシステムと、組み込み 11 プラグインの仕様、カスタムプラグインの書き方をまとめます。
+summaly のプラグインシステムと、組み込み 12 プラグインの仕様、カスタムプラグインの書き方をまとめます。
 
 目次
 ----------------------------------------------------------------
@@ -20,6 +20,7 @@ summaly のプラグインシステムと、組み込み 11 プラグインの�
   - [iwara](#iwara)
   - [komiflo](#komiflo)
   - [nijie](#nijie)
+  - [npmjs](#npmjs)
 - [カスタムプラグインの書き方](#カスタムプラグインの書き方)
 - [共通ユーティリティ](#共通ユーティリティ)
 
@@ -204,6 +205,22 @@ interface SummalyPlugin {
 | エスケープ | JSON-LD に生制御文字（`\n` / `\r` / `\t` 等 U+0000-U+001F）が含まれるため、Unicode エスケープに置換してから `JSON.parse` |
 | sensitive 判定 | `view.php` 着地で `true` |
 | ヘルパ export | `enrichWithNijie(summary, $, landingUrl): Summary` |
+
+### npmjs
+
+実装: [src/plugins/npmjs.ts](../src/plugins/npmjs.ts)
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `(www.)?npmjs.com/package/...` |
+| 取得方法 | `getJson('https://registry.npmjs.org/<pkg>')` で Registry API JSON 直叩き（HTML スクレイプは行わない） |
+| 動作 | `dist-tags.latest` の `name` / `description` から Summary を組み立てる |
+| description フォールバック | トップレベル `description` → `versions[latest].description` → null |
+| サブパス対応 | `/package/<pkg>/v/<ver>` `/tutorial` `/security` 等のサブパスでも latest の Summary を返す（簡素化優先） |
+| scope 対応 | `/package/@scope/name` は `@scope%2Fname` の形で registry URL を組み立てる |
+| 固定値 | `sitename: 'npm'`、icon/thumbnail は `https://static-production.npmjs.com/58a19602036db1daee0d7863c94673a4.png`（120×120 PNG） |
+| 背景 | `www.npmjs.com` は Cloudflare Bot Management で正規 bot UA を含めて 403 を返すが、`registry.npmjs.org` は素通しで `application/json` を返す。X / Discord の OG カードは verified bot の IP allowlist 経由で表示されており、HTTP レイヤでは突破不可 |
+| ヘルパ export | `extractPackageName(pathname)` / `buildRegistryUrl(pkg)` / `buildSummaryFromRegistry(body)` |
 
 カスタムプラグインの書き方
 ----------------------------------------------------------------

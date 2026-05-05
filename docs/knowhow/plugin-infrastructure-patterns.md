@@ -130,6 +130,35 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 4. **404 リトライの無限ループ防止**: `tryFetch(url, opts, alreadySwapped: boolean)` のように再帰の深さをフラグで制限。dlsite の `/announce/` ↔ `/work/` が好例。
 5. **API 失敗時の握りつぶし**: ライブラリ責務として `console.log` は出さず、try-catch で fallback パスに静かに戻す。komiflo の `api.komiflo.com` 失敗時の挙動。
 
+## Cloudflare 配下サイトの公式 JSON API 直叩きパターン（phase11.4 / npmjs）
+
+`www.npmjs.com` のように **Cloudflare Bot Management の "managed challenge"** で蓋をされているサイトでは、SummalyBot UA・ブラウザ模倣 UA・正規 bot UA（Discordbot/Twitterbot/Slackbot/facebookexternalhit）すべてで 403 が返る。これは Cloudflare 側で **IP / rDNS まで含めた verified bot 検証** をしているため、HTTP レイヤでは突破不可能（X や Discord で OG が表示されているのは IP allowlist 経由）。
+
+ただし **公式 JSON API（`registry.npmjs.org` 等）は Cloudflare 保護の対象外** であることが多く、`SummalyBot/x.y.z` UA でも素通しで 200 / `application/json` を返してくれる。description / homepage / repository 等のメタが揃っている場合、HTML スクレイプを諦めて API 直叩きで Summary を組み立てる方が確実かつ高速。
+
+### 適用判断のチェックリスト
+
+1. `curl -A SummalyBot/x.y.z https://example.com/...` が 403 / Cloudflare challenge を返す
+2. `curl -A SummalyBot/x.y.z https://api.example.com/...` が 200 / JSON を返す
+3. JSON に title / description 相当のフィールドが揃っている
+4. プラグイン化する URL パターンが特定できる（npm の `/package/<name>` のように）
+
+### サブパスは latest 固定で簡素化
+
+`/package/<pkg>/v/<ver>` `/tutorial` `/security` 等のサブパスでも常に `dist-tags.latest` を返す。upstream の OG にもバージョン別表示は無いため、複雑化を避けて簡素化優先。
+
+### scope 付きパッケージ名のエンコード
+
+`@scope/name` の `/` は `%2F` 必須、`@` は registry 側で生のまま受けてくれる。`encodeURIComponent` だと `%40scope%2Fname` になるが、慣例に合わせて `@` は残し `/` だけ `%2F` に置換 (`pkg.replace('/', '%2F')`) する形が綺麗。
+
+### アイコン陳腐化リスクと対策
+
+npm の固定ハッシュ PNG (`58a19602036db1daee0d7863c94673a4.png`) のような自社 CDN アセットはいつか入れ替わる。リンク切れ検知は別途モニタリング。陳腐化したら GitHub の npm org アバター (`https://avatars.githubusercontent.com/u/6078720?s=200&v=4`) のような外部代替に切り替える。
+
+### テスト戦略
+
+`buildSummaryFromRegistry(body)` を pure 関数として export し、フィクスチャを **直接渡してテスト** する（fastify モックサーバ不要）。spotify / youtube の `buildSummaryFromOEmbed` と同じパターン。`extractPackageName` `buildRegistryUrl` も独立 export してパス組み立ての境界条件を網羅できる。
+
 ## 関連
 
 - [object-assign-mutable-target.md](object-assign-mutable-target.md) — オプション扱いの落とし穴

@@ -1170,6 +1170,107 @@ describe('local tests', () => {
 				});
 			});
 
+			describe('npmjs プラグイン (phase11.4)', () => {
+				test('test() は (www.)?npmjs.com/package/... にマッチする', async () => {
+					const { test: matchTest } = await import('@/plugins/npmjs.js');
+					expect(matchTest(new URL('https://www.npmjs.com/package/mfm-renderer'))).toBe(true);
+					expect(matchTest(new URL('https://npmjs.com/package/mfm-renderer'))).toBe(true);
+					expect(matchTest(new URL('https://www.npmjs.com/package/@misskey-dev/summaly'))).toBe(true);
+					expect(matchTest(new URL('https://www.npmjs.com/package/react/v/19.0.0'))).toBe(true);
+					expect(matchTest(new URL('https://www.npmjs.com/package/foo/tutorial'))).toBe(true);
+
+					expect(matchTest(new URL('https://www.npmjs.com/'))).toBe(false);
+					expect(matchTest(new URL('https://www.npmjs.com/search?q=foo'))).toBe(false);
+					expect(matchTest(new URL('https://example.com/package/foo'))).toBe(false);
+					expect(matchTest(new URL('https://blog.npmjs.com/package/foo'))).toBe(false);
+					expect(matchTest(new URL('https://registry.npmjs.org/foo'))).toBe(false);
+					expect(matchTest(new URL('https://registry.npmjs.com/foo'))).toBe(false);
+				});
+
+				test('extractPackageName はサブパス・スコープを正しく扱う', async () => {
+					const { extractPackageName } = await import('@/plugins/npmjs.js');
+					expect(extractPackageName('/package/mfm-renderer')).toBe('mfm-renderer');
+					expect(extractPackageName('/package/mfm-renderer/v/0.0.1')).toBe('mfm-renderer');
+					expect(extractPackageName('/package/@misskey-dev/summaly')).toBe('@misskey-dev/summaly');
+					expect(extractPackageName('/package/@scope/name/tutorial')).toBe('@scope/name');
+					expect(extractPackageName('/package/')).toBeNull();
+					expect(extractPackageName('/foo/bar')).toBeNull();
+				});
+
+				test('buildRegistryUrl は scope の / を %2F にエンコードし、@ は残す', async () => {
+					const { buildRegistryUrl } = await import('@/plugins/npmjs.js');
+					expect(buildRegistryUrl('mfm-renderer')).toBe('https://registry.npmjs.org/mfm-renderer');
+					expect(buildRegistryUrl('@misskey-dev/summaly')).toBe('https://registry.npmjs.org/@misskey-dev%2Fsummaly');
+				});
+
+				test('buildSummaryFromRegistry: トップレベル description を最優先', async () => {
+					const { buildSummaryFromRegistry } = await import('@/plugins/npmjs.js');
+					const fixture = {
+						name: 'mfm-renderer',
+						description: 'Top-level description',
+						'dist-tags': { latest: '1.0.0' },
+						versions: {
+							'1.0.0': { description: 'Version-level description (should be ignored)' },
+						},
+					};
+					const summary = buildSummaryFromRegistry(fixture);
+					expect(summary).not.toBeNull();
+					expect(summary!.title).toBe('mfm-renderer');
+					expect(summary!.description).toBe('Top-level description');
+					expect(summary!.sitename).toBe('npm');
+					expect(summary!.icon).toContain('static-production.npmjs.com');
+					expect(summary!.thumbnail).toContain('static-production.npmjs.com');
+					expect(summary!.player.url).toBeNull();
+					expect(summary!.sensitive).toBe(false);
+				});
+
+				test('buildSummaryFromRegistry: トップレベル description が無いとき versions[latest].description にフォールバック', async () => {
+					const { buildSummaryFromRegistry } = await import('@/plugins/npmjs.js');
+					const fixture = {
+						name: 'fallback-pkg',
+						'dist-tags': { latest: '2.0.0' },
+						versions: {
+							'2.0.0': { description: 'Version-level fallback' },
+						},
+					};
+					const summary = buildSummaryFromRegistry(fixture);
+					expect(summary!.description).toBe('Version-level fallback');
+				});
+
+				test('buildSummaryFromRegistry: scoped パッケージ名がそのまま title に入る', async () => {
+					const { buildSummaryFromRegistry } = await import('@/plugins/npmjs.js');
+					const fixture = {
+						name: '@misskey-dev/summaly',
+						description: 'URL preview library',
+						'dist-tags': { latest: '5.3.0' },
+						versions: { '5.3.0': {} },
+					};
+					const summary = buildSummaryFromRegistry(fixture);
+					expect(summary!.title).toBe('@misskey-dev/summaly');
+					expect(summary!.description).toBe('URL preview library');
+				});
+
+				test('buildSummaryFromRegistry: dist-tags.latest が無くても description は組み立てられる（top description 由来）', async () => {
+					const { buildSummaryFromRegistry } = await import('@/plugins/npmjs.js');
+					const fixture = {
+						name: 'no-latest',
+						description: 'Some description',
+					};
+					const summary = buildSummaryFromRegistry(fixture);
+					expect(summary).not.toBeNull();
+					expect(summary!.description).toBe('Some description');
+				});
+
+				test('buildSummaryFromRegistry: name が無いと null', async () => {
+					const { buildSummaryFromRegistry } = await import('@/plugins/npmjs.js');
+					expect(buildSummaryFromRegistry({})).toBeNull();
+					expect(buildSummaryFromRegistry({ description: 'no name' })).toBeNull();
+					expect(buildSummaryFromRegistry(null)).toBeNull();
+					expect(buildSummaryFromRegistry('not an object')).toBeNull();
+					expect(buildSummaryFromRegistry(42)).toBeNull();
+				});
+			});
+
 			describe('twitter (X) プラグイン (phase6.1)', () => {
 				test('test() は (twitter|x).com/<user>/status/<id> にマッチする', async () => {
 					const { test: matchTest } = await import('@/plugins/twitter.js');

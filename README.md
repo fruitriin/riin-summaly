@@ -120,6 +120,7 @@ allowed = ["amazon", "bluesky", "wikipedia", "branchio-deeplinks", "youtube", "s
 | `iwara` | `(www\|ecchi).iwara.tv` | description / thumbnail を DOM から補完、`ecchi.` ホストで sensitive |
 | `komiflo` | `komiflo.com/comics/<id>` | thumbnail フォールバック時に `api.komiflo.com` から取得 + sensitive |
 | `nijie` | `nijie.info/view.php` | JSON-LD `ImageObject` から description / thumbnail を補完 + sensitive |
+| `npmjs` | `(www.)?npmjs.com/package/...` | Cloudflare 配下の HTML を諦め `registry.npmjs.org` を直叩き、`dist-tags.latest` から title / description を組み立てる |
 
 各プラグインの詳細仕様、カスタムプラグインの書き方、共通ユーティリティは **[docs/Plugins.md](docs/Plugins.md)** にあります。
 

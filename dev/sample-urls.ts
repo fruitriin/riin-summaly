@@ -83,6 +83,15 @@ export const sampleGroups: SampleGroup[] = [
 		],
 	},
 	{
+		name: 'npmjs (Registry API)',
+		description: 'Cloudflare 配下の HTML を諦めて Registry API (registry.npmjs.org) を直叩き（phase11.4）',
+		urls: [
+			{ label: 'npm パッケージ', url: 'https://www.npmjs.com/package/mfm-renderer' },
+			{ label: 'scoped パッケージ', url: 'https://www.npmjs.com/package/@misskey-dev/summaly' },
+			{ label: '/v/<ver> サブパス', url: 'https://www.npmjs.com/package/react/v/19.0.0', note: 'バージョン指定でも latest が返る' },
+		],
+	},
+	{
 		name: 'dlsite / iwara / komiflo / nijie',
 		description: 'NSFW 対応プラグイン（sensitive 判定の動作確認）',
 		urls: [
