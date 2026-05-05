@@ -68,3 +68,19 @@ allowed = [
 # [plugins.iwara]
 # descriptionMaxLength = 500
 # sensitiveHosts = ["ecchi.iwara.tv"]
+
+[diagnostics]
+# パース失敗ドメインのログ蓄積（プラグイン候補発見器、phase10.1）。
+# 「OG/Twitter Card/<title> のいずれも取れず汎用パスでスカスカになった URL」を
+# host + パス先頭 1〜2 セグメント単位で集約してプロセス内に保持する。
+# 「絶対失敗する類型」(StatusError 4xx/5xx, timeout, type filter reject, SSRF block)
+# は自動で除外される。
+parseFailureLog = false                  # オプトイン
+parseFailureLogMaxGroups = 1000          # 全体のグループ数上限（LRU 風）
+parseFailureLogSamplesPerGroup = 5       # 1 グループあたりの直近サンプル数
+
+# `GET /__diagnostics/parse-failures` エンドポイントを有効化する。
+# **公開時は nginx 等のネットワーク層で必ずアクセス制限すること**:
+#   location /__diagnostics/ { allow 127.0.0.1; deny all; }
+# 過去の preview 試行 URL が外部から見える状態になりプライバシー漏洩につながる。
+parseFailureLogEndpoint = false

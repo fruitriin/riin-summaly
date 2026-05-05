@@ -144,6 +144,73 @@ summaly のキャッシュ・流量制御は **4 段重ね** で考えるのが�
 
 異なる URL の並列数に上限はかけません（dedup は同 URL のみ）。Fastify 全体のリクエストキューイングは上位レイヤ（nginx の `limit_conn` 等）の責務です。
 
+パース失敗ドメインのログ蓄積 (phase10.1)
+----------------------------------------------------------------
+
+`parseFailureLog: true` で「**汎用パスでスカスカ（OG/Twitter Card/`<title>` のいずれも取れず）になった URL**」をホスト + パス先頭 1〜2 セグメント単位で集約してプロセス内に保持します。**プラグイン化候補のドメイン発見器** として運用する想定です。
+
+```toml
+[diagnostics]
+parseFailureLog = true
+parseFailureLogMaxGroups = 1000
+parseFailureLogSamplesPerGroup = 5
+parseFailureLogEndpoint = true
+```
+
+| 設定キー | 説明 | デフォルト |
+|:--|:--|:--|
+| `parseFailureLog` | 集約を有効化 | `false` |
+| `parseFailureLogMaxGroups` | グループ数上限（超過時 LRU 風に最古から削除） | `1000` |
+| `parseFailureLogSamplesPerGroup` | 1 グループあたりの直近サンプル数 | `5` |
+| `parseFailureLogEndpoint` | `GET /__diagnostics/parse-failures` を mount | `false` |
+
+### 「絶対失敗する類型」は自動除外
+
+プラグインを書いても救えない以下のケースは **記録されません**（ノイズ削減）:
+
+- HTTP 4xx / 5xx ステータス (`StatusError`、Akamai/Cloudflare の bot block 含む)
+- タイムアウト / abort
+- 非 HTML レスポンス（`Rejected by type filter`）
+- SSRF ガードによるプライベート IP 拒否
+
+### グループ key の粒度
+
+- `https://qiita.com/UserA/items/abc?token=...` → `qiita.com/UserA/items`
+- `https://note.com/foo/n/abc` → `note.com/foo/n`
+- `https://example.com/` → `example.com/`
+
+ユーザー＋投稿カテゴリ単位の粒度で「サイト全体の構造」を把握しやすくしています。
+
+### `GET /__diagnostics/parse-failures`
+
+```jsonc
+{
+  "groups": [
+    {
+      "key": "qiita.com/UserA/items",
+      "samples": [
+        { "url": "https://qiita.com/UserA/items/abc", "ts": 1733433600000, "reason": "thin" }
+      ]
+    }
+  ],
+  "size": 1,
+  "enabled": true
+}
+```
+
+**⚠ 公開時は nginx で必ずアクセス制限してください**（過去の preview 試行 URL が誰でも見える状態になりプライバシー漏洩につながります）:
+
+```nginx
+location /__diagnostics/ {
+    allow 127.0.0.1;
+    deny all;
+}
+```
+
+### プライバシー保護
+
+サンプルに保存される `url` は **`${origin}${pathname}` のみ**（query / fragment / basic auth は捨てる）。session ID / API token がクエリに乗っているケースをある程度防ぎます。それでも path 自体に機密が含まれるサイトのプレビュー URL は記録されるため、エンドポイント公開時の nginx ガードは必須です。
+
 PDF 対応
 ----------------------------------------------------------------
 

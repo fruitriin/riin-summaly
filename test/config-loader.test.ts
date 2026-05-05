@@ -167,4 +167,61 @@ describe('parseTomlConfigString', () => {
 		`);
 		expect(cfg.summaly.allowedPlugins).toEqual([]);
 	});
+
+	describe('[diagnostics] (phase10.1)', () => {
+		test('parseFailureLog 系の bool / number を正しくマップ', () => {
+			const cfg = parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLog = true
+				parseFailureLogMaxGroups = 500
+				parseFailureLogSamplesPerGroup = 3
+				parseFailureLogEndpoint = true
+			`);
+			expect(cfg.summaly.parseFailureLog).toBe(true);
+			expect(cfg.summaly.parseFailureLogMaxGroups).toBe(500);
+			expect(cfg.summaly.parseFailureLogSamplesPerGroup).toBe(3);
+			expect(cfg.summaly.parseFailureLogEndpoint).toBe(true);
+		});
+
+		test('未指定時はキーが付かない', () => {
+			const cfg = parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLog = false
+			`);
+			expect(cfg.summaly.parseFailureLog).toBe(false);
+			expect(cfg.summaly.parseFailureLogMaxGroups).toBeUndefined();
+			expect(cfg.summaly.parseFailureLogSamplesPerGroup).toBeUndefined();
+			expect(cfg.summaly.parseFailureLogEndpoint).toBeUndefined();
+		});
+
+		test('正の整数以外（0 / 負数 / 小数）は RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLogMaxGroups = 0
+			`)).toThrow(/parseFailureLogMaxGroups.*positive integer/);
+			expect(() => parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLogSamplesPerGroup = 1.5
+			`)).toThrow(/parseFailureLogSamplesPerGroup.*positive integer/);
+			expect(() => parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLogMaxGroups = -10
+			`)).toThrow(/parseFailureLogMaxGroups.*positive integer/);
+		});
+
+		test('型違いは TypeError', () => {
+			expect(() => parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLog = "yes"
+			`)).toThrow(/parseFailureLog.*boolean/);
+		});
+
+		test('[diagnostics] 自体が無いと undefined のまま（既存挙動）', () => {
+			const cfg = parseTomlConfigString(`
+				[summaly]
+				responseTimeout = 5000
+			`);
+			expect(cfg.summaly.parseFailureLog).toBeUndefined();
+		});
+	});
 });

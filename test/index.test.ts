@@ -1751,6 +1751,159 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('パース失敗ログ (phase10.1)', () => {
+		const proxyPort = port + 1;
+		let proxyApp: FastifyInstance | null = null;
+
+		afterEach(async () => {
+			if (proxyApp != null) {
+				await proxyApp.close();
+				proxyApp = null;
+			}
+		});
+
+		test('thin summary（汎用パスでスカスカ）が記録され、エンドポイントで取得できる', async () => {
+			// origin: title だけある HTML（OG/description なし、thumbnail なし）。汎用パス通過 → thin
+			app = fastify();
+			app.get('/articles/foo/post1', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.send('<html><head><title>localhost</title></head><body>x</body></html>');
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, {
+				parseFailureLog: true,
+				parseFailureLogEndpoint: true,
+				inMemoryCache: false,
+				inFlightDedup: false,
+			});
+			await proxyApp.listen({ port: proxyPort });
+
+			const r1 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/foo/post1` } });
+			expect(r1.statusCode).toBe(200);
+
+			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
+			expect(diag.statusCode).toBe(200);
+			const body = JSON.parse(diag.body) as { groups: { key: string; samples: { url: string; reason: string }[] }[]; size: number; enabled: boolean };
+			expect(body.enabled).toBe(true);
+			expect(body.size).toBe(1);
+			expect(body.groups[0].key).toBe(`localhost/articles/foo`);
+			expect(body.groups[0].samples[0].reason).toBe('thin');
+			expect(body.groups[0].samples[0].url).toBe(`${host}/articles/foo/post1`);
+		});
+
+		test('絶対失敗類型 (StatusError 4xx) は filter されて記録されない', async () => {
+			app = fastify();
+			app.get('/forbidden', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.status(403).send('<html><body>Forbidden</body></html>');
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, {
+				parseFailureLog: true,
+				parseFailureLogEndpoint: true,
+				inMemoryCache: false,
+				inFlightDedup: false,
+			});
+			await proxyApp.listen({ port: proxyPort });
+
+			const r1 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/forbidden` } });
+			expect(r1.statusCode).toBe(500);
+
+			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
+			const body = JSON.parse(diag.body) as { groups: unknown[]; size: number };
+			// 403 StatusError は isFilteredFailure で除外される → 0 件
+			expect(body.size).toBe(0);
+			expect(body.groups).toEqual([]);
+		});
+
+		test('parseFailureLog: false + endpoint: false ではエンドポイントが mount されない', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.send('<html><head><title>localhost</title></head><body>x</body></html>');
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, {
+				parseFailureLog: false,
+				parseFailureLogEndpoint: false,
+				inMemoryCache: false,
+				inFlightDedup: false,
+			});
+			await proxyApp.listen({ port: proxyPort });
+
+			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
+			expect(diag.statusCode).toBe(404);
+		});
+
+		test('parseFailureLog: false + endpoint: true は誤設定として register 時に fail-fast', async () => {
+			proxyApp = fastify();
+			// register が done(error) で reject する → register Promise が reject
+			await expect(
+				proxyApp.register(summalyPlugin, {
+					parseFailureLog: false,
+					parseFailureLogEndpoint: true,
+					inMemoryCache: false,
+					inFlightDedup: false,
+				})
+			).rejects.toThrow(/parseFailureLogEndpoint requires parseFailureLog/);
+		});
+
+		test('parseFailureLog: true + parseFailureLogEndpoint: false なら記録はされるがエンドポイントは無い', async () => {
+			app = fastify();
+			app.get('/articles/x/y', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.send('<html><head><title>localhost</title></head><body>x</body></html>');
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, {
+				parseFailureLog: true,
+				parseFailureLogEndpoint: false,
+				inMemoryCache: false,
+				inFlightDedup: false,
+			});
+			await proxyApp.listen({ port: proxyPort });
+
+			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/x/y` } });
+			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
+			expect(diag.statusCode).toBe(404);
+		});
+
+		test('LRU/dedup HIT は重複記録しない（MISS 経路のみ記録）', async () => {
+			app = fastify();
+			app.get('/articles/foo/dup', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.send('<html><head><title>localhost</title></head><body>x</body></html>');
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, {
+				parseFailureLog: true,
+				parseFailureLogEndpoint: true,
+				inMemoryCache: true,
+				inFlightDedup: true,
+			});
+			await proxyApp.listen({ port: proxyPort });
+
+			// 同 URL 連投。1 回目は MISS → 記録、2-3 回目は LRU HIT → 記録されない
+			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/foo/dup` } });
+			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/foo/dup` } });
+			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/foo/dup` } });
+
+			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
+			const body = JSON.parse(diag.body) as { groups: { samples: unknown[] }[] };
+			expect(body.groups[0].samples).toHaveLength(1);
+		});
+	});
+
 	describe('PDF 対応 (phase5.1)', () => {
 		const pdfBuffer = fs.readFileSync(_dirname + '/pdfs/sample.pdf');
 

@@ -1,5 +1,12 @@
 (unreleased)
 ------------------
+* Fastify モードに **パース失敗ドメインのログ蓄積** を追加 (phase10.1):
+  * `parseFailureLog: true` で「汎用パスでスカスカ（OG/Twitter Card/`<title>` のいずれも取れない）になった URL」をホスト + パス先頭 1〜2 セグメント単位で集約する。プラグイン化候補のドメイン発見器
+  * 「絶対失敗する類型」（HTTP 4xx/5xx の `StatusError`、timeout、非 HTML の type filter reject、SSRF block）は自動で除外され、ノイズが乗らない
+  * `parseFailureLogEndpoint: true` で `GET /__diagnostics/parse-failures` を mount。**公開時は nginx 等のネットワーク層でアクセス制限が必須**（過去の preview 試行 URL がプライバシー漏洩する）
+  * サンプルに保存する URL は `${origin}${pathname}` のみ（query / fragment / basic auth を捨てる）
+  * 上限: グループ数 1000、サンプル数 5/group。同 URL の重複追加は抑制
+  * デフォルト無効、`SummalyOptions.parseFailureLog` / TOML の `[diagnostics]` セクションでオプトイン
 * 短縮 URL の HEAD 失敗時に GET fallback でリダイレクトを解決するように変更 (phase9.1):
   * `amzn.asia` のように HEAD に 404 を返すが GET には 301 でリダイレクトを返す短縮ホストが解決できるようになる
   * GET fallback には `Range: bytes=0-0` を付けて body 受信量を最小化（リダイレクトされる場合は body 自体無く、最終ターゲットが Range を尊重すれば 1 バイトで済む）

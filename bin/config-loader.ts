@@ -56,6 +56,12 @@ function expectPort(value: number): void {
 	}
 }
 
+function expectPositiveInteger(value: number, key: string): void {
+	if (!Number.isInteger(value) || value < 1) {
+		throw new RangeError(`config: \`${key}\` must be a positive integer, got ${value}`);
+	}
+}
+
 /**
  * TOML 文字列をパースし、検証済みの `SummalyOptions` + `ServerOptions` を返す。
  * テストから直接呼べるよう、ファイル I/O は分離する（`parseTomlConfig` がラッパー）。
@@ -72,7 +78,7 @@ export function parseTomlConfigString(toml: string): ParsedConfig {
 	}
 
 	const server = parseServerSection(parsed.server);
-	const summaly = parseSummalySection(parsed.summaly, parsed.plugins);
+	const summaly = parseSummalySection(parsed.summaly, parsed.plugins, parsed.diagnostics);
 
 	return { server, summaly };
 }
@@ -101,7 +107,7 @@ function parseServerSection(raw: Toml): ServerOptions {
 	return out;
 }
 
-function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml): SummalyOptions {
+function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics: Toml): SummalyOptions {
 	const out: SummalyOptions = {};
 	const summaly = rawSummaly === undefined ? {} : rawSummaly;
 	if (!isObject(summaly)) {
@@ -187,6 +193,32 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml): SummalyOptions
 		}
 		// `[plugins.<name>]` セクションは将来拡張用 placeholder として読み飛ばす（無視）。
 		// 個別プラグインへの options 受け渡し機構は本フェーズではスコープ外。
+	}
+
+	// [diagnostics] (phase10.1)
+	if (rawDiagnostics !== undefined) {
+		if (!isObject(rawDiagnostics)) {
+			throw new TypeError('config: `[diagnostics]` must be a table');
+		}
+		const d = rawDiagnostics;
+		if (d.parseFailureLog !== undefined) {
+			expectType(d.parseFailureLog, 'boolean', 'diagnostics.parseFailureLog');
+			out.parseFailureLog = d.parseFailureLog as boolean;
+		}
+		if (d.parseFailureLogMaxGroups !== undefined) {
+			expectType(d.parseFailureLogMaxGroups, 'number', 'diagnostics.parseFailureLogMaxGroups');
+			expectPositiveInteger(d.parseFailureLogMaxGroups as number, 'diagnostics.parseFailureLogMaxGroups');
+			out.parseFailureLogMaxGroups = d.parseFailureLogMaxGroups as number;
+		}
+		if (d.parseFailureLogSamplesPerGroup !== undefined) {
+			expectType(d.parseFailureLogSamplesPerGroup, 'number', 'diagnostics.parseFailureLogSamplesPerGroup');
+			expectPositiveInteger(d.parseFailureLogSamplesPerGroup as number, 'diagnostics.parseFailureLogSamplesPerGroup');
+			out.parseFailureLogSamplesPerGroup = d.parseFailureLogSamplesPerGroup as number;
+		}
+		if (d.parseFailureLogEndpoint !== undefined) {
+			expectType(d.parseFailureLogEndpoint, 'boolean', 'diagnostics.parseFailureLogEndpoint');
+			out.parseFailureLogEndpoint = d.parseFailureLogEndpoint as boolean;
+		}
 	}
 
 	return out;

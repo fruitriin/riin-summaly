@@ -40,3 +40,9 @@
 | ファイル | 要約 | キーワード |
 |---|---|---|
 | [toml-config-loader-pattern.md](toml-config-loader-pattern.md) | fastify-cli `--options config.json` から TOML ベースに移行したときの設計。loader を `bin/` 配下に置いて npm 公開 bundle への混入を防ぐ、smol-toml の選定理由、`host=""` の SSRF リレー対策、未知キーを silently 無視する forward-compat 設計、`parseTomlConfigString` を export してファイル I/O 抜きにテスト、`[plugins.<name>]` placeholder の扱い | TOML, smol-toml, config-loader, fastify-cli 廃止, [server], [summaly.cache], [plugins.allowed], [plugins.<name>] placeholder, expectNonNegativeFiniteNumber, host 空文字, SSRF リレー, breaking change, JSON マイグレーション |
+
+## summaly 観測性 / 運用支援
+
+| ファイル | 要約 | キーワード |
+|---|---|---|
+| [observability-parse-failure-log.md](observability-parse-failure-log.md) | パース失敗ドメインのログ蓄積（プラグイン候補発見器）。throw / thin の 2 系統、絶対失敗類型 (StatusError 4xx/5xx, timeout, type filter, SSRF, ENOTFOUND 等) を `isFilteredFailure` で除外、host + パス先頭 1〜2 セグメントの集約 key、`record()` 同期関数で event loop 上の原子的完了を担保、エンドポイント公開時の nginx ガード必須、data:/file: スキームの placeholder 処理 | parse failure, plugin candidate, thin summary, isFilteredFailure, Akamai 403, ENOTFOUND, sanitizeUrlForLog, /__diagnostics/parse-failures, [diagnostics], LRU 風 Map, fail-fast register, プライバシー, nginx ガード |

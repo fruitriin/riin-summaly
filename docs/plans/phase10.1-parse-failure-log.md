@@ -1,6 +1,6 @@
 # Phase 10.1 — パース失敗ドメインのログ蓄積（プラグイン候補発見器）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: 観測性 / 運用支援
 > サイズ: **M**
 > 関連: [phase4.1](phase4.1-fastify-in-memory-cache.md)（インメモリ singleton パターン）、[phase7.1](phase7.1-dev-server.md)（dev UI で表示する案）
@@ -189,25 +189,20 @@ parseFailureLogEndpoint = false      # /__diagnostics/parse-failures の公開�
 
 各ステップで `pnpm eslint && pnpm typecheck && pnpm test` を通す。
 
-- [ ] **Step 1 — `SummalyOptions` 拡張**
-  - `parseFailureLog?: boolean`、`parseFailureLogMaxGroups?: number`、`parseFailureLogSamplesPerGroup?: number`、`parseFailureLogEndpoint?: boolean` を追加
-- [ ] **Step 2 — 集約ロジック**
-  - `src/utils/parse-failure-log.ts` を新設（`groupKeyOf`、`record`、`isThinSummary`、エクスポート）
-  - 単体テスト: グループ化粒度、サンプル ring buffer、グループ上限超過、重複 URL の抑制、thin 判定の境界ケース
-- [ ] **Step 3 — Fastify ハンドラに統合**
-  - プラグインスコープ singleton として `Map` を生成（`parseFailureLog: true` 時のみ）
-  - `respondWithEntry` 直前 / catch ブロックで `record()` を呼ぶ
-  - Fastify モードのテスト: throw シナリオ / thin シナリオで正しく記録される、`parseFailureLog: false` では記録されない
-- [ ] **Step 4 — 読み取りエンドポイント**
-  - `parseFailureLogEndpoint: true` 時のみ `GET /__diagnostics/parse-failures` を mount
-  - レスポンス JSON は ts 降順（直近順）でソート
-  - **未認証アクセスはネットワーク層で守る前提を README/SETUP.md に明記**
-- [ ] **Step 5 — TOML 設定マッピング**
-  - `bin/config-loader.ts` の `[diagnostics]` セクション対応
-  - 既存テストパターンと同じ defensive validation
-- [ ] **Step 6 — README / SETUP.md / config.example.toml 更新**
-  - 機能の意図、デフォルト無効、エンドポイント公開時の nginx ガード必須を強調
-  - dev での試し方（`SUMMALY_ALLOW_PRIVATE_IP=true` 環境で fastify 経由）
+### 実装結果メモ
+
+- **「絶対失敗類型」の除外を Plan 中に追加**: 元プランは throw/thin の 2 系統で記録する想定だったが、実装中にユーザー指摘で `isFilteredFailure` を追加。Akamai bot block の 403、timeout、SSRF block、ENOTFOUND 等を除外し、純度の高いプラグイン候補だけがログに残る形に
+- **`endpoint: true` + `log: false` を fail-fast** (レビュー W-3): register 時に `done(error)` で reject。誤設定検出
+- **`data:` / `file:` の placeholder 処理** (レビュー W-1): `URL.origin` が `"null"` を返すスキームでガベージ文字列がログに混入するのを `sanitizeUrlForLog` 冒頭の protocol チェックで防ぐ
+- **`medias[]` を thin 判定に追加** (レビュー S-3): プラグインが multi-photo を返したケースを thin とみなさない
+- **`record()` 同期性をコメントで担保** (レビュー S-1): 将来 await を入れるときの注意喚起
+
+- [x] **Step 1 — `SummalyOptions` 拡張** — `parseFailureLog?` / `parseFailureLogMaxGroups?` / `parseFailureLogSamplesPerGroup?` / `parseFailureLogEndpoint?`
+- [x] **Step 2 — 集約ロジック** — `src/utils/parse-failure-log.ts`、単体テスト 32 件 (`groupKeyOf` / `sanitizeUrlForLog` / `isThinSummary` / `isFilteredFailure` / `ParseFailureLog` ring buffer + LRU)
+- [x] **Step 3 — Fastify ハンドラに統合** — MISS 経路で `entry.kind === 'error'` を `isFilteredFailure` でフィルタ、`isThinSummary(entry.value)` を thin 判定。LRU/dedup HIT は重複記録しない設計を統合テスト 6 件で担保
+- [x] **Step 4 — 読み取りエンドポイント** — `GET /__diagnostics/parse-failures`、`{ groups, size, enabled }` を ts 降順で返す。`endpoint: true` + `log: false` の誤設定は register 時 fail-fast
+- [x] **Step 5 — TOML 設定マッピング** — `bin/config-loader.ts` の `[diagnostics]` セクション、`expectPositiveInteger` ヘルパ、5 件のテスト追加
+- [x] **Step 6 — config.example.toml / docs/SETUP.md / CHANGELOG 更新** — nginx ガード必須を明記、絶対失敗類型の自動除外を解説
 
 ---
 

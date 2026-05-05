@@ -13,6 +13,7 @@ import { DEFAULT_BOT_UA, DEFAULT_OPERATION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT, ag
 import { plugins as builtinPlugins } from '@/plugins/index.js';
 import { KNOWN_SHORT_HOSTS } from '@/utils/short-urls.js';
 import { sanitizeUrl } from '@/utils/sanitize-url.js';
+import { ParseFailureLog, isThinSummary, isFilteredFailure } from '@/utils/parse-failure-log.js';
 
 export type SummalyResult = _SummalyResult;
 
@@ -122,6 +123,37 @@ export type SummalyOptions = {
 	inFlightDedup?: boolean;
 
 	/**
+	 * Fastify モード**専用**のパース失敗ログ機能を有効化する。デフォルト false。
+	 * `summaly()` が throw した、または結果が「汎用パスでスカスカ（OG/Twitter Card/`<title>` のいずれも取れず）」のとき
+	 * ホスト + パス先頭 2 セグメントを key にして直近 N サンプルをプロセス内に蓄積する。
+	 * プラグイン化候補のドメイン発見器として運用する。
+	 *
+	 * Note: ライブラリの `summaly()` 関数を直接呼び出す利用法では参照されない（無視される）。
+	 */
+	parseFailureLog?: boolean;
+
+	/**
+	 * パース失敗ログの最大グループ数（key 単位）。デフォルト 1000。
+	 * 上限を超えたグループは LRU 風に最も古いものから捨てられる。
+	 */
+	parseFailureLogMaxGroups?: number;
+
+	/**
+	 * パース失敗ログ 1 グループあたりの最大サンプル数。デフォルト 5。
+	 */
+	parseFailureLogSamplesPerGroup?: number;
+
+	/**
+	 * `GET /__diagnostics/parse-failures` エンドポイントを有効化する。デフォルト false。
+	 * **公開時は nginx 等のネットワーク層でアクセス制限をかけること**（過去の preview 試行 URL が
+	 * 誰でも見える状態になり、プライバシー漏洩につながる）。
+	 *
+	 * `parseFailureLog: true` と併用する想定。`parseFailureLog: false` のときは記録自体が
+	 * 行われないためエンドポイントは空配列を返す。
+	 */
+	parseFailureLogEndpoint?: boolean;
+
+	/**
 	 * PDF レスポンスのタイトル取得を有効化する（オプトイン）。
 	 * `true` または環境変数 `SUMMALY_ENABLE_PDF=true` のいずれかが設定されている場合のみ
 	 * PDF を type filter で許可し、`pdf-parse` で先頭メタデータからタイトルを取得する。
@@ -136,6 +168,8 @@ export type SummalyOptions = {
 const DEFAULT_CACHE_MAX_AGE = 604800;
 const DEFAULT_CACHE_ERROR_MAX_AGE = 3600;
 const DEFAULT_IN_MEMORY_CACHE_MAX_ENTRIES = 1000;
+const DEFAULT_PARSE_FAILURE_LOG_MAX_GROUPS = 1000;
+const DEFAULT_PARSE_FAILURE_LOG_SAMPLES_PER_GROUP = 5;
 
 type CacheEntry =
 	| { kind: 'success'; value: SummalyResult }
@@ -338,6 +372,12 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		return;
 	}
 
+	// 設定の組み合わせ検証 (phase10.1): endpoint だけ有効 / 集約は無効、は誤設定の可能性が高い
+	if (options.parseFailureLogEndpoint && !options.parseFailureLog) {
+		done(new Error('parseFailureLogEndpoint requires parseFailureLog: true'));
+		return;
+	}
+
 	// インメモリキャッシュ（プラグインスコープ singleton）。
 	// TTL は各 set() 呼び出しで成功 / エラー個別に指定するため、コンストラクタには渡さない。
 	const cache: LRUCache<string, CacheEntry> | null = options.inMemoryCache
@@ -356,6 +396,14 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 
 	// X-Cache ヘッダはキャッシュか dedup のどちらか有効なときに付与する（既存挙動: 両方無効なら付かない）
 	const emitCacheHeader = cache != null || inFlight != null;
+
+	// パース失敗ログ集約（プラグインスコープ singleton、phase10.1）
+	const parseFailureLog: ParseFailureLog | null = options.parseFailureLog
+		? new ParseFailureLog({
+			maxGroups: options.parseFailureLogMaxGroups ?? DEFAULT_PARSE_FAILURE_LOG_MAX_GROUPS,
+			samplesPerGroup: options.parseFailureLogSamplesPerGroup ?? DEFAULT_PARSE_FAILURE_LOG_SAMPLES_PER_GROUP,
+		})
+		: null;
 
 	function respondWithEntry(reply: FastifyReply, entry: CacheEntry) {
 		if (entry.kind === 'success') {
@@ -441,11 +489,44 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 			}
 		}
 
+		// パース失敗ログ記録 — MISS 経路で実際に summaly() を呼んだケースだけ記録（cache/inflight HIT は重複記録しない）。
+		// 「絶対失敗する類型」(StatusError 4xx/5xx, timeout, type filter reject, SSRF block 等) は
+		// `isFilteredFailure` で除外する。プラグインを書いても救えないためログに詰むとノイズになる。
+		if (parseFailureLog != null) {
+			if (entry.kind === 'error') {
+				const errPayload = entry.error as { message?: string; name?: string } | undefined;
+				const message = (errPayload != null && typeof errPayload.message === 'string')
+					? errPayload.message
+					: String(entry.error);
+				const name = (errPayload != null && typeof errPayload.name === 'string')
+					? errPayload.name
+					: undefined;
+				if (!isFilteredFailure('throw', message, name)) {
+					parseFailureLog.record(url, 'throw', message);
+				}
+			} else if (isThinSummary(entry.value)) {
+				parseFailureLog.record(url, 'thin');
+			}
+		}
+
 		if (emitCacheHeader) {
 			reply.header('X-Cache', 'MISS');
 		}
 		return respondWithEntry(reply, entry);
 	});
+
+	// 診断エンドポイント — `parseFailureLogEndpoint: true` のときのみ mount する。
+	// **公開時は nginx 等のネットワーク層でアクセス制限を必須化する**（過去の preview 試行 URL が
+	// 誰でも見える状態になりプライバシー漏洩につながる）。
+	if (options.parseFailureLogEndpoint) {
+		fastify.get('/__diagnostics/parse-failures', async () => {
+			return {
+				groups: parseFailureLog != null ? parseFailureLog.snapshot() : [],
+				size: parseFailureLog != null ? parseFailureLog.size : 0,
+				enabled: parseFailureLog != null,
+			};
+		});
+	}
 
 	done();
 }
