@@ -51,15 +51,21 @@
 		</section>
 
 		<section class="result-pane">
-			<div class="tabs" role="tablist">
-				<button type="button" class="tab active" data-tab="json" role="tab" aria-selected="true">JSON</button>
-				<button type="button" class="tab" data-tab="card" role="tab" aria-selected="false">カードプレビュー</button>
-				<button type="button" class="tab" data-tab="player" role="tab" aria-selected="false">iframe プレーヤー</button>
-			</div>
-			<div class="tab-panes">
-				<pre id="pane-json" class="tab-pane active" role="tabpanel">URL を入力して「取得」を押してください。</pre>
-				<div id="pane-card" class="tab-pane" role="tabpanel" hidden></div>
-				<div id="pane-player" class="tab-pane" role="tabpanel" hidden></div>
+			<div class="result-split">
+				<div class="json-column">
+					<h2 class="column-title">JSON</h2>
+					<pre id="pane-json" role="region" aria-label="SummalyResult JSON">URL を入力して「取得」を押してください。</pre>
+				</div>
+				<div class="visual-column">
+					<div class="tabs" role="tablist">
+						<button type="button" class="tab active" data-tab="card" role="tab" aria-selected="true">カードプレビュー</button>
+						<button type="button" class="tab" data-tab="player" role="tab" aria-selected="false">iframe プレーヤー</button>
+					</div>
+					<div class="tab-panes">
+						<div id="pane-card" class="tab-pane active" role="tabpanel"></div>
+						<div id="pane-player" class="tab-pane" role="tabpanel" hidden></div>
+					</div>
+				</div>
 			</div>
 		</section>
 	</main>
