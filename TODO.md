@@ -13,6 +13,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 |---|---|---|:---:|---|
 | 中 | 11.1 | [docs/plans/phase11.1-deps-update.md](docs/plans/phase11.1-deps-update.md) — 依存更新（patch/minor 安全帯 + major 個別検証） | S〜M | 未着手 |
 | 中 | 11.2 | [docs/plans/phase11.2-error-category.md](docs/plans/phase11.2-error-category.md) — エラーレスポンスを `category` フィールドでカテゴリ化（[riin-summaly#2](https://github.com/fruitriin/riin-summaly/issues/2)） | S | 未着手 |
+| — | 11.3 | [docs/plans/phase11.3-scpaping-follow-redirect.md](docs/plans/phase11.3-scpaping-follow-redirect.md) — Fastify モードで scpaping のリダイレクト follow が無効化されているバグ修正（[riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) 真因） | S | 完了 (2026-05-05) |
 
 ### 外部リポ連携（summaly スコープ外）
 

@@ -2130,6 +2130,53 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('scpaping のリダイレクト follow (phase11.3)', () => {
+		test('Fastify モード相当 (followRedirects: false) でも scpaping は 301 を follow する', async () => {
+			let pageHits = 0;
+			let redirectedHits = 0;
+			app = fastify();
+			// /page は 301 で /page-redirected にリダイレクトする (amazon.co.jp/dp/<asin> 等が典型)
+			app.get('/page', (_req, reply) => {
+				pageHits++;
+				reply.header('location', `${host}/page-redirected`);
+				return reply.status(301).send();
+			});
+			app.get('/page-redirected', (_req, reply) => {
+				redirectedHits++;
+				const html = '<html><head><title>Redirected Page Title</title>' +
+					'<meta property="og:title" content="Redirected Page Title"></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			await app.listen({ port });
+
+			// followRedirects: false (Fastify ハンドラと同じ) を渡しても、scpaping レイヤは redirect follow する
+			const summary = await summaly(`${host}/page`, { followRedirects: false });
+			expect(summary.title).toBe('Redirected Page Title');
+			expect(pageHits).toBe(1);
+			expect(redirectedHits).toBeGreaterThanOrEqual(1);
+		});
+
+		test('followRedirects: true (ライブラリ既定) でも当然 follow する（回帰防止）', async () => {
+			app = fastify();
+			app.get('/page', (_req, reply) => {
+				reply.header('location', `${host}/page-redirected`);
+				return reply.status(301).send();
+			});
+			app.get('/page-redirected', (_req, reply) => {
+				const html = '<html><head><title>Redirected Page Title</title></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			await app.listen({ port });
+
+			const summary = await summaly(`${host}/page`, { followRedirects: true });
+			expect(summary.title).toBe('Redirected Page Title');
+		});
+	});
+
 	describe('DOM 後処理系プラグイン (phase3.2)', () => {
 		describe('dlsite', () => {
 			test('test() が www.dlsite.com にマッチ', () => {

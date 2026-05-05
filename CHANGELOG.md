@@ -1,5 +1,11 @@
 (unreleased)
 ------------------
+* **バグ修正**: Fastify モードで `amazon.co.jp/dp/<ASIN>` 等のリダイレクトする URL がプレビュー失敗していた問題を修正 (phase11.3, [riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1)):
+  * `summaly()` の `followRedirects: false` フラグが scrape 本体 (`scpaping()` 内の got リクエスト) の `followRedirect` に伝播しており、HTTP リダイレクト中間レスポンス (content-type 無し) が typeFilter で reject されて `Rejected by type filter undefined` で死んでいた
+  * `followRedirects` の責務を **summaly() の初期 HEAD 解決限定** に再定義し、scpaping レイヤには伝播させないように修正
+  * scrape 本体は got のデフォルト挙動 (リダイレクト follow) に任せる。SSRF チェイン抑制は `maxRedirects: 5` + プライベート IP ガードで継続担保
+  * 影響: `summaly(url, { followRedirects: false })` を直呼びしていて「scrape 中もリダイレクト追跡を完全停止したい」依存があった場合、挙動が変わる。Fastify モード利用者には改善方向のみ
+
 * Fastify モードに **パース失敗ドメインのログ蓄積** を追加 (phase10.1):
   * `parseFailureLog: true` で「汎用パスでスカスカ（OG/Twitter Card/`<title>` のいずれも取れない）になった URL」をホスト + パス先頭 1〜2 セグメント単位で集約する。プラグイン化候補のドメイン発見器
   * 「絶対失敗する類型」（HTTP 4xx/5xx の `StatusError`、timeout、非 HTML の type filter reject、SSRF block）は自動で除外され、ノイズが乗らない

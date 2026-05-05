@@ -76,7 +76,7 @@ opts (`SummalyOptions`) — ライブラリ利用時に効くオプション
 | プロパティ | 型 | 説明 | デフォルト |
 |:--|:--|:--|:--|
 | **lang** | *string* | リクエストの `Accept-Language` | `null` |
-| **followRedirects** | *boolean* | リダイレクトを追跡するか（`KNOWN_SHORT_HOSTS` のホストは false でも HEAD/GET 解決される） | `true` |
+| **followRedirects** | *boolean* | `summaly()` の **初期 HEAD/GET でリダイレクト解決をするか**。`KNOWN_SHORT_HOSTS` のホストは false でも HEAD/GET 解決される。本フラグは scrape 本体の HTTP リダイレクト follow には影響しない（後者は常に有効、`maxRedirects: 5` + プライベート IP ガードで抑制） | `true` |
 | **plugins** | *SummalyPlugin[]* | カスタムプラグイン（組み込みより後ろに連結。詳細は [Plugins.md](Plugins.md)） | `null` |
 | **userAgent** | *string* | リクエストの `User-Agent` | `SummalyBot/[version]` |
 | **responseTimeout** | *number* | フェーズ単位のタイムアウト（DNS解決・接続・レスポンス各々）ミリ秒 | `20000` |

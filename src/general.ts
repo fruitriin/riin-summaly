@@ -157,10 +157,11 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 
 	const url = typeof _url === 'string' ? new URL(_url) : _url;
 
+	// `followRedirects` は scpaping には伝播させない (phase11.3): summaly レイヤの初期 HEAD 解決
+	// オプションであって、scrape 中のリダイレクト追跡を無効化するためのものではない。
 	const res = await scpaping(url.href, {
 		lang: lang || undefined,
 		userAgent: opts?.userAgent,
-		followRedirects: opts?.followRedirects,
 		responseTimeout: opts?.responseTimeout,
 		operationTimeout: opts?.operationTimeout,
 		contentLengthLimit: opts?.contentLengthLimit,

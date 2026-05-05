@@ -26,7 +26,14 @@ export type SummalyOptions = {
 	lang?: string | null;
 
 	/**
-	 * Whether follow redirects
+	 * `summaly()` の **初期 HEAD/GET でリダイレクトを解決するかどうか**。デフォルト true。
+	 *
+	 * - `true`: 最初に `resolveRedirect()` を呼んで最終 URL を確定してからプラグインマッチング
+	 * - `false`: 受け取った URL のままプラグインマッチング（ただし `KNOWN_SHORT_HOSTS` は例外で常に解決される）
+	 *
+	 * Note: このフラグは **summaly レイヤの初期 URL 解決限定**。scrape 本体（`scpaping()` 内の
+	 * got リクエスト）は常にリダイレクトを follow する（SSRF 対策は `maxRedirects: 5` + プライベート
+	 * IP ガードで担保）。
 	 */
 	followRedirects?: boolean;
 
@@ -327,11 +334,17 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 	const match = plugins.filter(plugin => plugin.test(_url))[0];
 
 	// Get summary
+	// `opts.followRedirects` は **summaly() の初期 HEAD 解決をするかどうか** を意味する
+	// summaly レイヤのフラグであり、scpaping (本体取得) の got リクエストには伝播させない。
+	// もし伝播させると、Fastify モードのように `followRedirects: false` を明示する利用形態で
+	// scpaping のリダイレクトすら follow されなくなり、Amazon の `/dp/<ASIN>` 301 等で
+	// 中間レスポンス（content-type 無し）が typeFilter で reject されて落ちる (phase11.3)。
+	// scrape 中のリダイレクト追跡は got のデフォルト (true) に任せる。SSRF チェインは
+	// `maxRedirects: 5` とプライベート IP ガードで別途抑制している。
 	const scrapingOptions: GeneralScrapingOptions = {
 		lang: opts.lang,
 		userAgent: opts.userAgent,
 		responseTimeout: opts.responseTimeout,
-		followRedirects: opts.followRedirects,
 		operationTimeout: opts.operationTimeout,
 		contentLengthLimit: opts.contentLengthLimit,
 		contentLengthRequired: opts.contentLengthRequired,
