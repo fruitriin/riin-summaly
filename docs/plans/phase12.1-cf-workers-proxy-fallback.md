@@ -1,6 +1,6 @@
 # Phase 12.1 — Cloudflare Workers proxy フォールバック（Amazon class IP block 救援）
 
-> 状態: **Step 3〜7 完了 (2026-05-05) — Step 5 (pino fallback フィールド) と Step 4.3 (E2E 手動) は未着手、本番デプロイ後にオーナー確認**
+> 状態: **Step 1〜4 / 6 / 7 完了 + dev サーバ統合 (2026-05-05)。Step 4.3 E2E オーナー検証成功 (`SHARED_SECRET=*** node sign.mjs amazon.co.jp/dp/B0C4LRBFX6` で透過プロキシ動作確認)。Step 5 (pino fallback フィールド) のみ phase11.6 deferral と合流予定**
 > 実証データ: `https://www.amazon.co.jp/dp/B0C4LRBFX6` を CF Workers 経由で取得 → **HTTP 200 / 2.6 MB / 1.8 秒**（フル商品ページ、bot check ページではない）。Vultr 直叩きの 500 と比較してクリアな勝利
 > 種別: 機能改善 / IP レピュテーション層への対処
 > サイズ: **M〜L**
@@ -240,9 +240,10 @@ Step 1 の実験で **Amazon が CF Workers 経由でも 500 を返す**なら�
   - HMAC 署名が正しい (mock worker 側で検証)
 - [x] **4.2 統合テスト**
   - mock proxy worker (`http.createServer` で簡易実装) を立てて、Vultr→mock proxy→mock origin の経路をテスト
-- [ ] **4.3 E2E (手動)**
-  - 本番デプロイ後、`amazon.co.jp` URL を summaly に投げて 200 が返ることを確認
-  - parse-failure-log や pino ログに「proxy 経由で救援された」のフィールドが出ることを確認
+- [x] **4.3 E2E (手動)** — 2026-05-05 オーナー検証成功
+  - 本番 Worker (`summaly.riinsworkspace.workers.dev`) に対して `node tools/cf-proxy-worker/sign.mjs "https://www.amazon.co.jp/dp/B0C4LRBFX6" "$WORKER_URL" | bash` で透過プロキシ動作確認 (`SHARED_SECRET` env 渡し)
+  - **追加**: dev サーバ (`pnpm dev`) でも proxy fallback を手元再現できる UI 統合を追加 (`SUMMALY_PROXY_URL` + `SUMMALY_PROXY_SECRET` 環境変数で有効化、`?proxy=1` クエリで per-request 切替)
+  - parse-failure-log の Step 5 (pino `proxyAttempted`/`proxySucceeded`) は別途 phase11.6 deferral と合流予定
 
 ### Step 5 — pino ログ拡張
 

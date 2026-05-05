@@ -47,6 +47,9 @@ const _dirname = dirname(_filename);
 const app = Fastify({ logger: true });
 
 if (proxyAvailable) {
+	// **重要**: ログには `proxyEnv.url` だけを渡す（`proxyEnv` オブジェクト全体を渡すと
+	// secret がログに混入する経路ができる）。Fastify の logger には `redact` を設定していないため、
+	// このルールを呼出側で守る必要がある (W-1)
 	app.log.info({ url: proxyEnv.url }, 'proxy fallback available (use ?proxy=1 to enable per-request)');
 } else {
 	app.log.info(
@@ -88,6 +91,15 @@ app.get<{ Querystring: SummalyQuery }>('/api/summaly', async (req, reply) => {
 	}
 	// Proxy fallback (phase12.1)。env で URL/secret が設定されていて、かつ ?proxy=1 のときに有効化。
 	// dev では Amazon class IP block の救援を手元で再現できるように UI から ON/OFF を切り替えたい。
+	//
+	// **W-3**: 下記 `domains` allowlist は Worker 側 (`tools/cf-proxy-worker/wrangler.toml` の
+	// `ALLOWED_DOMAINS`) と独立に管理されている。**両方を同期して更新すること**
+	// （片方だけ更新すると dev UI で proxy 発火条件と Worker の実際の allowlist が乖離する）。
+	// Worker 側が最終防衛ラインなので機能的影響は小さいが、UX 的には混乱する。
+	//
+	// **W-2**: dev サーバはデフォルト `HOST=127.0.0.1` バインド + `SUMMALY_ALLOW_PRIVATE_IP=true` の前提。
+	// `HOST=0.0.0.0` で起動すると LAN 公開になり `?proxy=1` を LAN 内別ホストから叩かれうるため、
+	// proxy 機能を使う場合は HOST を変更しないこと（変更するなら SUMMALY_PROXY_URL/SECRET を未設定に）。
 	if (req.query.proxy === '1' && proxyAvailable) {
 		opts.proxyFallback = {
 			enabled: true,

@@ -58,6 +58,13 @@
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
 
+## phase12.1 dev サーバ統合 (E2E 完了後) 知見
+
+- **2026-05-06 phase12.1 dev 統合セッション**: 本番 E2E 成功 → dev サーバで手元再現できる UI を後追いで追加するパターン。実装規模としては server.ts に env 読み込み + `/api/dev-config` エンドポイント追加 + `?proxy=1` クエリ処理、UI に hidden checkbox + JS で動的表示。**「本番が動いた → 開発者が手元で再現できないと改善サイクルが回らない」** という観点で、E2E 後の dev 整備は重要
+- **2026-05-06 phase12.1 dev 統合セッション**: レビュー agent が **`/api/dev-config` で secret を返さない（proxyHost だけ返す）** 設計を good practice として追認。env から secret を読む UI のお手本パターン: 「**boolean availability + 識別子（host）だけ返し、secret は絶対に返さない**」。`secret` 文字列が JSON / ログ / エラー文字列に混入する経路を網羅的に閉じる必要があり、Fastify logger の `redact` 設定や呼出側コメントで「`proxyEnv.url` だけを渡す」を明示するのが防衛的
+- **2026-05-06 phase12.1 dev 統合セッション**: **allowlist の二重管理問題** (W-3) — Worker 側 (`wrangler.toml` の `ALLOWED_DOMAINS`) と summaly 側 (`[scraping.proxy].domains` / dev server のハードコード) で独立に persist する。Worker 側が最終防衛なので機能影響は小さいが、**片方だけ更新すると UX 上の混乱を招く**。コメントで明示同期義務を書くか、将来 `/api/config-check` で Worker から allowlist を fetch する選択肢
+- **2026-05-06 phase12.1 dev 統合セッション**: dev サーバの `SUMMALY_ALLOW_PRIVATE_IP=true` + proxy 経由は **defense-in-depth が効きにくい組み合わせ**。`viaProxyWorker` が `ip: undefined` で返すのでそもそも summaly 側の private IP ガードは発火しない。`HOST=127.0.0.1` バインドが暗黙の最終防御になっており、`HOST=0.0.0.0` 等への変更は禁忌。SETUP.md と server.ts コメントで明示
+
 ## phase12.1 Step 3〜7 (summaly 側組み込み) 知見
 
 - **2026-05-05 phase12.1 Step 3-7 セッション**: レビュー agent が指摘した **C-1 (amazon プラグインの opts 受け渡し漏れ)** が phase12.1 の主目的そのものを破壊する痛い穴だった。`amazon.ts` の `summarize(url: URL)` シグネチャに `opts` が無く、`scrapingOptions` の `proxyFallback` が無視される構造。**目的のサイトで動作確認するテスト**（Plan の Step 4.3 E2E）が無いとこの種のバグは検出困難。今回は手動 E2E がまだなのでレビュー agent が机上で発見してくれた

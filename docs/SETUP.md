@@ -272,6 +272,18 @@ export SUMMALY_PROXY_SECRET="<上で生成した SECRET>"
 pnpm serve config.toml
 ```
 
+dev サーバ (`pnpm dev`) でも proxy 経由を手元再現できます:
+
+```bash
+export SUMMALY_PROXY_URL="https://summaly-proxy.<your>.workers.dev"
+export SUMMALY_PROXY_SECRET="<同じ SECRET>"
+pnpm dev
+# → http://127.0.0.1:3000 のオプション内に proxy fallback checkbox 出現
+# → サンプル URL 「Amazon JP (proxy 経由 — IP block 救援)」をクリックで自動 ON
+```
+
+> ⚠️ dev サーバは `SUMMALY_ALLOW_PRIVATE_IP=true` をプロセス内で固定セットしています。proxy 機能を使う場合は **デフォルト `HOST=127.0.0.1` を変更しない** ことを推奨します。`HOST=0.0.0.0` で起動すると LAN 内の別ホストから `?proxy=1` 経由で Worker を叩かれる可能性があります（Worker 側 allowlist で守られていますが、二重防御として）。
+
 ### コスト・上限
 
 - **Free プラン**: 100,000 req/day。Amazon 失敗の頻度（1 日数十〜数百件と推定）から見て十分

@@ -11,3 +11,5 @@ config.toml
 CLAUDE.local.md
 CLAUDE.repo.md
 # --- /ADDF Framework ---
+
+.env

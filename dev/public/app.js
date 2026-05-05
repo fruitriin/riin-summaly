@@ -161,8 +161,9 @@ async function runFetch(url) {
 	// useRange / enablePdf / allowedPlugins もリクエスト単位で切り替えられる。
 	if (useRangeInput.checked) params.set('useRange', '1');
 	if (enablePdfInput.checked) params.set('enablePdf', '1');
-	// proxy fallback (phase12.1) — checkbox は env が両方セットされているときだけ表示される
-	if (proxyInput.checked) params.set('proxy', '1');
+	// proxy fallback (phase12.1) — checkbox は env が両方セットされているときだけ表示される。
+	// `!proxyRow.hidden` ガード (S-1): hidden のときは送信しない (defense-in-depth、サーバ側 `proxyAvailable` ガードに二重保険)
+	if (proxyInput.checked && !proxyRow.hidden) params.set('proxy', '1');
 	const allowed = $$('#allowed-plugins input:checked').map(cb => cb.value);
 	if (allowed.length > 0) params.set('allowedPlugins', allowed.join(','));
 
