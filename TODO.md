@@ -13,6 +13,12 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 |---|---|---|:---:|---|
 | 中 | 11.1 | [docs/plans/phase11.1-deps-update.md](docs/plans/phase11.1-deps-update.md) — 依存更新（patch/minor 安全帯 + major 個別検証） | S〜M | 未着手 |
 
+### 外部リポ連携（summaly スコープ外）
+
+| 項目 | 概要 | 状態 |
+|---|---|---|
+| Misskey fork: UrlPreview の `lang` を localStorage 生値ベースに変更 | `frontend-shared/js/config.ts` の `?? 'en-US'` ハードコードで未設定ユーザーが `lang=en-US` を summaly に送り続ける問題の根本対策。詳細: [docs/plans/external-misskey-fork-urlpreview-lang.md](docs/plans/external-misskey-fork-urlpreview-lang.md) | 計画のみ（Misskey fork 側で実施） |
+
 ### 並列実行マップ
 
 ```
