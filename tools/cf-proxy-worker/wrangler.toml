@@ -1,0 +1,26 @@
+# summaly outbound proxy worker (phase12.1)
+#
+# 初回デプロイ手順は README.md 参照。
+# 共有シークレットは `wrangler secret put SHARED_SECRET` で設定する（リポにコミットしないこと）。
+
+name = "summaly-proxy"
+main = "src/index.ts"
+compatibility_date = "2025-11-01"
+
+# Free プランで動かす想定。Paid プランへの自動切替は無いため、超過時は 429 で停止する（金額課金は発生しない）。
+
+[vars]
+# allowlist は Worker 側でも独立して持つ（多層防御）。summaly 側 (config.toml の [scraping.proxy].domains)
+# と両方で deny されないと通らない設計。
+# 判定方式: **suffix-match**。`amazon.co.jp` を書くと `www.amazon.co.jp` 等 `*.amazon.co.jp` も通すが
+# `evil-amazon.co.jp` のような sibling は通さない（Worker 内 `lower === d || lower.endsWith('.' + d)`）。
+# 完全な glob (`amazon.*`) はサポートしないため、TLD ごとに個別に列挙する。
+ALLOWED_DOMAINS = "amazon.com,amazon.co.jp,amazon.co.uk,amazon.de,amazon.fr,amazon.it,amazon.es,amazon.ca,amazon.com.au,amazon.com.br,amazon.com.mx,amazon.in"
+
+# 受信ボディ上限（OGP 取得用途として 5 MiB）
+MAX_BODY_BYTES = "5242880"
+
+# タイムスタンプ検証窓（ミリ秒、5 分）
+TIMESTAMP_WINDOW_MS = "300000"
+
+# SHARED_SECRET は wrangler secret put SHARED_SECRET で設定する（vars に書かない）。

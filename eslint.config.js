@@ -16,6 +16,9 @@ export default [ // eslint-disable-line import/no-default-export
 			'worktrees',
 			'dev',
 			'bin',
+			// Cloudflare Workers proxy (phase12.1) — 独立 tsconfig + workers-types を使うため
+			// メイン eslint の対象外（Worker 側の lint は将来 wrangler 提供の biome に任せる想定）
+			'tools',
 		],
 	},
 	{

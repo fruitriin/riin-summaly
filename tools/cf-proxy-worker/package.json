@@ -1,0 +1,17 @@
+{
+  "name": "cf-proxy-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "summaly outbound proxy on Cloudflare Workers Free (phase12.1 — Amazon class IP block 救援)",
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "logs": "wrangler tail",
+    "delete": "wrangler delete"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20251101.0",
+    "wrangler": "4.46.0"
+  }
+}

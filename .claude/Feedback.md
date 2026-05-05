@@ -58,6 +58,13 @@
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
 
+## phase12.1 (CF Workers proxy 実験フェーズ) 知見
+
+- **2026-05-05 phase12.1 セッション**: 「**実機検証が必要なフェーズ**」を AI 自律実行する場合の良いパターン: **Step 1.1 (Worker スケルトン) + Step 1.2 (署名ヘルパ) + Step 1.3 (実験手順書) までを実装し、Step 1.3 (実機 GO/NO-GO 判定) はオーナーに引き渡す**。Cloudflare アカウントの紐付き・実 IP からの実 Amazon アクセスが必要な工程は AI には決定できないため、ここで止めるのが正しい。Plan の Step 2 以降は GO 判定が出てから着手
+- **2026-05-05 phase12.1 セッション**: `tools/` ディレクトリに独立 npm package (`cf-proxy-worker`) を置き、main の `package.json` `files: ["built", "LICENSE"]` で **publish 対象から自動的に除外** される構造を採用。利用者が `npm install summaly` しても Worker コードは降りない。さらに `eslint.config.js` に `tools` を ignore 追加して main eslint からも分離（workers-types の `Response` 型と main の DOM types が衝突するため）
+- **2026-05-05 phase12.1 セッション**: HMAC 検証で **Worker 側 (Web Crypto API) と Node 側 (`crypto.createHmac`) を相互運用** する設計。両方とも HMAC-SHA256 標準なので message format (`${url}\n${ts}`) を一致させれば動く。Web Crypto は async (`await crypto.subtle.sign`) で Node std は sync (`createHmac().digest()`) という API 差は呼出側で吸収。**「アルゴリズム標準化された crypto は cross-runtime で相互運用可能」**
+- **2026-05-05 phase12.1 セッション**: オープンプロキシ化を防ぐため **8 層防御** を採用 (HTTPS only / HMAC-SHA256 / タイムスタンプ窓 ±5 分 / Worker 側 allowlist / summaly 側 allowlist / 受信 cap / 定数時間比較 / 403 で詳細を返さない)。「個人運用 summaly のリスクモデル」としては許容範囲だが、商用運用には IP allowlist 等の追加層が必要。設計教訓は `tools/cf-proxy-worker/README.md` に記録
+
 ## phase11.6 (迂回候補ログ) 知見
 
 - **2026-05-05 phase11.6 セッション**: 「機能追加と既存機能のリファクタリングを同時にやる」フェーズの好例。`JsonlAppender` を `ParseFailureLog` から内部クラスとして抽出（cap・I/O エラー連発抑制ロジックを class 化）して、candidate / blocked の 2 系統を綺麗に共存させた。Plan の Step 1 が「`analyzeFailure()` 統合」を提案していたが、実装段階で「`categorizeError` + `FILTERED_CATEGORIES` の組み合わせで十分」と判断して deviation。Plan は方向性として参考になるが具体実装は実装段階で再検討する余地を残す
