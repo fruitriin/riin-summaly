@@ -1,11 +1,19 @@
 # Phase 11.8 — Fastify モードのエラー観測性回復（500 をログに出す）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: 観測性 / 運用改善（バグに近い）
 > サイズ: **S**
 > 依存: なし
-> 関連: phase10.1（`parseFailureLog`、本フェーズで補完）、phase1.1（`Cache-Control`）
+> 関連: phase10.1（`parseFailureLog`、本フェーズで補完）、phase11.2（`categorizeError` を log level 派生で再利用）、phase1.1（`Cache-Control`）
 > 並列可: phase11.1 / 11.2 / 11.4 / 11.5 / 11.6 / 11.7 すべてと独立
+
+## 実装結果メモ
+
+- **`chooseLogLevel(e)` を `categorizeError` ベースで実装**: Plan は 2 引数 (`e`, `statusCode`) だったが、`statusCode` の取り出しを関数内に閉じ込めて 1 引数にした。`LOG_LEVEL_BY_CATEGORY: Record<SummalyErrorCategory, LogLevel>` テーブル 1 箇所でカテゴリと level の整合を保つ
+- **err を手動シリアライズ** (Stage 2 review W-1 対応): pino のデフォルト `errSerializer` は got の `RequestError.options.url` 等の内部プロパティを列挙して出力するため、スクレイピング先 URL のクエリが漏れる経路があった。`{ name, message, stack, statusCode? }` のみ明示的に渡す形に変更し、漏洩経路を遮断
+- **`parse_error` テストを null 返しプラグイン経由に整理** (W-3 対応): 空 HTML フォールバックでは general() が title=hostname で summary を返してしまう (parse_error にならない)。カスタムプラグインで `summarize: async () => null` を強制する経路に変更し、`failed summarize` を確実に踏むようにした
+- **knowhow の `errorMaxAge` 値を 30 秒 → 1 時間 (`cacheErrorMaxAge` のデフォルト)** に修正 (W-2)
+- **mock pino logger の Fastify 6 型対応**: `loggerInstance` が `FastifyChildLoggerFactory<RawServer, ...>` という非常に厳しい型を要求するため、`as any` を経由した `as unknown as FastifyInstance` の二重キャストでテスト注入
 
 ## 目的・背景
 
@@ -103,11 +111,11 @@ app.setErrorHandler((err, req, reply) => {
 
 各ステップで `pnpm eslint && pnpm test` を通す。
 
-- [ ] **Step 1 — `fetchEntry` catch でログ出力**
+- [x] **Step 1 — `fetchEntry` catch でログ出力**
   - [src/index.ts](../../src/index.ts) の `'/'` ハンドラ内 `fetchEntry` の catch ブロックに `req.log[level]({ err, url: sanitizeUrlForLog(url), lang, statusCode }, 'summaly error')` を追加
   - `sanitizeUrlForLog` は `@/utils/parse-failure-log.js` から import
   - `chooseLogLevel(e, statusCode)` を [src/utils/log-level.ts](../../src/utils/log-level.ts) として新設し、§2 の表に従って `'info' | 'warn' | 'error'` を返す
-- [ ] **Step 2 — `chooseLogLevel` ユニットテスト**
+- [x] **Step 2 — `chooseLogLevel` ユニットテスト** (14 件)
   - [test/log-level.test.ts](../../test/log-level.test.ts) を新設
     - `StatusError(404)` → `info`
     - `StatusError(403)` → `info`
@@ -118,27 +126,27 @@ app.setErrorHandler((err, req, reply) => {
     - `Error('failed summarize')` → `error`
     - `TypeError('foo')` → `error`
     - `Error()`（プレーン）→ `error`
-- [ ] **Step 3 — Fastify モードの統合テスト**
+- [x] **Step 3 — Fastify モードの統合テスト** (6 件: 500=warn / 403=info / 成功時ログなし / LRU HIT 再ログなし / URL sanitize / parse_error null プラグイン経由)
   - [test/index.test.ts](../../test/index.test.ts) に「500 が返るとき pino ログが呼ばれる」テストを追加
     - `Fastify({ logger: <mock pino>})` でカスタム logger を注入し、`StatusError(500)` を throw する mock origin を用意
     - リクエスト → `mockLogger.warn` が `{ err, url, statusCode: 500 }` 付きで 1 回呼ばれることを assert
     - 同じ URL に 2 回目のリクエスト → エラーがキャッシュ HIT されるなら `mockLogger.warn` は **追加で呼ばれない**（cache HIT は再ログしない設計）
   - 4xx ケース（`StatusError(403)`）で `info` が呼ばれること
   - `failed summarize` ケースで `error` が呼ばれること
-- [ ] **Step 4 — `bin/summaly-server.ts` に `setErrorHandler` を追加**
+- [x] **Step 4 — `bin/summaly-server.ts` に `setErrorHandler` を追加** (404 ハンドラ未マッチ等のセーフティネット)
   - register 失敗・404 ハンドラ等の最終フォールバック
   - 本ハンドラはあくまでセーフティネット（実用上はほぼ通らない）
-- [ ] **Step 5 — ドキュメント更新（4.5 のドキュメント突き合わせ）**
+- [x] **Step 5 — ドキュメント更新** (SETUP.md / CHANGELOG.md)
   - [docs/SETUP.md](../../docs/SETUP.md) の運用セクションに「ログレベル別の意味」を追記
     - `info`: upstream 4xx（普通のことなので無視可）
     - `warn`: upstream 5xx / timeout / SSRF block（気にする）
     - `error`: 想定外（必ず確認）
   - journalctl で気にすべきものだけ追う例: `journalctl -u summaly --priority=warning -f`
   - [CHANGELOG.md](../../CHANGELOG.md) unreleased に `enhance: Fastify モードで summaly エラーを pino ログに出力するように` を追加
-- [ ] **Step 6 — knowhow 記録**
+- [x] **Step 6 — knowhow 記録** (`docs/knowhow/fastify-plugin-error-logging.md`)
   - 「Fastify プラグイン内で `try/catch` して return した非 throw エラーは `setErrorHandler` には飛ばない。観測したいなら明示的に `req.log` を呼ぶ必要がある」を `docs/knowhow/fastify-plugin-error-logging.md` 等にまとめる
   - 「pino の `{ err }` プロパティに Error を渡すと name / message / stack / statusCode が構造化される」点もメモ
-- [ ] **Step 7 — 品質ゲート**
+- [x] **Step 7 — 品質ゲート** (272 pass / lint / typecheck / build / ADDF tests / Stage 2 review W-1〜W-3 + S-1 + S-3 対応)
   - `pnpm build && pnpm eslint && pnpm typecheck && pnpm test`
   - `bash .claude/tests/run-all.sh`
   - `addf-code-review-agent` / `addf-contribution-agent`

@@ -44,3 +44,10 @@
 - **2026-05-05 phase11.2 セッション**: `categorizeError` の判定優先順位は **メッセージ高シグナル先 → statusCode 後** が正解。`Private IP rejected` / `Invalid IP` は内部で `StatusError(_, 400/500)` で投げられるため、statusCode を先に見ると `bot_blocked` / `origin_error` 誤判定。意味重視の優先順位を選ぶ
 - **2026-05-05 phase11.2 セッション**: レビュー agent が「`SummalyErrorCategory` が npm 公開エントリから直接 import できない」を指摘。`SerializableError['category']` で間接参照は不格好。**type も `export type` で公開する**のが基本。built/index.d.ts のサーフェスを確認するレビュー agent の知識ベースが効いている
 - **2026-05-05 phase11.2 セッション**: phase10.1 で導入した `isFilteredFailure` を `categorizeError` ベースに refactor したことで、エラー類型の判定ロジックが 1 箇所に集約され、新カテゴリ追加 (`content_too_large` 等) が `enum 追加 + パターン追加 + FILTERED_CATEGORIES に追加` の 3 行で済むようになった。**初期実装での共通基盤化が後続 phase の差分を小さくする**好例
+
+## phase11.8 (Fastify エラーログ pino 出力) 知見
+
+- **2026-05-05 phase11.8 セッション**: phase11.2 で導入した `categorizeError` を `chooseLogLevel(e)` の派生実装基盤として再利用できた。`LOG_LEVEL_BY_CATEGORY: Record<SummalyErrorCategory, LogLevel>` テーブル 1 箇所でカテゴリと level の整合を保つ。**過去フェーズの共通基盤化が後続 phase の差分を小さくする**好例 (phase11.2 セッションの knowhow とも合致)
+- **2026-05-05 phase11.8 セッション**: レビュー agent が「pino の `errSerializer` が got の `RequestError.options.url` を列挙して出力する → スクレイピング先 URL のクエリ漏洩」という具体的な PII 漏洩経路を指摘した。仕様詳細を知らないと見逃しやすい。`err` を手動シリアライズ (`{ name, message, stack, statusCode? }`) に変更して根本対処
+- **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
+- **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)

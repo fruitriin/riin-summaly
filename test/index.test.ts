@@ -2153,6 +2153,173 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('エラー観測ログ pino 出力 (phase11.8)', () => {
+		const proxyPort = port + 1;
+		let proxyApp: FastifyInstance | null = null;
+		let logCalls: { level: string; data: Record<string, unknown>; msg: string }[] = [];
+
+		beforeEach(() => {
+			logCalls = [];
+		});
+
+		afterEach(async () => {
+			if (proxyApp != null) {
+				await proxyApp.close();
+				proxyApp = null;
+			}
+		});
+
+		// 各レベルメソッドが呼ばれた回数と引数を記録するシンプルな mock logger。
+		// pino 互換 ('child' を持ち、各レベルメソッド + level プロパティ) が最低限必要。
+		function buildMockLogger() {
+			const recorder = (level: string) => (data: Record<string, unknown>, msg: string) => {
+				logCalls.push({ level, data, msg });
+			};
+			const inst: Record<string, unknown> = {
+				level: 'info',
+				fatal: recorder('fatal'),
+				error: recorder('error'),
+				warn: recorder('warn'),
+				info: recorder('info'),
+				debug: recorder('debug'),
+				trace: recorder('trace'),
+				silent: () => {},
+			};
+			inst.child = () => inst;
+			return inst;
+		}
+
+		async function bringUpProxy(opts: Parameters<typeof summalyPlugin>[1] = {}) {
+			// Fastify 6 の `loggerInstance` 型は厳格 (FastifyChildLoggerFactory<RawServer, ...>) なので、
+			// テストでは unknown 経由で mock pino を渡す
+			const local = fastify({
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				loggerInstance: buildMockLogger() as any,
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			} as any) as unknown as FastifyInstance;
+			await local.register(summalyPlugin, opts);
+			await local.listen({ port: proxyPort });
+			proxyApp = local;
+		}
+
+		test('500 エラーで warn ログが 1 回出る (origin_error)', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => reply.status(500).send());
+			await app.listen({ port });
+			await bringUpProxy();
+
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(500);
+
+			const errorLogs = logCalls.filter(c => c.msg === 'summaly error');
+			expect(errorLogs).toHaveLength(1);
+			expect(errorLogs[0].level).toBe('warn');
+			expect(errorLogs[0].data.statusCode).toBe(500);
+			expect(errorLogs[0].data.url).toBe(`${host}/`);
+			// err は phase11.8 W-1 対応で手動シリアライズした { name, message, stack, statusCode } オブジェクト
+			// (got の RequestError.options.url 経由の PII 漏洩を防ぐため)
+			const errInfo = errorLogs[0].data.err as { name: string; message: string; statusCode?: number };
+			expect(errInfo.name).toBe('StatusError');
+			expect(errInfo.statusCode).toBe(500);
+		});
+
+		test('403 エラーで info ログが出る (bot_blocked)', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => reply.status(403).send());
+			await app.listen({ port });
+			await bringUpProxy();
+
+			await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+
+			const errorLogs = logCalls.filter(c => c.msg === 'summaly error');
+			expect(errorLogs).toHaveLength(1);
+			expect(errorLogs[0].level).toBe('info');
+			expect(errorLogs[0].data.statusCode).toBe(403);
+		});
+
+		test('failed summarize で error ログが出る (parse_error) — null 返しプラグイン経由', async () => {
+			// summarize が null を返すカスタムプラグインを差し込んで「failed summarize」を確実に踏む。
+			// 空 HTML フォールバックでは general() が title=hostname 等で summary を返してしまうため、
+			// parse_error カテゴリのテストにはプラグイン null 返し経路が確実。
+			app = fastify();
+			app.get('/null-plugin', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.send('<html></html>');
+			});
+			await app.listen({ port });
+
+			const local = fastify({
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				loggerInstance: buildMockLogger() as any,
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			} as any) as unknown as FastifyInstance;
+			await local.register(summalyPlugin, {
+				plugins: [{
+					name: 'test-null',
+					test: (u: URL) => u.pathname === '/null-plugin',
+					summarize: async () => null,
+				}],
+			});
+			await local.listen({ port: proxyPort });
+			proxyApp = local;
+
+			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/null-plugin` } });
+
+			const errorLogs = logCalls.filter(c => c.msg === 'summaly error');
+			expect(errorLogs).toHaveLength(1);
+			expect(errorLogs[0].level).toBe('error');
+			// mock pino はシリアライザを適用しないため err は手動構築のオブジェクト ({ name, message, stack })
+			expect((errorLogs[0].data.err as { message: string }).message).toBe('failed summarize');
+		});
+
+		test('LRU キャッシュ HIT 時は再ログしない (spam 抑制)', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => reply.status(503).send());
+			await app.listen({ port });
+			await bringUpProxy({ inMemoryCache: true });
+
+			// 1 回目: MISS なのでログが 1 回出る
+			await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			// 2 回目: LRU HIT (エラーキャッシュ) なのでログは追加で出ない
+			await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+
+			const errorLogs = logCalls.filter(c => c.msg === 'summaly error');
+			expect(errorLogs).toHaveLength(1);
+		});
+
+		test('成功時はログが出ない', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.send('<html><head><title>OK</title></head></html>');
+			});
+			await app.listen({ port });
+			await bringUpProxy();
+
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(200);
+
+			const errorLogs = logCalls.filter(c => c.msg === 'summaly error');
+			expect(errorLogs).toHaveLength(0);
+		});
+
+		test('URL は sanitizeUrlForLog でクエリが除去される', async () => {
+			app = fastify();
+			app.get('/secret', (_req, reply) => reply.status(500).send());
+			await app.listen({ port });
+			await bringUpProxy();
+
+			const urlWithToken = `${host}/secret?token=DO_NOT_LOG_ME&session=abc`;
+			await proxyApp!.inject({ method: 'GET', url: '/', query: { url: urlWithToken } });
+
+			const errorLogs = logCalls.filter(c => c.msg === 'summaly error');
+			expect(errorLogs).toHaveLength(1);
+			expect(errorLogs[0].data.url).toBe(`${host}/secret`);
+			expect(JSON.stringify(errorLogs[0].data.url)).not.toContain('token=');
+			expect(JSON.stringify(errorLogs[0].data.url)).not.toContain('session=');
+		});
+	});
+
 	describe('エラーレスポンスの category フィールド (phase11.2)', () => {
 		const proxyPort = port + 1;
 		let proxyApp: FastifyInstance | null = null;

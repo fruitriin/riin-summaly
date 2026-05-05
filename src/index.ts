@@ -19,8 +19,10 @@ import {
 	isThinSummary,
 	isFilteredFailure,
 	categorizeError,
+	sanitizeUrlForLog,
 	type SummalyErrorCategory,
 } from '@/utils/parse-failure-log.js';
+import { chooseLogLevel } from '@/utils/log-level.js';
 
 // 公開型として再 export（消費者が SerializableError['category'] でなく直接の名前で参照できるよう）
 export type { SummalyErrorCategory };
@@ -520,6 +522,24 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 				});
 				return { kind: 'success', value: summary };
 			} catch (e) {
+				// pino へエラーを構造化ログ出力 (phase11.8)。
+				// MISS 経路でしか呼ばれないので LRU/dedup HIT 時は再ログされない（spam 抑制）。
+				// ログレベルは chooseLogLevel で category 由来 (4xx=info / 5xx・timeout=warn / 想定外=error)。
+				// URL は sanitizeUrlForLog で query/fragment/auth を除去（PII 漏洩防止）。
+				//
+				// **err は手動シリアライズ**: pino のデフォルト `errSerializer` は got の `RequestError`
+				// の `options.url` などを列挙可能プロパティとして含めて出力するため、対象 URL のクエリ
+				// （token / session 等）が漏れる経路がある (phase11.8 review W-1)。
+				// `name` / `message` / `stack` / `statusCode` だけを明示的に渡すことで漏洩経路を遮断する。
+				const level = chooseLogLevel(e);
+				const statusCode = e instanceof StatusError ? e.statusCode : undefined;
+				const errInfo = e instanceof Error
+					? { name: e.name, message: e.message, stack: e.stack, ...(statusCode !== undefined ? { statusCode } : {}) }
+					: { name: 'NonError', message: String(e) };
+				req.log[level](
+					{ err: errInfo, url: sanitizeUrlForLog(url), lang, statusCode },
+					'summaly error',
+				);
 				return { kind: 'error', error: serializableError(e) };
 			}
 		};

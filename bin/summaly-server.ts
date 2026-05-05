@@ -32,6 +32,16 @@ try {
 const app = Fastify({ logger: true });
 app.log.info(`summaly-server: loaded config from ${configPath}`);
 
+// 想定外エラー (404 ハンドラ未登録 / register 失敗 / setErrorHandler に飛ぶ throw 等) の最終フォールバック。
+// summaly プラグイン本体のエラー (try/catch して return しているもの) はこのハンドラには飛ばないが、
+// 404 ハンドラ未マッチや plugin scope 外の throw を観測ログに残せる (phase11.8)。
+app.setErrorHandler((err, req, reply) => {
+	req.log.error({ err, url: req.url }, 'unhandled fastify error');
+	reply.status(500).send({
+		error: { name: 'InternalServerError', message: 'unhandled error' },
+	});
+});
+
 await app.register(Summaly, cfg.summaly);
 
 const host = cfg.server.host ?? '127.0.0.1';

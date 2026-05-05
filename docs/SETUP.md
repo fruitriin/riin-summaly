@@ -15,6 +15,7 @@ summaly を Misskey 等のフロントエンドから利用するために、**�
 - [パース失敗ドメインのログ蓄積 (phase10.1)](#パース失敗ドメインのログ蓄積-phase101)
 - [バージョン確認エンドポイント `GET /v`](#バージョン確認エンドポイント-get-v)
 - [エラーレスポンスのカテゴリ (phase11.2)](#エラーレスポンスのカテゴリ-phase112)
+- [エラー観測ログ (phase11.8)](#エラー観測ログ-phase118)
 - [PDF 対応](#pdf-対応)
 - [プラグインの絞り込み](#プラグインの絞り込み)
 - [HTTP エージェント / プロキシ / IP family](#http-エージェント--プロキシ--ip-family)
@@ -310,6 +311,55 @@ Fastify モードで `summaly()` が throw した場合、500 ステータス + 
 `StatusError` のときは `error.statusCode` も同梱されるため、Misskey 側で `URL_PREVIEW_NOT_FOUND` (404) と `URL_PREVIEW_BOT_BLOCKED` (403/429 等) を分けて API エラーコードを返すことができます。
 
 **後方互換**: 既存の `error.message` / `error.name` は維持されます。`category` を見ない既存実装は影響を受けません。
+
+エラー観測ログ (phase11.8)
+----------------------------------------------------------------
+
+Fastify モードで `summaly()` が throw したとき、`req.log` 経由で **pino ログが 1 行出力**されます。これまではクライアントに 500 を返すだけでサーバ側ログは無音だったため、本番のエラー原因切り分けが不可能でした (例: `https://summaly.riinswork.space/?url=https://amzn.asia/d/...` が 500 になるが原因不明)。
+
+### ログレベル
+
+`error.category` 由来で 3 段階に分けて出力します:
+
+| level | category | 例 |
+|:--|:--|:--|
+| `info` | `not_found` / `bot_blocked` | upstream 404, 403, 429 (普通の bot block) |
+| `warn` | `origin_error` / `timeout` / `unsupported_type` / `content_too_large` / `ssrf_blocked` / `network_error` | upstream 障害・遅延・SSRF ガード発動・型 reject など気にすべき分 |
+| `error` | `parse_error` / `unknown` | プラグインのバグ・cheerio 失敗・想定外（必ず確認） |
+
+journalctl で気にすべき分だけ追う例:
+
+```bash
+journalctl -u summaly --priority=warning -f
+```
+
+### ログ出力例 (pino JSON)
+
+```json
+{
+  "level": 30,
+  "time": 1700000000000,
+  "msg": "summaly error",
+  "url": "https://www.amazon.co.jp/dp/B0989HTQ32",
+  "lang": "ja-JP",
+  "statusCode": 500,
+  "err": { "type": "StatusError", "message": "500 Internal Server Error", "stack": "...", "statusCode": 500 }
+}
+```
+
+### スパム抑制
+
+- LRU キャッシュ HIT 時は再ログしない (`errorMaxAge` 中の同 URL は最初の MISS で 1 回だけ)
+- in-flight dedup HIT 時も再ログしない (先頭リクエストの結果共有)
+- `info` レベルに落とした 4xx 系は priority filter で簡単に切れる
+
+### URL の PII 保護
+
+ログに出力される `url` は `${origin}${pathname}` のみ（query / fragment / basic auth は除去）。session ID / API token がクエリに乗っていても漏れない設計。
+
+### 想定外エラーのセーフティネット
+
+`bin/summaly-server.ts` で `app.setErrorHandler` を仕掛けてあり、summaly プラグイン外で発生した throw（404 ハンドラ未マッチ等）も `unhandled fastify error` として error レベルで残ります。
 
 PDF 対応
 ----------------------------------------------------------------

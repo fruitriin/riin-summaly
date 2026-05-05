@@ -1,5 +1,14 @@
 (unreleased)
 ------------------
+* **enhance**: Fastify モードで `summaly()` が throw したとき pino ログを 1 行出力するように (phase11.8):
+  * これまでは 500 をクライアントに返すだけでサーバ側ログは無音だったため、本番のエラー原因切り分けが不可能だった
+  * `req.log[level]({ err, url, lang, statusCode }, 'summaly error')` を `fetchEntry` catch ブロックで呼ぶ
+  * ログレベルは `error.category` 由来で 3 段: `info` (4xx), `warn` (5xx/timeout/SSRF/型 reject 等), `error` (想定外)
+  * URL は `sanitizeUrlForLog` で query/fragment/auth 除去（PII 保護）
+  * LRU キャッシュ HIT / dedup HIT 時は再ログしない (spam 抑制)
+  * `bin/summaly-server.ts` に `setErrorHandler` セーフティネット追加（404 ハンドラ未マッチ等）
+  * `journalctl -u summaly --priority=warning -f` で気にすべき分だけ追える運用に
+
 * **Fastify モードのエラーレスポンスをカテゴリ化** (phase11.2, [riin-summaly#2](https://github.com/fruitriin/riin-summaly/issues/2)):
   * 失敗時のレスポンスに `error.category` フィールドを追加 (`SummalyErrorCategory` 型)
   * カテゴリ: `timeout` / `bot_blocked` / `not_found` / `origin_error` / `unsupported_type` / `content_too_large` / `ssrf_blocked` / `network_error` / `parse_error` / `unknown`
