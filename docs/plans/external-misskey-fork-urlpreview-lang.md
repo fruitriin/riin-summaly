@@ -120,29 +120,38 @@ phase11.2 で summaly が `{ error: { category, message, name, statusCode? } }` 
 
 ### 状況
 
-- 例 URL `https://amzn.asia/d/07Bh8rNE` は **summaly 単体では成功**（phase9.1 の HEAD→GET fallback で `www.amazon.co.jp/dp/...` に解決され、amazon プラグインが ATH-102USB のタイトル/description を取得）
-- それでも **Misskey 上で「プレビューできませんでした」** が出る → 原因は Misskey 側の何か
+- 例 URL `https://amzn.asia/d/07Bh8rNE` は **本 fork (riin-summaly) 単体では成功**（phase9.1 の HEAD→GET fallback で `www.amazon.co.jp/dp/...` に解決され、amazon プラグインが ATH-102USB のタイトル/description を取得）
+- 一方 `misskey.systems` の `/url?url=...&lang=ja-JP` で同じ URL を叩くと **`URL_PREVIEW_FAILED` (id `09d01cb5-53b9-4856-82e5-38a50c290a3b`) が返る** ← Misskey 由来のエラーで確定
+- このエラーは [`UrlPreviewService.ts`](https://github.com/misskey-dev/misskey/blob/develop/packages/backend/src/server/web/UrlPreviewService.ts) の catch ブロックでのみ投げられる固定 ID
 
-### 切り分け候補
+### 結論（最有力）
+
+**misskey.systems が使っている summaly は upstream `@misskey-dev/summaly@5.x` で、phase9.1 (HEAD→GET fallback) を持っていない**。
+
+- amzn.asia は HEAD に 404 を返す → upstream summaly は catch して `actualUrl = url`（短縮 URL のまま）で続行
+- amazon プラグインの `test()`（`www.amazon.{com,co.jp,...}`）にマッチしない
+- 汎用パス `general()` で `amzn.asia` ページを scrape → 何も取れない or `failed summarize` を throw
+- Misskey の catch でつかんで `URL_PREVIEW_FAILED`
+
+つまり **本 fork の summaly に置き換えれば解決する**。misskey.systems で再現したのはたまたま上流バージョンを動かしているからで、Misskey クライアントの `lang` ハードコードや `urlPreviewTimeout` 等は無関係。
+
+### 検証ステップ
+
+- [ ] **本 fork (riin-summaly) を自分の Misskey インスタンスに繋ぎ替えて**（npm link または `urlPreviewSummaryProxyUrl` で本 fork が動いているサーバを指す）、同 URL を貼ってプレビューが出るか確認
+- [ ] 出れば「summaly のバージョン違い」が原因確定 → [riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) にコメントして close
+- [ ] 出なければ別の切り分け候補に進む（下表）
+
+### 副次的な切り分け候補（上記で解決しない場合）
 
 | 候補 | 確認方法 |
 |:--|:--|
-| Misskey クライアントの `lang=en-US` で Amazon が違うレスポンスを返している | dev サーバで `?lang=en-US` を付けて再現確認 |
-| Misskey の `wrap()` (mediaProxy) が Amazon の `m.media-amazon.com` 画像を弾いている | Misskey ログ + ネットワークタブで mediaProxy のレスポンスを見る |
-| Misskey の `summary.url` が `http://` / `https://` で始まらない判定で弾いている | `UrlPreviewService.ts` の該当チェック箇所のログを足す |
-| 単に **summaly のリクエストが Misskey の `urlPreviewTimeout` (デフォルト 10s?) より長い**（amzn.asia は GET fallback で 4 秒以上かかる） | Misskey の preview timeout 設定値を上げて再現するか確認 |
-
-### 実装ステップ（Misskey fork 側）
-
-- [ ] dev サーバで `?lang=en-US` 経由のレスポンスを取得し、summaly レベルで成功するか確認
-- [ ] 自分の Misskey インスタンスで `https://amzn.asia/d/07Bh8rNE` をノートに貼ってネットワークタブを観察
-- [ ] `UrlPreviewService.ts` の各チェックポイントに console.log を追加して **どこで失敗しているか**を特定
-- [ ] timeout 系なら `urlPreviewTimeout` を 30 秒に伸ばす運用設定で改善するか
-- [ ] 結果を [riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) にコメントで残す
+| Misskey の `summary.url` が `http://` / `https://` で始まらない判定で弾いている | `UrlPreviewService.ts` の該当チェック箇所にログ |
+| `summary.player.url` の検証で弾いている | 同上 |
+| `urlPreviewTimeout` が短すぎる（amzn.asia は GET fallback で 4 秒以上かかる） | Misskey の preview timeout 設定値を確認 |
+| Misskey クライアントの `lang=en-US` で Amazon が違う反応 | 本 fork の dev サーバで `?lang=en-US` を試す |
 
 ### summaly 側で何かすべきか
 
-切り分けの結果次第:
-- timeout 系 → summaly 側で amazon プラグインの取得を高速化する別 phase
-- mediaProxy 系 → summaly 側は変更なし、Misskey 側の対応のみ
-- `lang=en-US` で挙動が変わる系 → external Plan の **1.** (lang 修正) で同時解決
+**最有力ケース（バージョン違い）なら No**: 本 fork で既に対応済み。
+
+副次切り分けで他の原因が出てきたら別 phase を起こす。
