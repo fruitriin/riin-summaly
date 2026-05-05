@@ -65,17 +65,15 @@ inMemory = true             # Misskey の Got/node-fetch は Cache-Control を�
 inFlightDedup = true        # ストリーミング由来の thundering herd を 1 本化（デフォルト true）
 
 [diagnostics]
-parseFailureLog = true      # プラグイン化候補のドメイン発見器
+parseFailureLog = true                                   # プラグイン化候補のドメイン発見器
 parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
-parseFailureLogEndpoint = true   # 公開時は nginx で必ずアクセス制限すること
 ```
 
-`/__diagnostics/parse-failures` を有効化する場合の nginx 設定例:
+集約データの参照は **JSONL ファイルを `cat | jq` する運用**:
 
-```nginx
-location /__diagnostics/ {
-    allow 127.0.0.1;
-    deny all;
-    proxy_pass http://summaly_backend;
-}
+```bash
+# 月次レビュー: 頻出グループ key を集計
+cat /var/log/summaly/parse-failures.jsonl | jq -r '.key' | sort | uniq -c | sort -rn | head -20
 ```
+
+> phase11.5 (2026-05-05) で `/__diagnostics/parse-failures` HTTP エンドポイントは廃止されました。プライバシーリスク（過去 preview 試行 URL の外部漏洩）を恒久排除するため、診断は JSONL ファイル経由のみとなっています。

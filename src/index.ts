@@ -163,16 +163,6 @@ export type SummalyOptions = {
 	parseFailureLogSamplesPerGroup?: number;
 
 	/**
-	 * `GET /__diagnostics/parse-failures` エンドポイントを有効化する。デフォルト false。
-	 * **公開時は nginx 等のネットワーク層でアクセス制限をかけること**（過去の preview 試行 URL が
-	 * 誰でも見える状態になり、プライバシー漏洩につながる）。
-	 *
-	 * `parseFailureLog: true` と併用する想定。`parseFailureLog: false` のときは記録自体が
-	 * 行われないためエンドポイントは空配列を返す。
-	 */
-	parseFailureLogEndpoint?: boolean;
-
-	/**
 	 * パース失敗ログの永続化用 JSONL ファイルパス。指定すると `record()` のたびに 1 行 append される。
 	 * 起動時に既存ファイルサイズを読み、`parseFailureLogJsonlMaxBytes` を超えていたら以降 append しない。
 	 * 未指定の場合はメモリのみで永続化なし（プロセス再起動で消える）。
@@ -429,12 +419,6 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		return;
 	}
 
-	// 設定の組み合わせ検証 (phase10.1): endpoint だけ有効 / 集約は無効、は誤設定の可能性が高い
-	if (options.parseFailureLogEndpoint && !options.parseFailureLog) {
-		done(new Error('parseFailureLogEndpoint requires parseFailureLog: true'));
-		return;
-	}
-
 	// インメモリキャッシュ（プラグインスコープ singleton）。
 	// TTL は各 set() 呼び出しで成功 / エラー個別に指定するため、コンストラクタには渡さない。
 	const cache: LRUCache<string, CacheEntry> | null = options.inMemoryCache
@@ -591,18 +575,10 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		return respondWithEntry(reply, entry);
 	});
 
-	// 診断エンドポイント — `parseFailureLogEndpoint: true` のときのみ mount する。
-	// **公開時は nginx 等のネットワーク層でアクセス制限を必須化する**（過去の preview 試行 URL が
-	// 誰でも見える状態になりプライバシー漏洩につながる）。
-	if (options.parseFailureLogEndpoint) {
-		fastify.get('/__diagnostics/parse-failures', async () => {
-			return {
-				groups: parseFailureLog != null ? parseFailureLog.snapshot() : [],
-				size: parseFailureLog != null ? parseFailureLog.size : 0,
-				enabled: parseFailureLog != null,
-			};
-		});
-	}
+	// 診断エンドポイント `/__diagnostics/parse-failures` は phase11.5 で削除済み
+	// (プライバシーリスク撤去)。集約データの参照は `parseFailureLogJsonlPath` で書き出される
+	// JSONL ファイルを `cat | jq` する運用に移行。`ParseFailureLog.snapshot()` メソッドは
+	// テスト・デバッグ用に残置。
 
 	// バージョン確認エンドポイント。デプロイされている summaly のコミットハッシュと
 	// コミットメッセージを返す。「いま動いているのは何のバージョン?」を確認する用途。

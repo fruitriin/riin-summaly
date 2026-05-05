@@ -215,10 +215,9 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 			expectPositiveInteger(d.parseFailureLogSamplesPerGroup as number, 'diagnostics.parseFailureLogSamplesPerGroup');
 			out.parseFailureLogSamplesPerGroup = d.parseFailureLogSamplesPerGroup as number;
 		}
-		if (d.parseFailureLogEndpoint !== undefined) {
-			expectType(d.parseFailureLogEndpoint, 'boolean', 'diagnostics.parseFailureLogEndpoint');
-			out.parseFailureLogEndpoint = d.parseFailureLogEndpoint as boolean;
-		}
+		// `parseFailureLogEndpoint` は phase11.5 で削除済み (プライバシーリスク撤去)。
+		// 既存設定で残っている場合は smol-toml が unknown key を silently 無視する挙動に任せる。
+		// 集約データの参照は `parseFailureLogJsonlPath` 経由 (JSONL ファイル + jq) に移行。
 		if (d.parseFailureLogJsonlPath !== undefined) {
 			expectType(d.parseFailureLogJsonlPath, 'string', 'diagnostics.parseFailureLogJsonlPath');
 			const path = (d.parseFailureLogJsonlPath as string).trim();

@@ -62,11 +62,17 @@ Misskey インスタンスを運用していると「あのドメインがプレ
 
 Fastify の async ハンドラから並行に呼ばれるが、`record` 自体に await が無いため Node.js の event loop 上で原子的に完了する。`Map` の中間状態は競合しない。**将来 await を入れたくなったら呼び出し側との競合を再設計** とコメントで明記。
 
-### エンドポイントの設計
+### エンドポイントは廃止 (phase11.5)
 
-`GET /__diagnostics/parse-failures` で `{ groups, size, enabled }` を返す。`enabled` フィールドで消費側が機能有無を確認できる（将来「ログ機能を一時停止」のような状態を表現する余地もある）。
+phase10.1 では `GET /__diagnostics/parse-failures` で `{ groups, size, enabled }` を返していたが、**phase11.5 で削除した**。理由:
 
-`enabled` だけでなく `endpoint` の方も別フラグ (`parseFailureLogEndpoint`) にして、誤って production で空っぽのエンドポイントを公開するリスクを下げる。**`endpoint: true` + `log: false` の組み合わせは register 時に fail-fast** で防ぐ（誤設定検出）。
+- 過去 preview 試行 URL（社内ブログ・短縮 URL の展開先・個人ドメイン等）が in-memory に貯まる構造で、エンドポイントを mount している間は前段 nginx の設定ミスで外部から JSON で全部読まれる「構造的リスク」が残る
+- 月次レビュー / プラグイン化候補発見の用途は `parseFailureLogJsonlPath` で書き出した JSONL を `cat | jq` するだけで足りる（ローカル dev も `tail -f` で観察できる）
+- メンテ表面の縮小（`parseFailureLogEndpoint` フラグ・組み合わせ検証・ハンドラ・config example の警告コメント・テストがまとめて消える）
+
+**設計教訓**: 「機微データを集めるエンドポイントを `endpoint: true` + nginx allow IP で守る」設計は、運用ミス耐性が低い。**JSONL ファイル + ファイルシステム権限**（`chmod 600` + 運用者のみアクセス）の方が攻撃面が圧倒的に狭い。同種の機能を作るときは「外部 HTTP インターフェース vs ファイル経由」を最初に検討する。
+
+`ParseFailureLog` クラス本体は `record()` / `snapshot()` を維持（テスト・将来の用途用）、削除したのはハンドラと `parseFailureLogEndpoint` オプションだけ。
 
 ## Fastify ハンドラ統合のフロー
 
@@ -97,10 +103,13 @@ LRU/dedup HIT は重複記録しない（既に最初の MISS で記録済みの
 parseFailureLog = false
 parseFailureLogMaxGroups = 1000
 parseFailureLogSamplesPerGroup = 5
-parseFailureLogEndpoint = false
+parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
+parseFailureLogJsonlMaxBytes = 10485760
 ```
 
 `[summaly.cache]` のように `[summaly.diagnostics]` のサブセクションにする案もあったが、cache / pdf / dedup と違って **`SummalyOptions` 型に直接乗らない、Fastify モード専用の運用 metric** なのでトップレベル `[diagnostics]` に。将来 metrics 系（カウンタ / Prometheus exporter 等）を増やすときも自然に同居できる。
+
+> phase11.5: `parseFailureLogEndpoint` キーは削除済み。TOML に残っていても smol-toml が unknown key を silent ignore するため起動失敗にはならない（既存ユーザーの移行を緩やかにするため）。
 
 ## 参考
 

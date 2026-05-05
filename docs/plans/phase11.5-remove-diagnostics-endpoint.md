@@ -1,6 +1,6 @@
 # Phase 11.5 — `/__diagnostics/parse-failures` 診断エンドポイントの廃止
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: 機能削除（破壊的変更 / オプトイン機能の撤去）
 > サイズ: **S**
 > 依存: なし
@@ -80,27 +80,24 @@ config.example.toml のコメントも「`parseFailureLogJsonlPath` と組み合
 
 各ステップで `pnpm eslint && pnpm test && pnpm typecheck` を通す。
 
-- [ ] **Step 1 — オプション定義 / 検証 / ハンドラ削除**
-  - [src/index.ts](../../src/index.ts) の 154-161 / 401-405 / 546-557 を削除
-  - 当該箇所で `parseFailureLogEndpoint` を参照しているコメントも掃除
-- [ ] **Step 2 — bin / TOML 側のクリーンアップ**
-  - [bin/summaly-server.ts](../../bin/summaly-server.ts) と関連 TOML loader から `parseFailureLogEndpoint` のマッピングを削除
-  - 不明なオプションが TOML に残っていた場合の挙動を確認（warn にする / 無視する / エラーにする）
-- [ ] **Step 3 — テスト更新**
-  - `/__diagnostics/parse-failures` を呼んでいるテストがあれば削除
-  - `parseFailureLog: true` だけで JSONL 書き込みが動く、という挙動のテストは維持/補強
-- [ ] **Step 4 — config example 更新**
-  - [config.example.toml](../../config.example.toml) と [docs/deploy-examples/summaly-config.example.toml](../../docs/deploy-examples/summaly-config.example.toml) から `parseFailureLogEndpoint` キーと警告コメント全体（5-6 行）を削除
-  - 残った `parseFailureLog` ブロックのコメントを「JSONL を書き出してファイルベースでレビューする運用」に書き直す
-- [ ] **Step 5 — ドキュメント更新（4.5 のドキュメント突き合わせ）**
-  - [CLAUDE.repo.md](../../CLAUDE.repo.md) — `parseFailureLogEndpoint` の言及があれば削除
-  - [docs/Library.md](../../docs/Library.md) / [docs/SETUP.md](../../docs/SETUP.md) — 同上
-  - [CHANGELOG.md](../../CHANGELOG.md) unreleased — `### Removed` または `### BREAKING` セクションに以下を追加:
-    > - `parseFailureLogEndpoint` オプションと `/__diagnostics/parse-failures` HTTP エンドポイントを削除しました。プライバシーリスク（過去 preview 試行 URL の漏洩）を恒久的に避けるため、診断は `parseFailureLogJsonlPath` で書き出される JSONL ファイル経由で実施してください
-- [ ] **Step 6 — 品質ゲート**
-  - `pnpm build && pnpm eslint && pnpm typecheck && pnpm test`
-  - `bash .claude/tests/run-all.sh`
-  - `addf-code-review-agent` / `addf-contribution-agent`
+- [x] **Step 1 — オプション定義 / 検証 / ハンドラ削除**
+  - [src/index.ts](../../src/index.ts) の `parseFailureLogEndpoint?` プロパティ・起動時組み合わせ検証・`fastify.get('/__diagnostics/parse-failures', ...)` ハンドラを削除。コメントで phase11.5 削除済みと明記
+- [x] **Step 2 — bin / TOML 側のクリーンアップ**
+  - [bin/config-loader.ts](../../bin/config-loader.ts) から `parseFailureLogEndpoint` のマッピングを削除。コメントで phase11.5 削除済みと明記
+  - smol-toml が unknown key を silent ignore する挙動に乗っかる（既存ユーザーの移行を緩やかにするため）
+- [x] **Step 3 — テスト更新**
+  - 旧エンドポイント系 6 テストを 2 つの JSONL 経由 integration テストに置換
+  - `test/config-loader.test.ts` に「`parseFailureLogEndpoint = true` が TOML に残っていても `undefined` になる」forward-compat テストを追加
+- [x] **Step 4 — config example 更新**
+  - [config.example.toml](../../config.example.toml) から `parseFailureLogEndpoint` キーと警告コメント全体を削除
+  - [docs/deploy-examples/README.md](../../docs/deploy-examples/README.md) からも同上、推奨追加設定を JSONL 永続化 + `cat | jq` 例に書き直し
+- [x] **Step 5 — ドキュメント更新（4.5 のドキュメント突き合わせ）**
+  - [docs/Library.md](../../docs/Library.md) / [docs/SETUP.md](../../docs/SETUP.md) / [README.md](../../README.md) / [docs/knowhow/observability-parse-failure-log.md](../../docs/knowhow/observability-parse-failure-log.md) / [docs/knowhow/INDEX.md](../../docs/knowhow/INDEX.md) を更新
+  - [CHANGELOG.md](../../CHANGELOG.md) unreleased の冒頭に **BREAKING** エントリを追加（silent ignore の挙動と移行手順を明示）
+- [x] **Step 6 — 品質ゲート**
+  - Stage 1: `pnpm build && pnpm eslint && pnpm typecheck && pnpm test` (269 passed) + `bash .claude/tests/run-all.sh` 通過
+  - Stage 2: `addf-code-review-agent` 通過 (Critical/High なし、Suggestion 2 件はテスト粒度の改善余地で非ブロッカー)
+  - `addf-contribution-agent` はスキップ条件「`.claude/` `docs/knowhow/ADDF/` `templates/` を含まない」に合致のためスキップ
 
 ---
 

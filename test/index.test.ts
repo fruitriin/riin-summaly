@@ -6,9 +6,10 @@
 
 /* dependencies below */
 
-import fs, { readdirSync } from 'node:fs';
+import fs, { readdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir as osTmpdir } from 'node:os';
 import process from 'node:process';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { Agent as httpAgent } from 'node:http';
@@ -1751,50 +1752,37 @@ describe('local tests', () => {
 		});
 	});
 
-	describe('パース失敗ログ (phase10.1)', () => {
+	describe('パース失敗ログ (phase10.1, phase11.5 で endpoint は廃止)', () => {
+		// phase11.5 で `/__diagnostics/parse-failures` エンドポイントは撤去された
+		// （プライバシーリスク撤去、過去 preview 試行 URL を外部から読み取れる構造を恒久排除）。
+		// 集約データの参照は parseFailureLogJsonlPath で書き出される JSONL ファイル経由に移行。
+		// 本 describe では Fastify 経由で JSONL に書き込まれることを統合テストで担保する。
+		// (詳細な挙動は test/parse-failure-log.test.ts の単体テストでカバー)
 		const proxyPort = port + 1;
 		let proxyApp: FastifyInstance | null = null;
+		let tmpDir: string;
+
+		beforeEach(() => {
+			tmpDir = mkdtempSync(join(osTmpdir(), 'summaly-pf-int-'));
+		});
 
 		afterEach(async () => {
 			if (proxyApp != null) {
 				await proxyApp.close();
 				proxyApp = null;
 			}
+			rmSync(tmpDir, { recursive: true, force: true });
 		});
 
-		test('thin summary（汎用パスでスカスカ）が記録され、エンドポイントで取得できる', async () => {
-			// origin: title だけある HTML（OG/description なし、thumbnail なし）。汎用パス通過 → thin
+		test('Fastify 経由で thin summary が JSONL に書き込まれる + 4xx は filter で除外', async () => {
+			const jsonlPath = join(tmpDir, 'pf.jsonl');
 			app = fastify();
+			// 1. thin: title だけある HTML（OG/description なし、thumbnail なし）→ JSONL に記録される
 			app.get('/articles/foo/post1', (_req, reply) => {
 				reply.header('content-type', 'text/html');
 				return reply.send('<html><head><title>localhost</title></head><body>x</body></html>');
 			});
-			await app.listen({ port });
-
-			proxyApp = fastify();
-			await proxyApp.register(summalyPlugin, {
-				parseFailureLog: true,
-				parseFailureLogEndpoint: true,
-				inMemoryCache: false,
-				inFlightDedup: false,
-			});
-			await proxyApp.listen({ port: proxyPort });
-
-			const r1 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/foo/post1` } });
-			expect(r1.statusCode).toBe(200);
-
-			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
-			expect(diag.statusCode).toBe(200);
-			const body = JSON.parse(diag.body) as { groups: { key: string; samples: { url: string; reason: string }[] }[]; size: number; enabled: boolean };
-			expect(body.enabled).toBe(true);
-			expect(body.size).toBe(1);
-			expect(body.groups[0].key).toBe(`localhost/articles/foo`);
-			expect(body.groups[0].samples[0].reason).toBe('thin');
-			expect(body.groups[0].samples[0].url).toBe(`${host}/articles/foo/post1`);
-		});
-
-		test('絶対失敗類型 (StatusError 4xx) は filter されて記録されない', async () => {
-			app = fastify();
+			// 2. 403 (StatusError 4xx) → isFilteredFailure で除外され JSONL には書かれない
 			app.get('/forbidden', (_req, reply) => {
 				reply.header('content-type', 'text/html');
 				return reply.status(403).send('<html><body>Forbidden</body></html>');
@@ -1804,79 +1792,27 @@ describe('local tests', () => {
 			proxyApp = fastify();
 			await proxyApp.register(summalyPlugin, {
 				parseFailureLog: true,
-				parseFailureLogEndpoint: true,
+				parseFailureLogJsonlPath: jsonlPath,
 				inMemoryCache: false,
 				inFlightDedup: false,
 			});
 			await proxyApp.listen({ port: proxyPort });
 
-			const r1 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/forbidden` } });
-			expect(r1.statusCode).toBe(500);
+			const r1 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/foo/post1` } });
+			expect(r1.statusCode).toBe(200);
+			const r2 = await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/forbidden` } });
+			expect(r2.statusCode).toBe(500);
 
-			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
-			const body = JSON.parse(diag.body) as { groups: unknown[]; size: number };
-			// 403 StatusError は isFilteredFailure で除外される → 0 件
-			expect(body.size).toBe(0);
-			expect(body.groups).toEqual([]);
+			const lines = readFileSync(jsonlPath, 'utf8').split('\n').filter(Boolean);
+			expect(lines).toHaveLength(1);
+			const entry = JSON.parse(lines[0]) as { key: string; url: string; reason: string };
+			expect(entry.key).toBe('localhost/articles/foo');
+			expect(entry.reason).toBe('thin');
+			expect(entry.url).toBe(`${host}/articles/foo/post1`);
 		});
 
-		test('parseFailureLog: false + endpoint: false ではエンドポイントが mount されない', async () => {
-			app = fastify();
-			app.get('/', (_req, reply) => {
-				reply.header('content-type', 'text/html');
-				return reply.send('<html><head><title>localhost</title></head><body>x</body></html>');
-			});
-			await app.listen({ port });
-
-			proxyApp = fastify();
-			await proxyApp.register(summalyPlugin, {
-				parseFailureLog: false,
-				parseFailureLogEndpoint: false,
-				inMemoryCache: false,
-				inFlightDedup: false,
-			});
-			await proxyApp.listen({ port: proxyPort });
-
-			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
-			expect(diag.statusCode).toBe(404);
-		});
-
-		test('parseFailureLog: false + endpoint: true は誤設定として register 時に fail-fast', async () => {
-			proxyApp = fastify();
-			// register が done(error) で reject する → register Promise が reject
-			await expect(
-				proxyApp.register(summalyPlugin, {
-					parseFailureLog: false,
-					parseFailureLogEndpoint: true,
-					inMemoryCache: false,
-					inFlightDedup: false,
-				})
-			).rejects.toThrow(/parseFailureLogEndpoint requires parseFailureLog/);
-		});
-
-		test('parseFailureLog: true + parseFailureLogEndpoint: false なら記録はされるがエンドポイントは無い', async () => {
-			app = fastify();
-			app.get('/articles/x/y', (_req, reply) => {
-				reply.header('content-type', 'text/html');
-				return reply.send('<html><head><title>localhost</title></head><body>x</body></html>');
-			});
-			await app.listen({ port });
-
-			proxyApp = fastify();
-			await proxyApp.register(summalyPlugin, {
-				parseFailureLog: true,
-				parseFailureLogEndpoint: false,
-				inMemoryCache: false,
-				inFlightDedup: false,
-			});
-			await proxyApp.listen({ port: proxyPort });
-
-			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/x/y` } });
-			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
-			expect(diag.statusCode).toBe(404);
-		});
-
-		test('LRU/dedup HIT は重複記録しない（MISS 経路のみ記録）', async () => {
+		test('LRU/dedup HIT は重複記録しない（MISS 経路のみ JSONL に追記）', async () => {
+			const jsonlPath = join(tmpDir, 'pf.jsonl');
 			app = fastify();
 			app.get('/articles/foo/dup', (_req, reply) => {
 				reply.header('content-type', 'text/html');
@@ -1887,7 +1823,7 @@ describe('local tests', () => {
 			proxyApp = fastify();
 			await proxyApp.register(summalyPlugin, {
 				parseFailureLog: true,
-				parseFailureLogEndpoint: true,
+				parseFailureLogJsonlPath: jsonlPath,
 				inMemoryCache: true,
 				inFlightDedup: true,
 			});
@@ -1898,9 +1834,8 @@ describe('local tests', () => {
 			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/foo/dup` } });
 			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/foo/dup` } });
 
-			const diag = await proxyApp.inject({ method: 'GET', url: '/__diagnostics/parse-failures' });
-			const body = JSON.parse(diag.body) as { groups: { samples: unknown[] }[] };
-			expect(body.groups[0].samples).toHaveLength(1);
+			const lines = readFileSync(jsonlPath, 'utf8').split('\n').filter(Boolean);
+			expect(lines).toHaveLength(1);
 		});
 	});
 

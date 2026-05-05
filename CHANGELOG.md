@@ -1,5 +1,10 @@
 (unreleased)
 ------------------
+* **BREAKING**: `parseFailureLogEndpoint` オプションと `GET /__diagnostics/parse-failures` HTTP エンドポイントを削除しました (phase11.5):
+  * プライバシーリスク（過去 preview 試行 URL が前段 nginx の設定ミスで外部漏洩）を恒久排除するため、診断は **`parseFailureLogJsonlPath` で書き出される JSONL ファイル経由で実施** してください
+  * 月次レビュー / プラグイン化候補発見の用途は `cat /var/log/summaly/parse-failures.jsonl | jq -r '.key' | sort | uniq -c | sort -rn | head -20` で代替可能
+  * 既存の `config.toml` に `parseFailureLogEndpoint = true` が残っていても **smol-toml が unknown key を silent ignore する** ため起動失敗にはならない（移行猶予）。エンドポイントが mount されないだけ
+  * `ParseFailureLog` クラス本体（`record()` / `snapshot()` / JSONL 永続化）は維持。`parseFailureLog: true` + `parseFailureLogJsonlPath` の組み合わせは引き続き動作する
 * **enhance**: Fastify モードで `summaly()` が throw したとき pino ログを 1 行出力するように (phase11.8):
   * これまでは 500 をクライアントに返すだけでサーバ側ログは無音だったため、本番のエラー原因切り分けが不可能だった
   * `req.log[level]({ err, url, lang, statusCode }, 'summaly error')` を `fetchEntry` catch ブロックで呼ぶ

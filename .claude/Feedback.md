@@ -51,3 +51,9 @@
 - **2026-05-05 phase11.8 セッション**: レビュー agent が「pino の `errSerializer` が got の `RequestError.options.url` を列挙して出力する → スクレイピング先 URL のクエリ漏洩」という具体的な PII 漏洩経路を指摘した。仕様詳細を知らないと見逃しやすい。`err` を手動シリアライズ (`{ name, message, stack, statusCode? }`) に変更して根本対処
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
+
+## phase11.5 (診断エンドポイント廃止) 知見
+
+- **2026-05-05 phase11.5 セッション (機能削除フェーズ)**: 「機能を撤去する」フェーズで `addf-code-review-agent` が「削除漏れチェック」を網羅的に実行できることを確認。`grep -rn parseFailureLogEndpoint\|__diagnostics` で全リポ走査して残存箇所を意図的（コメント / 履歴 / forward-compat テスト）と未削除に分類して報告するワークフローが綺麗に効いた。レビュー agent は「追加・変更」だけでなく「削除フェーズの検証」にも有効
+- **2026-05-05 phase11.5 セッション**: TOML loader の **smol-toml が unknown key を silent ignore する** 挙動を意図的に活用して、削除した `parseFailureLogEndpoint` 設定が残っている既存ユーザーの起動失敗を回避。「Breaking change だが silent migration を許容する」設計パターン。`test/config-loader.test.ts` に「`parseFailureLogEndpoint = true` を渡しても `(cfg.summaly).parseFailureLogEndpoint` が undefined になる」forward-compat テストを追加することで、smol-toml の挙動変更で気付けない壊れ方を防いでいる。**3 点セット**: silent ignore + forward-compat テスト + CHANGELOG での明示的 BREAKING 記録
+- **2026-05-05 phase11.5 セッション**: 「外部 HTTP インターフェース vs ファイル経由」の運用設計トレードオフ。機微データ（preview 試行 URL）の集約を HTTP エンドポイントで露出すると nginx 設定ミスで構造的にプライバシー漏洩リスクが残る。**JSONL ファイル + ファイルシステム権限 (`chmod 600`)** に置き換えると攻撃面が大幅に縮小。`docs/knowhow/observability-parse-failure-log.md` に設計教訓として追記済み

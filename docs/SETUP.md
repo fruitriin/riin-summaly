@@ -158,7 +158,7 @@ summaly のキャッシュ・流量制御は **4 段重ね** で考えるのが�
 parseFailureLog = true
 parseFailureLogMaxGroups = 1000
 parseFailureLogSamplesPerGroup = 5
-parseFailureLogEndpoint = true
+parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
 ```
 
 | 設定キー | 説明 | デフォルト |
@@ -166,7 +166,8 @@ parseFailureLogEndpoint = true
 | `parseFailureLog` | 集約を有効化 | `false` |
 | `parseFailureLogMaxGroups` | グループ数上限（超過時 LRU 風に最古から削除） | `1000` |
 | `parseFailureLogSamplesPerGroup` | 1 グループあたりの直近サンプル数 | `5` |
-| `parseFailureLogEndpoint` | `GET /__diagnostics/parse-failures` を mount | `false` |
+
+> **phase11.5 で `/__diagnostics/parse-failures` HTTP エンドポイントは廃止されました**。プライバシーリスク（過去 preview 試行 URL の漏洩）を恒久排除するため、診断は **`parseFailureLogJsonlPath` で書き出される JSONL ファイル経由のみ** となっています。`parseFailureLogEndpoint` オプションは存在しません（TOML に残っていても silent ignore）。
 
 ### 「絶対失敗する類型」は自動除外
 
@@ -185,39 +186,13 @@ parseFailureLogEndpoint = true
 
 ユーザー＋投稿カテゴリ単位の粒度で「サイト全体の構造」を把握しやすくしています。
 
-### `GET /__diagnostics/parse-failures`
-
-```jsonc
-{
-  "groups": [
-    {
-      "key": "qiita.com/UserA/items",
-      "samples": [
-        { "url": "https://qiita.com/UserA/items/abc", "ts": 1733433600000, "reason": "thin" }
-      ]
-    }
-  ],
-  "size": 1,
-  "enabled": true
-}
-```
-
-**⚠ 公開時は nginx で必ずアクセス制限してください**（過去の preview 試行 URL が誰でも見える状態になりプライバシー漏洩につながります）:
-
-```nginx
-location /__diagnostics/ {
-    allow 127.0.0.1;
-    deny all;
-}
-```
-
 ### プライバシー保護
 
-サンプルに保存される `url` は **`${origin}${pathname}` のみ**（query / fragment / basic auth は捨てる）。session ID / API token がクエリに乗っているケースをある程度防ぎます。それでも path 自体に機密が含まれるサイトのプレビュー URL は記録されるため、エンドポイント公開時の nginx ガードは必須です。
+サンプルに保存される `url` は **`${origin}${pathname}` のみ**（query / fragment / basic auth は捨てる）。session ID / API token がクエリに乗っているケースをある程度防ぎます。それでも path 自体に機密が含まれる URL は記録されるため、JSONL ファイルへのアクセス権限はサーバ運用者のみに限定してください（`chmod 600` 推奨）。
 
-### JSONL 永続化（オプトイン）
+### JSONL ファイル経由のレビュー（推奨運用）
 
-プロセス再起動で in-memory ログは消えるため、月次レビュー等で過去ログを残したい場合は JSONL ファイルへの append を有効化できます:
+プロセス再起動で in-memory ログは消えるため、月次レビュー等で過去ログを残す場合は JSONL ファイルへの append を有効化します。phase11.5 以降、集約データの参照は **JSONL を `cat | jq` するファイルベースの運用が唯一の経路** です。
 
 ```toml
 [diagnostics]
@@ -236,6 +211,19 @@ parseFailureLogJsonlMaxBytes = 10485760   # 10 MiB（デフォルト）
 - 起動時に既存ファイルサイズを読んで cap 判定の起点にする
 - 書き込み権限エラー / ディレクトリ未存在は **サイレントに失敗**（リクエスト処理を止めない）。stderr に 1 度だけ警告を出力
 - cap 越え後の挙動は「以降の append を**停止**」のみ。**ファイルローテーションはしない**ため、運用者は `logrotate` や cron で `mv` / `rm` する想定
+
+集約データの参照例:
+
+```bash
+# 月次レビュー: 頻出グループ key を集計してプラグイン化候補を発見
+cat /var/log/summaly/parse-failures.jsonl | jq -r '.key' | sort | uniq -c | sort -rn | head -20
+
+# tail -f でリアルタイム観察
+tail -f /var/log/summaly/parse-failures.jsonl | jq -c '.'
+
+# thin だけに絞る（throw は除外）
+cat /var/log/summaly/parse-failures.jsonl | jq -c 'select(.reason == "thin")'
+```
 
 ローテーションを `logrotate` で組むなら:
 
@@ -507,16 +495,6 @@ server {
         add_header X-Cache-Status $upstream_cache_status;
 
         proxy_read_timeout 65s;
-    }
-
-    # /__diagnostics/parse-failures を有効化する場合は外部公開しないこと
-    # (過去の preview 試行 URL が誰でも見える状態になりプライバシー漏洩につながる)
-    location /__diagnostics/ {
-        allow 127.0.0.1;
-        deny all;
-        proxy_pass http://summaly_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Connection "";
     }
 }
 ```

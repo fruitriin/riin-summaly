@@ -105,7 +105,7 @@ opts (`SummalyOptions`) — ライブラリ利用時に効くオプション
 | `cacheMaxAge` / `cacheErrorMaxAge` | レスポンスの `Cache-Control` ヘッダ |
 | `inMemoryCache` / `inMemoryCacheMaxEntries` | プロセス内 LRU キャッシュ |
 | `inFlightDedup` | 同一 URL の並列リクエストを 1 本化 |
-| `parseFailureLog` / `parseFailureLogMaxGroups` / `parseFailureLogSamplesPerGroup` / `parseFailureLogEndpoint` / `parseFailureLogJsonlPath` / `parseFailureLogJsonlMaxBytes` | パース失敗ドメインのログ集約 + JSONL 永続化 |
+| `parseFailureLog` / `parseFailureLogMaxGroups` / `parseFailureLogSamplesPerGroup` / `parseFailureLogJsonlPath` / `parseFailureLogJsonlMaxBytes` | パース失敗ドメインのログ集約 + JSONL 永続化（HTTP エンドポイント版は phase11.5 で廃止） |
 
 戻り値
 ----------------------------------------------------------------

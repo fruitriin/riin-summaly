@@ -175,12 +175,10 @@ describe('parseTomlConfigString', () => {
 				parseFailureLog = true
 				parseFailureLogMaxGroups = 500
 				parseFailureLogSamplesPerGroup = 3
-				parseFailureLogEndpoint = true
 			`);
 			expect(cfg.summaly.parseFailureLog).toBe(true);
 			expect(cfg.summaly.parseFailureLogMaxGroups).toBe(500);
 			expect(cfg.summaly.parseFailureLogSamplesPerGroup).toBe(3);
-			expect(cfg.summaly.parseFailureLogEndpoint).toBe(true);
 		});
 
 		test('未指定時はキーが付かない', () => {
@@ -191,7 +189,16 @@ describe('parseTomlConfigString', () => {
 			expect(cfg.summaly.parseFailureLog).toBe(false);
 			expect(cfg.summaly.parseFailureLogMaxGroups).toBeUndefined();
 			expect(cfg.summaly.parseFailureLogSamplesPerGroup).toBeUndefined();
-			expect(cfg.summaly.parseFailureLogEndpoint).toBeUndefined();
+		});
+
+		test('phase11.5 で削除された parseFailureLogEndpoint が TOML に残っていても無視される (smol-toml は unknown key を silent ignore)', () => {
+			const cfg = parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLog = true
+				parseFailureLogEndpoint = true
+			`);
+			expect(cfg.summaly.parseFailureLog).toBe(true);
+			expect((cfg.summaly as Record<string, unknown>).parseFailureLogEndpoint).toBeUndefined();
 		});
 
 		test('正の整数以外（0 / 負数 / 小数）は RangeError', () => {

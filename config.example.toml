@@ -72,21 +72,18 @@ allowed = [
 [diagnostics]
 # パース失敗ドメインのログ蓄積（プラグイン候補発見器、phase10.1）。
 # 「OG/Twitter Card/<title> のいずれも取れず汎用パスでスカスカになった URL」を
-# host + パス先頭 1〜2 セグメント単位で集約してプロセス内に保持する。
-# 「絶対失敗する類型」(StatusError 4xx/5xx, timeout, type filter reject, SSRF block)
-# は自動で除外される。
+# host + パス先頭 1〜2 セグメント単位で集約。「絶対失敗する類型」(StatusError 4xx/5xx,
+# timeout, type filter reject, SSRF block) は自動で除外される。
+#
+# **JSONL 永続化と組み合わせて使う前提** (parseFailureLogJsonlPath を必ず指定):
+# 集約データを参照する HTTP エンドポイントは phase11.5 でプライバシーリスク撤去のため
+# 廃止された。月次レビューは JSONL ファイルを `cat | jq` する運用に移行。
 parseFailureLog = false                  # オプトイン
 parseFailureLogMaxGroups = 1000          # 全体のグループ数上限（LRU 風）
 parseFailureLogSamplesPerGroup = 5       # 1 グループあたりの直近サンプル数
 
-# `GET /__diagnostics/parse-failures` エンドポイントを有効化する。
-# **公開時は nginx 等のネットワーク層で必ずアクセス制限すること**:
-#   location /__diagnostics/ { allow 127.0.0.1; deny all; }
-# 過去の preview 試行 URL が外部から見える状態になりプライバシー漏洩につながる。
-parseFailureLogEndpoint = false
-
-# パース失敗ログを JSONL ファイルに永続化する（オプトイン）。
-# プロセス再起動で in-memory ログは消えるため、月次レビュー等で確認したい場合に指定する。
+# パース失敗ログを JSONL ファイルに永続化する（オプトイン、parseFailureLog: true と組み合わせ）。
+# プロセス再起動で in-memory ログは消えるため、月次レビュー等で確認するには必須。
 # `parseFailureLogJsonlMaxBytes` を超えたら以降の append は停止する（ローテーションはしない）。
 # 「気付いたタイミングで運用者が rm / mv する」運用想定。
 # parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
