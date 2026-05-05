@@ -5,15 +5,17 @@
 
 phase 番号は **着手順**（数値が小さいほど先）。同じ大番号内（例: 2.1 と 2.2）は並列着手可能。
 
-## 現在のフェーズ: phase11.1 待ち
+## 現在のフェーズ: phase11.2 / 11.4 / 11.5 / 11.6 から選択
 
 ## バックログ
 
 | 優先度 | Phase | 計画ファイル | サイズ | 状態 |
 |---|---|---|:---:|---|
-| 中 | 11.1 | [docs/plans/phase11.1-deps-update.md](docs/plans/phase11.1-deps-update.md) — 依存更新（patch/minor 安全帯 + major 個別検証） | S〜M | 未着手 |
 | 中 | 11.2 | [docs/plans/phase11.2-error-category.md](docs/plans/phase11.2-error-category.md) — エラーレスポンスを `category` フィールドでカテゴリ化（[riin-summaly#2](https://github.com/fruitriin/riin-summaly/issues/2)） | S | 未着手 |
 | 中 | 11.4 | [docs/plans/phase11.4-plugin-npmjs.md](docs/plans/phase11.4-plugin-npmjs.md) — npmjs.com プラグイン（Cloudflare 配下の HTML を諦め Registry API 直叩き） | S | 未着手 |
+| 中 | 11.5 | [docs/plans/phase11.5-remove-diagnostics-endpoint.md](docs/plans/phase11.5-remove-diagnostics-endpoint.md) — `/__diagnostics/parse-failures` 診断エンドポイント廃止（プライバシーリスク撤去） | S | 未着手 |
+| 中 | 11.6 | [docs/plans/phase11.6-blocked-failure-log.md](docs/plans/phase11.6-blocked-failure-log.md) — 迂回候補ログ（4xx/5xx・timeout 等を別 JSONL に記録、別 API 発見器） | S〜M | 未着手 |
+| — | 11.1 | [docs/plans/phase11.1-deps-update.md](docs/plans/phase11.1-deps-update.md) — 依存更新（patch/minor 安全帯 + major 個別検証） | S〜M | 完了 (2026-05-05、eslint 10 のみ次回送り) |
 | — | 11.3 | [docs/plans/phase11.3-scpaping-follow-redirect.md](docs/plans/phase11.3-scpaping-follow-redirect.md) — Fastify モードで scpaping のリダイレクト follow が無効化されているバグ修正（[riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) 真因） | S | 完了 (2026-05-05) |
 
 ### 外部リポ連携（summaly スコープ外）
@@ -45,9 +47,11 @@ phase6.1  完了
 phase9.1  完了
 phase10.1 完了
    ↓
-phase11.1 未着手（依存更新）
-phase11.2 未着手（エラーカテゴリ化）  ← 11.1 と並列可
-phase11.4 未着手（npmjs プラグイン）  ← 11.1 / 11.2 と並列可
+phase11.1 完了（依存更新、eslint 10 のみ次回送り）
+phase11.2 未着手（エラーカテゴリ化）
+phase11.4 未着手（npmjs プラグイン）  ← 11.2 と並列可
+phase11.5 未着手（診断エンドポイント廃止） ← 全部と並列可
+phase11.6 未着手（迂回候補ログ）       ← 11.5 後着手なら API がスッキリ
 ```
 
 ---

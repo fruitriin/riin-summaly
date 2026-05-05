@@ -1,6 +1,6 @@
 # Phase 11.1 — 依存更新（patch/minor 安全帯 + major 個別検証）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**（eslint 10 のみ次回送り）
 > 種別: 保守 / 依存追従
 > サイズ: **S** （patch/minor のみ）〜 **M** （major 込み）
 > 関連: なし（独立タスク）
@@ -66,10 +66,11 @@ phase1.1〜10.1 の機能開発が一段落したタイミングで、依存パ�
 
 ## 完了条件
 
-- [ ] Step A の patch/minor 6 件が一括更新され、フルゲート green
-- [ ] Step B の major 3 件が **それぞれ独立したコミット** で更新され、各時点でフルゲート green
-- [ ] Step C の dev/serve 動作確認 OK
-- [ ] `pnpm outdated` の出力が空、もしくは見送った major のみ残る
+- [x] Step A の patch/minor 6 件が一括更新され、フルゲート green (commit `70abd4c`)
+- [x] Step B の major 2 件 (@types/node / @fastify/static) を独立コミットで更新、フルゲート green (`2a5bd04` / `dd69dee`)
+- [ ] **Step B-3 (eslint 9 → 10) は次回送り**: `@misskey-dev/eslint-plugin@2.2.0` が eslint 10 に追従しておらず、`@eslint/eslintrc` の resolve エラー + `@stylistic/eslint-plugin@>=5` / `globals@>=16` の peer dep 不整合。Plan の見送り条件に該当
+- [x] Step C の dev/serve 動作確認 OK (dev: 静的アセット 200、`pnpm serve` で `/v` + `/?url=...` 応答確認)
+- [x] `pnpm outdated` の出力は eslint のみ残る
 
 ---
 

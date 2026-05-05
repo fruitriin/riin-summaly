@@ -33,3 +33,8 @@
 - **2026-05-05 phase10.1 セッション**: 「実装中にユーザー指摘で要件追加」のパターン（絶対失敗類型の除外を `isFilteredFailure` として後付け）が綺麗に組み込めた。`docs/plans/` の Plan を実装結果メモで「方針からの変更」として記録できる構造が活きた。レビュー W-1〜W-3 + S-1 + S-3 を一括で対応してから commit する流れも安定運用できている
 - **2026-05-05 phase10.1 セッション**: `addf-code-review-agent` が **`URL.origin === "null"` （`data:` / `file:` スキーム時）** のコーナーケースを指摘した。これは仕様詳細を知らないと見逃しやすい部分。レビュー agent の知識ベースが日常的なコードレビューと別軸で深いことを再確認できた
 - **2026-05-05 派生ドキュメント同期セッション**: 品質ゲートに「ドキュメントと実装の突き合わせ」チェック (ステップ 4.5) が無く、実装後にドキュメント更新漏れを catch する仕組みが脆弱だった。phase10.1 で `parseFailureLogJsonlPath` を後付けした際、Library.md の Fastify 専用オプション一覧が更新漏れになりかけた事例を契機に、`ProgressTemplate.addf.md` と `Progress.md` 両方にステップ 4.5 を追加。**ADDF フレームワーク本体への寄与候補**（ダウンストリーム版 `ProgressTemplate.md` にも同等のステップ追加が望ましい）
+
+## phase11.1 (依存更新) ノウハウ
+
+- **2026-05-05 phase11.1 セッション**: `pnpm update` だけだと固定バージョン記法 (`"x.y.z"` 形式、`^` `~` なし) の package.json は変わらない。`--latest` フラグ必須。pnpm の挙動として「version range 内で最新を取る」のがデフォルトで、固定バージョンならそもそも range が無いので何もしない。次回も同パターンで詰まりやすいので明示記録
+- **2026-05-05 phase11.1 セッション**: eslint 10 への bump は `@misskey-dev/eslint-plugin@2.2.0` がまだ追従しておらず、`@eslint/eslintrc` の resolve エラー + `@stylistic/eslint-plugin@>=5` / `globals@>=16` の peer dep 不整合で fail。Plan の見送り条件「`@misskey-dev/eslint-plugin` が eslint 10 に追従していなければ次回送り」が機能した
