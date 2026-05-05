@@ -317,7 +317,11 @@ function renderPlayer(result) {
 	if (Array.isArray(player.allow) && player.allow.length > 0) {
 		iframe.setAttribute('allow', player.allow.join('; '));
 	}
-	iframe.setAttribute('referrerpolicy', 'no-referrer');
+	// dev では referrerpolicy を browser default (strict-origin-when-cross-origin) のままにする。
+	// Misskey 本番は privacy 目的で `no-referrer` を使うが、その状態だと YouTube の oEmbed 埋め込み
+	// (`?feature=oembed`) が空 Referer を理由にエラー 153「動画プレーヤーの設定エラー」を返す。
+	// dev は「summaly の出力どおりに iframe が機能するか」を確認するのが目的のため、
+	// embed 側の referrer 検証を通せる挙動を優先する。
 	iframe.setAttribute('sandbox', IFRAME_SANDBOX);
 	panePlayer.appendChild(iframe);
 }
