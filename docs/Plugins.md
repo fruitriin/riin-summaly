@@ -149,7 +149,7 @@ interface SummalyPlugin {
 | description | `text` から `entities.media[0].indices[0]` で本文末尾の t.co 短縮 URL を切り落とす |
 | thumbnail | `video.poster` → `photos[0].url` → `user.profile_image_url_https`（`_normal.` を除去してオリジナル）の優先順位 |
 | medias | `photos[*].url` を全て返す（複数画像ツイートの全画像表示用） |
-| player | `https://platform.twitter.com/embed/Tweet.html?id=<id>` の公式 widget iframe を返す。`width: 550 / height: 600` 固定（CDN レスポンスは寸法を返さないため）、`allow` は `PLAYER_ALLOW_OEMBED` |
+| player | **常に null**。Misskey 側に「ポストを展開する」機能があり、summaly が iframe player を返すと表示が二重化するため返さない（mei23 オリジナル準拠） |
 | sitename | 固定値 `'X'` |
 | sensitive | `j.possibly_sensitive ?? false` |
 | 固定値 | `icon: 'https://abs.twimg.com/favicons/twitter.3.ico'` |

@@ -3,8 +3,11 @@
  *
  * `(twitter|x).com/<user>/status/<id>` 形式の URL について、
  * `cdn.syndication.twimg.com/tweet-result` から JSON を取得して description / thumbnail /
- * sitename / sensitive / medias[] を組み立てる。さらに `https://platform.twitter.com/embed/Tweet.html?id=<id>`
- * の公式 X widget iframe を `player.url` として返し、Misskey 等の利用側で展開できるようにする。
+ * sitename / sensitive / medias[] を組み立てる。
+ *
+ * **player は null** で返す: Misskey 側に「ポストを展開する」機能があり、別途 X widget の
+ * 展開導線を持っているため、summaly 側で iframe player を返すと重複表示になる。mei23 オリジナル
+ * の挙動と同じ。
  *
  * **メンテナンス上の警告**:
  * - `cdn.syndication.twimg.com` は X の内部 CDN（公開 API ではない）であり、token 算出ロジックも
@@ -15,16 +18,10 @@
 import type Summary from '@/summary.js';
 import type { GeneralScrapingOptions } from '@/general.js';
 import { getJson } from '@/utils/got.js';
-import { PLAYER_ALLOW_OEMBED } from '@/utils/player-allow.js';
 
 export const name = 'twitter';
 
 const STATUS_RE = /^\/(?:[^/]+)\/status\/(\d+)/;
-
-// 公式 X widget Tweet 埋め込みの標準寸法。CDN レスポンスは寸法を返さないため固定値。
-// 利用側 (Misskey) で iframe の width/height を override する想定。
-const PLAYER_WIDTH = 550;
-const PLAYER_HEIGHT = 600;
 
 const ICON_URL = 'https://abs.twimg.com/favicons/twitter.3.ico';
 
@@ -87,6 +84,10 @@ export function buildSummary(id: string, json: unknown): Summary | null {
 		?.map(p => p.url)
 		.filter((u): u is string => typeof u === 'string');
 
+	// `id` は status URL から抽出する callee 側で確定済みだが、引数として保持して将来 player を
+	// 復活させたくなったときの拡張余地を残す。
+	void id;
+
 	const summary: Summary = {
 		title: j.user?.name ? `${j.user.name} on X` : 'X',
 		icon: ICON_URL,
@@ -94,12 +95,8 @@ export function buildSummary(id: string, json: unknown): Summary | null {
 		thumbnail,
 		sitename: 'X',
 		sensitive: j.possibly_sensitive ?? false,
-		player: {
-			url: `https://platform.twitter.com/embed/Tweet.html?id=${id}`,
-			width: PLAYER_WIDTH,
-			height: PLAYER_HEIGHT,
-			allow: [...PLAYER_ALLOW_OEMBED],
-		},
+		// Misskey 側に「ポストを展開する」機能があるため iframe player は返さない（mei23 オリジナル準拠）。
+		player: { url: null, width: null, height: null, allow: [] },
 		activityPub: null,
 		fediverseCreator: null,
 	};

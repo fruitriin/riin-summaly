@@ -44,7 +44,7 @@ URL から `title` / `description` / `thumbnail` / `icon` / `sitename` / 埋め�
 | **dev サーバ UI** | `pnpm dev` で `http://127.0.0.1:3000`。URL を入れて JSON / Misskey 風カード / iframe プレーヤーを並列確認、サンプル URL ワンクリック | tsx + Vanilla JS |
 | **パース失敗ログ集約** | 「OG/Twitter Card/`<title>` のいずれも取れず汎用パスでスカスカになった URL」を host + path 単位で集約。**プラグイン化候補のドメイン発見器** | `[diagnostics] parseFailureLog`、`/__diagnostics/parse-failures`、JSONL 永続化 |
 | **短縮 URL の HEAD→GET fallback** | `amzn.asia` のように HEAD に 404 を返すサーバを GET fallback で正しく解決 | `KNOWN_SHORT_HOSTS` |
-| **twitter (X) プラグイン** | `cdn.syndication.twimg.com` 直叩きで本文 + 公式 widget の **iframe player** を返す（mei23 fork ベース + player iframe 拡張） | `(twitter\|x).com/<user>/status/<id>` |
+| **twitter (X) プラグイン** | `cdn.syndication.twimg.com` 直叩きで本文 + thumbnail + `medias[]` を返す。**player は null**（Misskey 側「ポストを展開」と重複しないように） | `(twitter\|x).com/<user>/status/<id>` |
 
 ---
 
@@ -64,7 +64,7 @@ riin-summaly vs 本家 (misskey-dev) vs mei23-summaly
 | プラグインシステム | ✅ | ✅ | ✅ |
 | youtube / youtu.be | ✅ | プレビューなし | ✅ |
 | amazon | ✅ (`amzn.asia` 含む) | 基本対応 | 基本対応 |
-| twitter (X) | ✅ (本文 + player iframe) | 汎用パス（薄い） | ✅ (本文のみ、player なし) |
+| twitter (X) | ✅ (本文 + medias[]、player は null) | 汎用パス（薄い） | ✅ (本文のみ) |
 | PDF タイトル取得（オプトイン） | ✅ | — | — |
 
 ---
@@ -115,7 +115,7 @@ allowed = ["amazon", "bluesky", "wikipedia", "branchio-deeplinks", "youtube", "s
 | `branchio-deeplinks` | `*.app.link` / `spotify.link` | `$web_only=true` を付けて Web 版にリダイレクトさせ汎用パスへ |
 | `youtube` | `(www\|m).youtube.com/{watch,v,playlist,shorts}` / `youtu.be` | oEmbed エンドポイント直叩きで 1 リクエスト |
 | `spotify` | `open.spotify.com` | oEmbed エンドポイント直叩き |
-| `twitter` | `(twitter\|x).com/<user>/status/<id>` | `cdn.syndication.twimg.com` から JSON 取得 + `platform.twitter.com/embed/Tweet.html` を player に展開、複数画像は `medias[]`。**X 側仕様変更で壊れうるため要メンテ** |
+| `twitter` | `(twitter\|x).com/<user>/status/<id>` | `cdn.syndication.twimg.com` から JSON 取得して title/description/thumbnail を返す。複数画像は `medias[]`、player は null（Misskey の「ポストを展開」と重複しないため）。**X 側仕様変更で壊れうるため要メンテ** |
 | `dlsite` | `www.dlsite.com` | `/announce/` ↔ `/work/` の 404 リトライ + パス分類で sensitive 判定 |
 | `iwara` | `(www\|ecchi).iwara.tv` | description / thumbnail を DOM から補完、`ecchi.` ホストで sensitive |
 | `komiflo` | `komiflo.com/comics/<id>` | thumbnail フォールバック時に `api.komiflo.com` から取得 + sensitive |

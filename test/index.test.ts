@@ -1191,7 +1191,7 @@ describe('local tests', () => {
 					expect(t1.length).toBeGreaterThan(0);
 				});
 
-				test('buildSummary はテキストツイートから description / player iframe を組み立てる', async () => {
+				test('buildSummary はテキストツイートから description を組み立てる（player は null = Misskey 側展開導線に委ねる）', async () => {
 					const { buildSummary } = await import('@/plugins/twitter.js');
 					const fixture = {
 						text: 'just setting up my twttr',
@@ -1205,11 +1205,11 @@ describe('local tests', () => {
 					expect(summary!.sitename).toBe('X');
 					// `_normal.` を除いたオリジナル profile 画像が thumbnail に
 					expect(summary!.thumbnail).toBe('https://pbs.twimg.com/profile_images/123/abc.jpg');
-					// player は X 公式 widget の iframe URL
-					expect(summary!.player.url).toBe('https://platform.twitter.com/embed/Tweet.html?id=20');
-					expect(summary!.player.width).toBe(550);
-					expect(summary!.player.height).toBe(600);
-					expect(summary!.player.allow).toContain('fullscreen');
+					// player は null（Misskey の「ポストを展開する」機能と重複しないように）
+					expect(summary!.player.url).toBeNull();
+					expect(summary!.player.width).toBeNull();
+					expect(summary!.player.height).toBeNull();
+					expect(summary!.player.allow).toEqual([]);
 				});
 
 				test('複数画像ツイートは medias[] に全画像 + thumbnail に先頭', async () => {

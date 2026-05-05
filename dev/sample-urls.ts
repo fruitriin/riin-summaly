@@ -69,7 +69,7 @@ export const sampleGroups: SampleGroup[] = [
 	},
 	{
 		name: 'twitter (X)',
-		description: 'cdn.syndication.twimg.com から JSON 取得 + 公式 widget の iframe を player に展開（仕様変更で壊れうる）',
+		description: 'cdn.syndication.twimg.com から JSON 取得（仕様変更で壊れうる）。player は null（Misskey 側「ポストを展開」と重複しないように）',
 		urls: [
 			{ label: '@jack 最初のツイート', url: 'https://twitter.com/jack/status/20' },
 			{ label: 'X ホスト名でも OK', url: 'https://x.com/jack/status/20' },

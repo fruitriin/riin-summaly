@@ -16,7 +16,7 @@
 * twitter (X) プラグインを追加 (phase6.1):
   * `(twitter|x).com/<user>/status/<id>` をハンドル
   * `cdn.syndication.twimg.com/tweet-result` から JSON を取得して description / thumbnail / sensitive / `medias[]`（複数画像対応）を組み立てる
-  * `platform.twitter.com/embed/Tweet.html?id=<id>` を `player.url` として返し、利用側で iframe 展開できる
+  * `player` は **常に null**（Misskey 側に「ポストを展開する」機能があり、summaly が iframe player を返すと表示が二重化するため／mei23 オリジナル準拠）
   * **メンテナンス上の警告**: X 内部 CDN と独自 token 算出ロジックを利用しているため、X 側仕様変更で予告なく壊れる。デフォルト有効だがリスクを承知で運用すること。動作不要なら `allowedPlugins` から `twitter` を除外する
   * 元実装: mei23 fork
 * **Breaking**: スタンドアロン Fastify サーバの起動方式を **TOML 設定ファイル** に移行 (phase8.1):
