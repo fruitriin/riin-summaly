@@ -255,6 +255,31 @@ describe('parseTomlConfigString', () => {
 				parseFailureLogJsonlMaxBytes = -1
 			`)).toThrow(/parseFailureLogJsonlMaxBytes.*non-negative/);
 		});
+
+		test('parseFailureLogBlockedJsonlPath / Bytes をマップ (phase11.6)', () => {
+			const cfg = parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLog = true
+				parseFailureLogBlockedJsonlPath = "/var/log/summaly/blocked.jsonl"
+				parseFailureLogBlockedJsonlMaxBytes = 5242880
+			`);
+			expect(cfg.summaly.parseFailureLogBlockedJsonlPath).toBe('/var/log/summaly/blocked.jsonl');
+			expect(cfg.summaly.parseFailureLogBlockedJsonlMaxBytes).toBe(5242880);
+		});
+
+		test('parseFailureLogBlockedJsonlPath が空文字列だと RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLogBlockedJsonlPath = ""
+			`)).toThrow(/parseFailureLogBlockedJsonlPath.*must not be empty/);
+		});
+
+		test('parseFailureLogBlockedJsonlMaxBytes が負数だと RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[diagnostics]
+				parseFailureLogBlockedJsonlMaxBytes = -1
+			`)).toThrow(/parseFailureLogBlockedJsonlMaxBytes.*non-negative/);
+		});
 	});
 
 	describe('[scraping.fallback] (phase11.9)', () => {

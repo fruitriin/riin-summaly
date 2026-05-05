@@ -300,6 +300,20 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 			expectNonNegativeFiniteNumber(d.parseFailureLogJsonlMaxBytes as number, 'diagnostics.parseFailureLogJsonlMaxBytes');
 			out.parseFailureLogJsonlMaxBytes = d.parseFailureLogJsonlMaxBytes as number;
 		}
+		// 迂回候補ログ (phase11.6)
+		if (d.parseFailureLogBlockedJsonlPath !== undefined) {
+			expectType(d.parseFailureLogBlockedJsonlPath, 'string', 'diagnostics.parseFailureLogBlockedJsonlPath');
+			const path = (d.parseFailureLogBlockedJsonlPath as string).trim();
+			if (path === '') {
+				throw new RangeError('config: `diagnostics.parseFailureLogBlockedJsonlPath` must not be empty');
+			}
+			out.parseFailureLogBlockedJsonlPath = path;
+		}
+		if (d.parseFailureLogBlockedJsonlMaxBytes !== undefined) {
+			expectType(d.parseFailureLogBlockedJsonlMaxBytes, 'number', 'diagnostics.parseFailureLogBlockedJsonlMaxBytes');
+			expectNonNegativeFiniteNumber(d.parseFailureLogBlockedJsonlMaxBytes as number, 'diagnostics.parseFailureLogBlockedJsonlMaxBytes');
+			out.parseFailureLogBlockedJsonlMaxBytes = d.parseFailureLogBlockedJsonlMaxBytes as number;
+		}
 	}
 
 	return out;

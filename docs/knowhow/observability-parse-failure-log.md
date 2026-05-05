@@ -111,9 +111,57 @@ parseFailureLogJsonlMaxBytes = 10485760
 
 > phase11.5: `parseFailureLogEndpoint` キーは削除済み。TOML に残っていても smol-toml が unknown key を silent ignore するため起動失敗にはならない（既存ユーザーの移行を緩やかにするため）。
 
+## 迂回候補ログ（別系統 JSONL、phase11.6）
+
+phase10.1 の「プラグイン候補ログ」とは別ファイルに、**`isFilteredFailure` 対象**（4xx/5xx, timeout, SSRF block, type filter, network, connection_dropped）の失敗を集約する仕組みを phase11.6 で追加。
+
+### なぜ別ファイルにするか
+
+1. **シグナルの純度を保つ**: 既存ログと混ぜると 4xx/5xx 大量発生で「本当にプラグインを書けば救える候補」が埋もれる
+2. **流量が違う**: ブロック失敗は 4xx/5xx 全部なので量が桁違いに多い可能性。サイズ cap も別管理
+3. **目的が違う**: プラグイン候補は「コードを書けば改善」、迂回候補は「別 API を見つけるか諦めるか」の二段階レビュー
+4. **`jq` クエリも分けやすい**: 同一ファイルに混ぜると category フィルタが必要、別ファイルなら全行対象でシンプル
+
+### 設計の決め手
+
+- **`record()` 内部で振り分け**: 呼出側はカテゴリ判定ロジックを持たない。`record(url, reason, errorMessage?, errorName?, statusCode?)` に判定材料を渡すだけ
+- **`JsonlAppender` の抽出**: cap・I/O エラー連発抑制のロジックを内部クラスに切り出し、candidate / blocked で再利用。phase10.1 までは `appendJsonl` メソッドだった部分をクラス化することで、複数の出力先を持つときの状態管理（`bytes` カウンタ・`writeErrorLogged` フラグ）が綺麗に分離される
+- **in-memory 集約しない**: 迂回候補は月次〜不定期レビューで十分、ライブで見る用途は無い。メモリ消費を増やしたくない（4xx/5xx 大量流入時に `Map` を肥大化させたくない）
+- **互換性**: `record()` の `errorName` / `statusCode` 引数は optional。古い呼び出し側は判定材料が不足するが既存挙動を保つ
+
+### このログから発見できる候補例
+
+- npm.com（403 → registry.npmjs.org が公開 JSON API、phase11.4 で実装済み）
+- GitHub のレート制限ページ → API トークン経由の代替
+- Cloudflare 配下のメディアサイトで oEmbed エンドポイントは ungated なケース
+- ニュースサイトの会員制ページ → AMP 版 / 公式 RSS が公開
+- `connection_dropped` 多発サイト → phase11.9 のフォールバック UA で救えなかった残り（IP block 系、Vultr Tokyo IP 等のレピュテーション差問題）
+- `timeout` 多発サイト → 別 CDN ホストや軽量モバイル版の存在
+
+### 運用クエリ例
+
+```bash
+# bot block (4xx) されたサイトを集計
+cat /var/log/summaly/parse-failures-blocked.jsonl \
+  | jq -c 'select(.category == "bot_blocked") | .url' | sort -u | head -20
+
+# WAF 黙殺 (connection_dropped) を抽出
+cat /var/log/summaly/parse-failures-blocked.jsonl \
+  | jq -c 'select(.category == "connection_dropped") | .url' | sort -u
+
+# timeout 多発サイト
+cat /var/log/summaly/parse-failures-blocked.jsonl \
+  | jq -c 'select(.category == "timeout") | .url' | sort | uniq -c | sort -rn
+```
+
+### プライバシー
+
+candidate ログと同じく失敗 URL の origin+pathname を記録。ファイルパーミッション 600 推奨。
+
 ## 参考
 
 - [docs/plans/phase10.1-parse-failure-log.md](../plans/phase10.1-parse-failure-log.md)
+- [docs/plans/phase11.6-blocked-failure-log.md](../plans/phase11.6-blocked-failure-log.md)
 - [src/utils/parse-failure-log.ts](../../src/utils/parse-failure-log.ts)
 - [src/index.ts](../../src/index.ts)（Fastify ハンドラ統合）
 - [bin/config-loader.ts](../../bin/config-loader.ts)（`[diagnostics]` セクション parsing）

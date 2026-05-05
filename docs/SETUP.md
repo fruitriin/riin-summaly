@@ -303,6 +303,57 @@ cat /var/log/summaly/parse-failures.jsonl | jq -c 'select(.reason == "thin")'
 
 `copytruncate` を使うと summaly プロセスを再起動せずローテートできますが、in-memory のサイズキャッシュとファイル実体に齟齬が出るため、ローテート後は `summaly serve` を再起動するのが確実です。
 
+### 迂回候補ログ（phase11.6）
+
+`parseFailureLogJsonlPath`（プラグイン候補）とは別ファイルに、**4xx/5xx・timeout・SSRF block・type filter 等で記録対象外になった失敗**を集約できます:
+
+```toml
+[diagnostics]
+parseFailureLog = true
+parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"          # プラグイン候補
+parseFailureLogBlockedJsonlPath = "/var/log/summaly/parse-failures-blocked.jsonl"  # 迂回候補
+parseFailureLogBlockedJsonlMaxBytes = 10485760  # 10 MiB（デフォルト）
+```
+
+| 設定キー | 説明 | デフォルト |
+|:--|:--|:--|
+| `parseFailureLogBlockedJsonlPath` | 迂回候補 JSONL パス | `undefined`（永続化なし） |
+| `parseFailureLogBlockedJsonlMaxBytes` | 迂回候補 JSONL の cap | `10485760`（10 MiB） |
+
+各行に `category` (`SummalyErrorCategory`) と `errorName` が含まれるため、jq で細分フィルタが可能:
+
+```bash
+# bot block (4xx) されたサイトを集計 → 別 API がある SaaS の発見
+cat /var/log/summaly/parse-failures-blocked.jsonl \
+  | jq -c 'select(.category == "bot_blocked") | .url' | sort -u | head -20
+
+# connection_dropped (WAF 黙殺) を抽出 → phase11.9 のフォールバック UA で救えなかった残り
+cat /var/log/summaly/parse-failures-blocked.jsonl \
+  | jq -c 'select(.category == "connection_dropped") | .url' | sort -u
+
+# timeout 多発サイトを発見 → 別 CDN ホスト or モバイル版を探す候補
+cat /var/log/summaly/parse-failures-blocked.jsonl \
+  | jq -c 'select(.category == "timeout") | .url' | sort | uniq -c | sort -rn
+```
+
+#### プラグイン候補ログとの違い
+
+| 比較軸 | `parseFailureLogJsonlPath` (phase10.1) | `parseFailureLogBlockedJsonlPath` (phase11.6) |
+|:--|:--|:--|
+| 記録対象 | thin Summary + 非フィルタ throw（プラグインで救える候補） | フィルタ対象 throw（4xx/5xx, timeout, SSRF, type filter, network, connection_dropped） |
+| 用途 | プラグイン化候補の発見 | 迂回候補（別 API ホスト・別エンドポイント）の発見 |
+| in-memory 集約 | あり (1000 group × 5 sample) | **なし**（流量過大によるメモリ消費を避ける） |
+| 流量 | 少 | 多（4xx/5xx 全部が来うる） |
+| 行のフィールド | `key, url, ts, reason, errorMessage?` | `key, url, ts, reason, errorMessage?, errorName?, category` |
+
+#### プライバシー注意
+
+迂回候補ログには **失敗した URL の origin+pathname** が記録されます。プラグイン候補ログと同様、ファイルパーミッションを 600 に絞ること推奨:
+
+```bash
+chmod 600 /var/log/summaly/parse-failures-blocked.jsonl
+```
+
 バージョン確認エンドポイント `GET /v`
 ----------------------------------------------------------------
 

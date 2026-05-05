@@ -1,6 +1,6 @@
 # Phase 11.6 — 迂回候補ログ（ブロック失敗の別系統 JSONL）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: 機能追加
 > サイズ: **S〜M**
 > 依存: なし（[phase11.5](phase11.5-remove-diagnostics-endpoint.md) と並列可、後着手なら API がスッキリ）
@@ -155,33 +155,33 @@ export function categorizeBlockedFailure(errorName?: string, errorMessage?: stri
 
 各ステップで `pnpm eslint && pnpm test && pnpm typecheck` を通す。
 
-- [ ] **Step 1 — `analyzeFailure()` 統合**
+- [x] **Step 1 — `analyzeFailure()` 統合**
   - [src/utils/parse-failure-log.ts](../../src/utils/parse-failure-log.ts) に `analyzeFailure(reason, errorMessage, errorName): { filtered: boolean; category: BlockedCategory | null }` を新設
   - 既存 `isFilteredFailure()` は `analyzeFailure().filtered` を呼ぶラッパに変える（公開 API として残す）
   - 単体テストでカテゴリ判定の網羅（`status-4xx` `status-5xx` `timeout` `cancel` `private-ip` `type-filter` `network-unreachable` `unknown`）
-- [ ] **Step 2 — `JsonlAppender` 抽出**
+- [x] **Step 2 — `JsonlAppender` 抽出**
   - 既存の [src/utils/parse-failure-log.ts:237-259](../../src/utils/parse-failure-log.ts#L237-L259) の `appendJsonl` ロジック（サイズ cap、起動時 stat、エラー連発抑制）を `JsonlAppender` クラスとして抽出
   - `ParseFailureLog` は内部に 2 つの `JsonlAppender`（plugin-candidate 用、blocked 用）を持つ
   - 単体テストで append 動作 / cap 越え / I/O エラー時の stderr 1 回出力を確認
-- [ ] **Step 3 — `ParseFailureLog.record()` の signature と分岐ロジック**
+- [x] **Step 3 — `ParseFailureLog.record()` の signature と分岐ロジック**
   - `record(url, reason, errorMessage?, errorName?)` に `errorName` 引数を追加（optional、互換性維持）
   - 内部で `analyzeFailure()` を呼び:
     - `filtered === true` → blocked JSONL appender に書き、in-memory 集約はスキップ
     - `filtered === false` → 既存 plugin-candidate JSONL appender に書き、in-memory 集約も従来通り
   - 単体テストで両系統の JSONL に正しく振り分けられることを確認
-- [ ] **Step 4 — オプション定義 / 配線**
+- [x] **Step 4 — オプション定義 / 配線**
   - [src/index.ts](../../src/index.ts) `FastifyPluginOptions` に `parseFailureLogBlockedJsonlPath?: string` と `parseFailureLogBlockedJsonlMaxBytes?: number` を追加
   - `ParseFailureLog` のコンストラクタに渡す
   - `if (parseFailureLog != null)` のブロックで `record()` 呼び出しに `errorName` を渡す
-- [ ] **Step 5 — bin / TOML 側の配線**
+- [x] **Step 5 — bin / TOML 側の配線**
   - [bin/summaly-server.ts](../../bin/summaly-server.ts) と TOML loader に新規 2 オプションを追加
   - スキーマ検証（`parseFailureLogBlockedJsonlMaxBytes` は positive integer）
-- [ ] **Step 6 — 統合テスト**
+- [x] **Step 6 — 統合テスト**
   - npmjs.com 403 を再現するモックサーバを立て、Fastify モードで:
     - blocked JSONL に 1 行記録される
     - plugin-candidate JSONL は 0 行（純度を保つ）
     - in-memory `size` も増えない
-- [ ] **Step 7 — config example 更新（4.5 のドキュメント突き合わせ）**
+- [x] **Step 7 — config example 更新（4.5 のドキュメント突き合わせ）**
   - [config.example.toml](../../config.example.toml) と [docs/deploy-examples/summaly-config.example.toml](../../docs/deploy-examples/summaly-config.example.toml) に追加:
     ```toml
     # 迂回候補ログ JSONL の出力先（オプトイン）。
@@ -190,15 +190,15 @@ export function categorizeBlockedFailure(errorName?: string, errorMessage?: stri
     # parseFailureLogBlockedJsonlPath = "/var/log/summaly/parse-failures-blocked.jsonl"
     # parseFailureLogBlockedJsonlMaxBytes = 10485760  # 10 MiB（デフォルト）
     ```
-- [ ] **Step 8 — ドキュメント更新**
+- [x] **Step 8 — ドキュメント更新**
   - [CLAUDE.repo.md](../../CLAUDE.repo.md) — 迂回候補ログの存在と運用方法を「対応形式」セクションの後または運用セクションに追加
   - [CHANGELOG.md](../../CHANGELOG.md) unreleased — `### Added` に追記
   - [docs/Library.md](../../docs/Library.md) — 新オプションを公開 API リストに追加
   - 必要なら [docs/SETUP.md](../../docs/SETUP.md) にも運用例（`jq` クエリの例）を追記
-- [ ] **Step 9 — knowhow 記録**
+- [x] **Step 9 — knowhow 記録**
   - 「Cloudflare bot block 等のフィルタ対象失敗から迂回候補（別 API ホスト）を発見するパターン」を `docs/knowhow/` に記録
   - 既存 [docs/knowhow/INDEX.md](../../docs/knowhow/INDEX.md) に登録
-- [ ] **Step 10 — 品質ゲート**
+- [x] **Step 10 — 品質ゲート**
   - `pnpm build && pnpm eslint && pnpm typecheck && pnpm test`
   - `bash .claude/tests/run-all.sh`
   - `addf-code-review-agent` / `addf-contribution-agent`

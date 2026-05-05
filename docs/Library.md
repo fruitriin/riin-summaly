@@ -108,6 +108,7 @@ opts (`SummalyOptions`) — ライブラリ利用時に効くオプション
 | `inMemoryCache` / `inMemoryCacheMaxEntries` | プロセス内 LRU キャッシュ |
 | `inFlightDedup` | 同一 URL の並列リクエストを 1 本化 |
 | `parseFailureLog` / `parseFailureLogMaxGroups` / `parseFailureLogSamplesPerGroup` / `parseFailureLogJsonlPath` / `parseFailureLogJsonlMaxBytes` | パース失敗ドメインのログ集約 + JSONL 永続化（HTTP エンドポイント版は phase11.5 で廃止） |
+| `parseFailureLogBlockedJsonlPath` / `parseFailureLogBlockedJsonlMaxBytes` | 迂回候補ログ JSONL (phase11.6)。4xx/5xx・timeout・SSRF block 等の「フィルタ対象」失敗を別ファイルに集約。「公開 HTML はブロックだが別 API で同等情報が取れる」パターン発見用 |
 
 戻り値
 ----------------------------------------------------------------

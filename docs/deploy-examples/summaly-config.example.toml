@@ -28,6 +28,12 @@ enabled = true
 userAgent = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
 categories = ["bot_blocked", "connection_dropped"]
 
+[diagnostics]
+# 迂回候補ログ (phase11.6) を有効化したい場合の例:
+# parseFailureLog = true
+# parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
+# parseFailureLogBlockedJsonlPath = "/var/log/summaly/parse-failures-blocked.jsonl"
+
 [plugins]
 allowed = [
   "amazon",
@@ -36,4 +42,11 @@ allowed = [
   "branchio-deeplinks",
   "youtube",
   "spotify",
+  "twitter",
+  "npmjs",
+  # 性的コンテンツを含むサイトの組み込みプラグイン。有効化したい場合のみコメントを外す:
+  # "dlsite",
+  # "iwara",
+  # "komiflo",
+  # "nijie",
 ]

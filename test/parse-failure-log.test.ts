@@ -521,3 +521,140 @@ describe('ParseFailureLog (JSONL 永続化)', () => {
 		expect(log.size).toBe(1);
 	});
 });
+
+describe('ParseFailureLog 迂回候補ログ (phase11.6)', () => {
+	let tmpDir: string;
+	beforeEach(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), 'summaly-pflog-blocked-'));
+	});
+	afterEach(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	test('throw + フィルタ対象 (4xx) は blocked JSONL に書かれ、in-memory には残らない', () => {
+		const candidatePath = join(tmpDir, 'pf.jsonl');
+		const blockedPath = join(tmpDir, 'blocked.jsonl');
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: candidatePath,
+			blockedJsonlPath: blockedPath,
+		});
+
+		log.record('https://www.npmjs.com/package/mfm', 'throw', '403 Forbidden', 'StatusError', 403);
+
+		// in-memory には残らない（流量抑制）
+		expect(log.size).toBe(0);
+		// candidate JSONL も空（プラグイン候補純度を保つ）
+		expect(() => readFileSync(candidatePath, 'utf8')).toThrow();
+		// blocked JSONL に 1 行
+		const lines = readFileSync(blockedPath, 'utf8').split('\n').filter(Boolean);
+		expect(lines).toHaveLength(1);
+		const entry = JSON.parse(lines[0]) as { key: string; reason: string; category: string; errorName: string };
+		expect(entry.key).toBe('www.npmjs.com/package/mfm');
+		expect(entry.reason).toBe('throw');
+		expect(entry.category).toBe('bot_blocked');
+		expect(entry.errorName).toBe('StatusError');
+	});
+
+	test('throw + 非フィルタ対象 (parse_error) は candidate JSONL + in-memory', () => {
+		const candidatePath = join(tmpDir, 'pf.jsonl');
+		const blockedPath = join(tmpDir, 'blocked.jsonl');
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: candidatePath,
+			blockedJsonlPath: blockedPath,
+		});
+
+		log.record('https://example.com/post', 'throw', 'failed summarize', 'Error');
+
+		expect(log.size).toBe(1);
+		const lines = readFileSync(candidatePath, 'utf8').split('\n').filter(Boolean);
+		expect(lines).toHaveLength(1);
+		// blocked JSONL は空
+		expect(() => readFileSync(blockedPath, 'utf8')).toThrow();
+	});
+
+	test('thin reason は常に candidate JSONL（blocked には混ざらない）', () => {
+		const candidatePath = join(tmpDir, 'pf.jsonl');
+		const blockedPath = join(tmpDir, 'blocked.jsonl');
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: candidatePath,
+			blockedJsonlPath: blockedPath,
+		});
+
+		log.record('https://example.com/article', 'thin');
+
+		expect(log.size).toBe(1);
+		expect(readFileSync(candidatePath, 'utf8').split('\n').filter(Boolean)).toHaveLength(1);
+		expect(() => readFileSync(blockedPath, 'utf8')).toThrow();
+	});
+
+	test('カテゴリ別: connection_dropped / timeout / ssrf_blocked / network_error が blocked に振り分けられる', () => {
+		const blockedPath = join(tmpDir, 'blocked.jsonl');
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			blockedJsonlPath: blockedPath,
+		});
+
+		log.record('https://a.com/x', 'throw', 'socket hang up');
+		log.record('https://b.com/x', 'throw', 'request timed out', 'TimeoutError');
+		log.record('https://c.com/x', 'throw', 'Private IP rejected 10.0.0.1');
+		log.record('https://d.com/x', 'throw', 'getaddrinfo ENOTFOUND foo');
+
+		const lines = readFileSync(blockedPath, 'utf8').split('\n').filter(Boolean);
+		expect(lines).toHaveLength(4);
+		const cats = lines.map(l => (JSON.parse(l) as { category: string }).category);
+		expect(cats).toEqual(['connection_dropped', 'timeout', 'ssrf_blocked', 'network_error']);
+	});
+
+	test('blockedJsonlPath 未指定なら blocked 経路はサイレントに no-op', () => {
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+		});
+		// throw + フィルタ対象を投げても何も起きない（in-memory も増えない、JSONL も無い）
+		expect(() => log.record('https://blocked.com/x', 'throw', '403 Forbidden', 'StatusError', 403)).not.toThrow();
+		expect(log.size).toBe(0);
+	});
+
+	test('blockedJsonlMaxBytes 越え時は append 停止（candidate cap とは独立）', () => {
+		const candidatePath = join(tmpDir, 'pf.jsonl');
+		const blockedPath = join(tmpDir, 'blocked.jsonl');
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: candidatePath,
+			jsonlMaxBytes: 10485760, // 大きい cap
+			blockedJsonlPath: blockedPath,
+			blockedJsonlMaxBytes: 500, // 1〜3 行分は通せる小さい cap
+		});
+
+		// 5 件投げる → cap で途中から append 停止
+		for (let i = 0; i < 5; i++) {
+			log.record(`https://blocked${i}.com/x`, 'throw', '403 Forbidden', 'StatusError', 403);
+		}
+		const blockedContent = readFileSync(blockedPath, 'utf8');
+		expect(blockedContent.length).toBeLessThanOrEqual(500);
+		// 少なくとも 1 行は書けた（cap が 0 ではない）
+		expect(blockedContent.split('\n').filter(Boolean).length).toBeGreaterThanOrEqual(1);
+
+		// candidate 側は cap 越えしていないので thin は引き続き書ける
+		log.record('https://example.com/article', 'thin');
+		expect(log.size).toBe(1);
+		expect(readFileSync(candidatePath, 'utf8').split('\n').filter(Boolean)).toHaveLength(1);
+	});
+
+	test('parseFailureLogBlockedJsonlMaxBytes が負数だと RangeError', () => {
+		expect(() => new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			blockedJsonlPath: '/tmp/x.jsonl',
+			blockedJsonlMaxBytes: -1,
+		})).toThrow(/parseFailureLogBlockedJsonlMaxBytes/);
+	});
+});

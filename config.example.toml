@@ -64,7 +64,8 @@ allowed = [
   "branchio-deeplinks",
   "youtube",
   "spotify",
-	"twitter",
+  "twitter",
+  "npmjs",
   # 性的コンテンツを含むサイトの組み込みプラグイン。除外したい場合はコメントアウトのまま:
   # "dlsite",
   # "iwara",
@@ -103,3 +104,13 @@ parseFailureLogSamplesPerGroup = 5       # 1 グループあたりの直近サ�
 # 「気付いたタイミングで運用者が rm / mv する」運用想定。
 # parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
 # parseFailureLogJsonlMaxBytes = 10485760  # 10 MiB（デフォルト）
+
+# 迂回候補ログ JSONL の出力先（オプトイン、phase11.6）。
+# 4xx/5xx・timeout・SSRF block・type filter 等で記録対象外になった失敗を **別ファイル** に集めることで、
+# 「公開 HTML はブロックだが別 API で同等情報が取れる」パターン（npm の registry.npmjs.org が好例）を
+# 後から発見しやすくする。各行に `category` (`bot_blocked` / `connection_dropped` 等) と `errorName` が付くため
+# `cat blocked.jsonl | jq -c 'select(.category == "bot_blocked") | .url' | sort -u | head` で迂回候補発見。
+# 流量はプラグイン候補ログより多くなる傾向があるため、`parseFailureLogBlockedJsonlMaxBytes` を低めに設定するか
+# logrotate で運用すること。プライバシーの観点でファイルパーミッションを 600 に絞ること推奨。
+# parseFailureLogBlockedJsonlPath = "/var/log/summaly/parse-failures-blocked.jsonl"
+# parseFailureLogBlockedJsonlMaxBytes = 10485760  # 10 MiB（デフォルト）

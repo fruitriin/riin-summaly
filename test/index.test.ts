@@ -1985,6 +1985,48 @@ describe('local tests', () => {
 			expect(entry.url).toBe(`${host}/articles/foo/post1`);
 		});
 
+		test('迂回候補は別 JSONL に振り分け、candidate JSONL と純度を保つ (phase11.6)', async () => {
+			const candidatePath = join(tmpDir, 'pf.jsonl');
+			const blockedPath = join(tmpDir, 'blocked.jsonl');
+			app = fastify();
+			// thin（プラグイン候補）→ candidate JSONL
+			app.get('/articles/foo/thin', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.send('<html><head><title>localhost</title></head><body>x</body></html>');
+			});
+			// 403（迂回候補）→ blocked JSONL
+			app.get('/blocked', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.status(403).send('<html><body>Forbidden</body></html>');
+			});
+			await app.listen({ port });
+
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, {
+				parseFailureLog: true,
+				parseFailureLogJsonlPath: candidatePath,
+				parseFailureLogBlockedJsonlPath: blockedPath,
+				inMemoryCache: false,
+				inFlightDedup: false,
+			});
+			await proxyApp.listen({ port: proxyPort });
+
+			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/articles/foo/thin` } });
+			await proxyApp.inject({ method: 'GET', url: '/', query: { url: `${host}/blocked` } });
+
+			const candidateLines = readFileSync(candidatePath, 'utf8').split('\n').filter(Boolean);
+			expect(candidateLines).toHaveLength(1);
+			const candidateEntry = JSON.parse(candidateLines[0]) as { reason: string };
+			expect(candidateEntry.reason).toBe('thin');
+
+			const blockedLines = readFileSync(blockedPath, 'utf8').split('\n').filter(Boolean);
+			expect(blockedLines).toHaveLength(1);
+			const blockedEntry = JSON.parse(blockedLines[0]) as { reason: string; category: string; errorName: string };
+			expect(blockedEntry.reason).toBe('throw');
+			expect(blockedEntry.category).toBe('bot_blocked');
+			expect(blockedEntry.errorName).toBe('StatusError');
+		});
+
 		test('LRU/dedup HIT は重複記録しない（MISS 経路のみ JSONL に追記）', async () => {
 			const jsonlPath = join(tmpDir, 'pf.jsonl');
 			app = fastify();

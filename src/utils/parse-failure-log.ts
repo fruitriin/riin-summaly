@@ -236,7 +236,7 @@ export interface ParseFailureLogConfig {
 	maxGroups: number;
 	samplesPerGroup: number;
 	/**
-	 * 永続化用の JSONL ファイルパス。指定されたら record() 毎に 1 行 append する。
+	 * 永続化用の JSONL ファイルパス（プラグイン候補ログ）。指定されたら record() 毎に 1 行 append する。
 	 * undefined の場合は in-memory のみ。
 	 */
 	jsonlPath?: string;
@@ -245,6 +245,17 @@ export interface ParseFailureLogConfig {
 	 * 「気付いたタイミングで運用者が rm / mv する」運用想定。デフォルト 10 MiB。
 	 */
 	jsonlMaxBytes?: number;
+	/**
+	 * 迂回候補ログ JSONL のパス (phase11.6)。`isFilteredFailure` 対象 (4xx/5xx, timeout, SSRF block 等)
+	 * を 1 行ずつ append する。プラグイン候補ログとは別ファイルで純度を保つ。
+	 *
+	 * 用途: npm のように「公開 HTML はブロックだが別 API で同等情報が取れる」パターンを後から発見する。
+	 */
+	blockedJsonlPath?: string;
+	/**
+	 * 迂回候補ログの最大バイト数。デフォルト 10 MiB。プラグイン候補側 (`jsonlMaxBytes`) とは独立に効く。
+	 */
+	blockedJsonlMaxBytes?: number;
 }
 
 const DEFAULT_JSONL_MAX_BYTES = 10 * 1024 * 1024;
@@ -255,6 +266,85 @@ export function serializeJsonlLine(key: string, sample: ParseFailureSample): str
 }
 
 /**
+ * 迂回候補ログ用の 1 行を JSONL シリアライズ (phase11.6)。
+ * プラグイン候補ログと違って `errorName` と `category` を必ず含める（ブロック理由の機械可読タグ）。
+ *
+ * 注: 将来 `ParseFailureSample` に `errorName` フィールドが追加されたとき spread 順序で
+ * 衝突しないよう、`...sample` を最後に置きたいところだが、`category` を末尾に保ちたい
+ * （JSONL の機械可読タグとして読みやすい順序）ので `key` の直後に分離キーを配置する。
+ */
+export function serializeBlockedJsonlLine(
+	key: string,
+	sample: ParseFailureSample,
+	errorName: string | undefined,
+	category: SummalyErrorCategory,
+): string {
+	return JSON.stringify({
+		key,
+		...sample,
+		// errorName は sample に含まれない前提（ParseFailureSample に errorName フィールドが無い）。
+		// 仮に将来追加されたら下行で上書きする形で衝突を回避する。
+		...(errorName != null ? { errorName } : {}),
+		category,
+	}) + '\n';
+}
+
+/**
+ * JSONL ファイルへの append + サイズ cap + I/O エラー連発抑制を担う内部ヘルパ (phase11.6 で抽出)。
+ *
+ * - `path == null` なら no-op
+ * - 起動時に既存ファイルサイズを読み、cap 到達後の append を skip
+ * - I/O エラー (ENOENT 等) は stderr に 1 度だけ警告を出して以降サイレント
+ */
+class JsonlAppender {
+	readonly path: string | undefined;
+	readonly maxBytes: number;
+	readonly label: string;
+	private bytes: number;
+	private writeErrorLogged = false;
+
+	constructor(path: string | undefined, maxBytes: number, label: string, maxBytesFieldName: string) {
+		this.path = path;
+		this.maxBytes = maxBytes;
+		this.label = label;
+		if (!Number.isFinite(maxBytes) || maxBytes < 0) {
+			throw new RangeError(`${label}.${maxBytesFieldName} must be a non-negative finite number, got ${maxBytes}`);
+		}
+		this.bytes = 0;
+		if (path != null) {
+			try {
+				const st = statSync(path);
+				this.bytes = st.size;
+			} catch {
+				// ファイル未存在は OK（最初の append で作成される）
+			}
+		}
+	}
+
+	append(line: string): void {
+		if (this.path == null) return;
+		if (this.bytes >= this.maxBytes) return; // 既に cap 越え
+		const lineBytes = Buffer.byteLength(line, 'utf8');
+		// この append で cap を越える場合も書き込まない（cap を厳守し、不揃いな半分書き込みを避ける）
+		if (this.bytes + lineBytes > this.maxBytes) {
+			this.bytes = this.maxBytes; // 以降スキップさせる
+			return;
+		}
+		try {
+			appendFileSync(this.path, line, 'utf8');
+			this.bytes += lineBytes;
+		} catch (e) {
+			// ディレクトリが無い / 権限エラー等。連発を避けて 1 回だけ stderr に出す
+			if (!this.writeErrorLogged) {
+				this.writeErrorLogged = true;
+				const msg = e instanceof Error ? e.message : String(e);
+				process.stderr.write(`[summaly][${this.label}] JSONL write failed (subsequent errors suppressed): ${msg}\n`);
+			}
+		}
+	}
+}
+
+/**
  * 集約ログ store。Fastify プラグインスコープ singleton として保持される想定。
  */
 export class ParseFailureLog {
@@ -262,10 +352,10 @@ export class ParseFailureLog {
 	readonly samplesPerGroup: number;
 	readonly jsonlPath?: string;
 	readonly jsonlMaxBytes: number;
-	/** 現在の JSONL ファイルサイズの in-memory キャッシュ。append のたびに更新 */
-	private jsonlBytes: number;
-	/** ファイル書き込みエラーを連続記録しないよう連発防止フラグ */
-	private jsonlWriteErrorLogged = false;
+	readonly blockedJsonlPath?: string;
+	readonly blockedJsonlMaxBytes: number;
+	private readonly candidateAppender: JsonlAppender;
+	private readonly blockedAppender: JsonlAppender;
 	private readonly map: Map<string, ParseFailureSample[]> = new Map();
 
 	constructor(config: ParseFailureLogConfig) {
@@ -279,19 +369,10 @@ export class ParseFailureLog {
 		this.samplesPerGroup = config.samplesPerGroup;
 		this.jsonlPath = config.jsonlPath;
 		this.jsonlMaxBytes = config.jsonlMaxBytes ?? DEFAULT_JSONL_MAX_BYTES;
-		if (!Number.isFinite(this.jsonlMaxBytes) || this.jsonlMaxBytes < 0) {
-			throw new RangeError(`parseFailureLog.jsonlMaxBytes must be a non-negative finite number, got ${this.jsonlMaxBytes}`);
-		}
-		// 起動時に既存ファイルサイズを取得（後続の append サイズチェックの基準値）
-		this.jsonlBytes = 0;
-		if (this.jsonlPath != null) {
-			try {
-				const st = statSync(this.jsonlPath);
-				this.jsonlBytes = st.size;
-			} catch {
-				// ファイル未存在は OK（最初の append で作成される）
-			}
-		}
+		this.blockedJsonlPath = config.blockedJsonlPath;
+		this.blockedJsonlMaxBytes = config.blockedJsonlMaxBytes ?? DEFAULT_JSONL_MAX_BYTES;
+		this.candidateAppender = new JsonlAppender(this.jsonlPath, this.jsonlMaxBytes, 'parseFailureLog', 'jsonlMaxBytes');
+		this.blockedAppender = new JsonlAppender(this.blockedJsonlPath, this.blockedJsonlMaxBytes, 'parseFailureLog.blocked', 'parseFailureLogBlockedJsonlMaxBytes');
 	}
 
 	/**
@@ -300,14 +381,25 @@ export class ParseFailureLog {
 	 * **同期関数**: Node.js の event loop 上で原子的に完了することを前提にしている。
 	 * Fastify の async ハンドラから複数の record が並行に呼ばれても Map の中間状態は競合しない。
 	 * 将来 await を含む変更を加える場合は呼び出し側との競合を再検討すること。
+	 *
+	 * `errorName` / `statusCode` (phase11.6 で追加) は迂回候補ログのカテゴリ判定に使う。
+	 * 旧シグネチャ互換のため optional。
+	 *
+	 * 振り分けロジック:
+	 * - `reason === 'thin'`: 必ずプラグイン候補（in-memory + candidate JSONL）
+	 * - `reason === 'throw' && !isFilteredFailure(...)`: プラグイン候補（同上）
+	 * - `reason === 'throw' && isFilteredFailure(...)`: **迂回候補のみ**（in-memory には残さない、
+	 *   blocked JSONL のみ append）。流量が多くメモリを消費したくないため
 	 */
-	record(rawUrl: string, reason: ParseFailureReason, errorMessage?: string): void {
+	record(
+		rawUrl: string,
+		reason: ParseFailureReason,
+		errorMessage?: string,
+		errorName?: string,
+		statusCode?: number,
+	): void {
 		const sanitized = sanitizeUrlForLog(rawUrl);
 		const key = groupKeyOf(sanitized);
-
-		const existing = this.map.get(key) ?? [];
-		// 同 URL の重複追加抑制 — 連打されても 1 件しか残らない
-		const filtered = existing.filter(s => s.url !== sanitized);
 		const sample: ParseFailureSample = {
 			url: sanitized,
 			ts: Date.now(),
@@ -316,6 +408,23 @@ export class ParseFailureLog {
 				? { errorMessage: errorMessage.slice(0, ERROR_MESSAGE_MAX_LENGTH) }
 				: {}),
 		};
+
+		// `throw` でフィルタ対象 (4xx/5xx/timeout/SSRF/type filter/network/connection_dropped) は
+		// 迂回候補ログ専用。in-memory 集約には混ぜず、blocked JSONL のみに append する。
+		// `categorizeError` を 1 回だけ呼んで `FILTERED_CATEGORIES` を直接参照することで
+		// `isFilteredFailure` 経由の二重判定を避ける (phase11.6 W-1)。
+		if (reason === 'throw') {
+			const category = categorizeError(errorMessage, errorName, statusCode);
+			if (FILTERED_CATEGORIES.has(category)) {
+				this.blockedAppender.append(serializeBlockedJsonlLine(key, sample, errorName, category));
+				return;
+			}
+		}
+
+		// プラグイン候補経路: in-memory 集約 + candidate JSONL
+		const existing = this.map.get(key) ?? [];
+		// 同 URL の重複追加抑制 — 連打されても 1 件しか残らない
+		const filtered = existing.filter(s => s.url !== sanitized);
 		filtered.unshift(sample);
 		if (filtered.length > this.samplesPerGroup) {
 			filtered.length = this.samplesPerGroup;
@@ -333,32 +442,7 @@ export class ParseFailureLog {
 		}
 
 		// JSONL 永続化（オプトイン）。サイズ cap を越えたら以降の append は停止。
-		// in-memory map への記録とは独立に効くため、cap 到達後も in-memory は更新が続く。
-		this.appendJsonl(key, sample);
-	}
-
-	/** 1 サンプルを JSONL ファイルに append。サイズキャップ越え or ファイル I/O 失敗時はサイレントスキップ。 */
-	private appendJsonl(key: string, sample: ParseFailureSample): void {
-		if (this.jsonlPath == null) return;
-		if (this.jsonlBytes >= this.jsonlMaxBytes) return; // 既に cap 越え
-		const line = serializeJsonlLine(key, sample);
-		const lineBytes = Buffer.byteLength(line, 'utf8');
-		// この append で cap を越える場合も書き込まない（cap を厳守し、不揃いな半分書き込みを避ける）
-		if (this.jsonlBytes + lineBytes > this.jsonlMaxBytes) {
-			this.jsonlBytes = this.jsonlMaxBytes; // 以降スキップさせる
-			return;
-		}
-		try {
-			appendFileSync(this.jsonlPath, line, 'utf8');
-			this.jsonlBytes += lineBytes;
-		} catch (e) {
-			// ディレクトリが無い / 権限エラー等。連発を避けて 1 回だけ stderr に出す
-			if (!this.jsonlWriteErrorLogged) {
-				this.jsonlWriteErrorLogged = true;
-				const msg = e instanceof Error ? e.message : String(e);
-				process.stderr.write(`[summaly][parseFailureLog] JSONL write failed (subsequent errors suppressed): ${msg}\n`);
-			}
-		}
+		this.candidateAppender.append(serializeJsonlLine(key, sample));
 	}
 
 	/** 全エントリを ts 降順（直近順）で返す */

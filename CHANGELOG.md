@@ -1,5 +1,14 @@
 (unreleased)
 ------------------
+* **feat**: 迂回候補ログ（ブロック失敗の別系統 JSONL）を追加 (phase11.6):
+  * `parseFailureLogBlockedJsonlPath` / `parseFailureLogBlockedJsonlMaxBytes` を追加。`isFilteredFailure` 対象（4xx/5xx, timeout, SSRF block, type filter, network, connection_dropped）の失敗を別ファイルに集約
+  * 既存 `parseFailureLogJsonlPath`（プラグイン候補）には引き続き thin + 非フィルタ throw のみ書かれ、シグナル純度を維持
+  * 各行に `category` (`SummalyErrorCategory`) と `errorName` を付与。`cat blocked.jsonl | jq -c 'select(.category == "bot_blocked") | .url' | sort -u` で「公開 HTML はブロックだが別 API で同等情報が取れる」迂回候補（npm の registry.npmjs.org が好例）を発見
+  * 迂回候補は **in-memory 集約しない**（流量過大によるメモリ消費を避けるため、JSONL 専用）
+  * サイズ cap は両系統で独立に効く（流量差を吸収）
+  * `ParseFailureLog.record()` に `errorName` / `statusCode` 引数を追加（optional、互換性維持）。内部で `categorizeError` を呼んで振り分け
+  * TOML: `[diagnostics]` セクションに `parseFailureLogBlockedJsonlPath` / `parseFailureLogBlockedJsonlMaxBytes` を追加
+  * **プライバシー**: blocked ログには失敗 URL の origin+pathname が記録されるため、ファイルパーミッション 600 推奨（plugin-candidate ログと同じ扱い）
 * **enhance**: 汎用パスで OG 画像が無い場合 favicon を thumbnail に採用 (phase11.7, [riin-summaly#3](https://github.com/fruitriin/riin-summaly/issues/3)):
   * `parseGeneral` の thumbnail 解決を `og:image` → `twitter:image` → `image_src` → `apple-touch-icon` → **`favicon` (新規)** の順に拡張
   * 「タイトルだけのスカスカプレビュー」が「サイトアイコン入りの最低限の見た目」に格上げされる

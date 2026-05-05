@@ -17,7 +17,6 @@ import { StatusError } from '@/utils/status-error.js';
 import {
 	ParseFailureLog,
 	isThinSummary,
-	isFilteredFailure,
 	categorizeError,
 	sanitizeUrlForLog,
 	type SummalyErrorCategory,
@@ -174,6 +173,25 @@ export type SummalyOptions = {
 	 * 「気付いたタイミングで運用者が rm / mv する」運用想定。デフォルト 10 MiB。
 	 */
 	parseFailureLogJsonlMaxBytes?: number;
+
+	/**
+	 * 迂回候補ログ JSONL の出力先 (phase11.6)。`isFilteredFailure` 対象（4xx/5xx, timeout,
+	 * SSRF block, type filter, network, connection_dropped）の失敗を 1 行ずつ append する。
+	 * プラグイン候補ログ (`parseFailureLogJsonlPath`) とは別ファイルで純度を保つ設計。
+	 *
+	 * 用途: 「公開 HTML はブロックだが別 API で同等情報が取れる」パターン（npm の registry.npmjs.org 等）
+	 * を後から発見する。`cat blocked.jsonl | jq -r '.url' | sort -u` 等の集計で運用。
+	 *
+	 * 各行に `category` (`SummalyErrorCategory`) と `errorName` を含めるため `jq -c 'select(.category == "bot_blocked")'`
+	 * のような細分フィルタが可能。`parseFailureLog: true` のときのみ動作（既存ログと同じスイッチで有効化）。
+	 */
+	parseFailureLogBlockedJsonlPath?: string;
+
+	/**
+	 * 迂回候補ログ JSONL の最大バイト数。プラグイン候補ログ (`parseFailureLogJsonlMaxBytes`) とは
+	 * 独立に効く。デフォルト 10 MiB。流量が多くなる可能性があるため監視必須。
+	 */
+	parseFailureLogBlockedJsonlMaxBytes?: number;
 
 	/**
 	 * PDF レスポンスのタイトル取得を有効化する（オプトイン）。
@@ -459,13 +477,15 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 	// X-Cache ヘッダはキャッシュか dedup のどちらか有効なときに付与する（既存挙動: 両方無効なら付かない）
 	const emitCacheHeader = cache != null || inFlight != null;
 
-	// パース失敗ログ集約（プラグインスコープ singleton、phase10.1）
+	// パース失敗ログ集約（プラグインスコープ singleton、phase10.1 + 11.6 で迂回候補ログを追加）
 	const parseFailureLog: ParseFailureLog | null = options.parseFailureLog
 		? new ParseFailureLog({
 			maxGroups: options.parseFailureLogMaxGroups ?? DEFAULT_PARSE_FAILURE_LOG_MAX_GROUPS,
 			samplesPerGroup: options.parseFailureLogSamplesPerGroup ?? DEFAULT_PARSE_FAILURE_LOG_SAMPLES_PER_GROUP,
 			jsonlPath: options.parseFailureLogJsonlPath,
 			jsonlMaxBytes: options.parseFailureLogJsonlMaxBytes,
+			blockedJsonlPath: options.parseFailureLogBlockedJsonlPath,
+			blockedJsonlMaxBytes: options.parseFailureLogBlockedJsonlMaxBytes,
 		})
 		: null;
 
@@ -574,17 +594,18 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		}
 
 		// パース失敗ログ記録 — MISS 経路で実際に summaly() を呼んだケースだけ記録（cache/inflight HIT は重複記録しない）。
-		// 「絶対失敗する類型」(StatusError 4xx/5xx, timeout, type filter reject, SSRF block 等) は
-		// `isFilteredFailure` で除外する。プラグインを書いても救えないためログに詰むとノイズになる。
+		// phase11.6 以降は `record()` 内部で振り分け:
+		//   - thin / 非フィルタ throw → プラグイン候補（in-memory + candidate JSONL）
+		//   - フィルタ対象 throw（4xx/5xx, timeout, SSRF, type filter, network, connection_dropped）
+		//     → 迂回候補（blocked JSONL のみ、in-memory には混ぜない）
+		// 呼出側はカテゴリ判定ロジックを持たず、`record()` に判定材料 (message/name/statusCode) を渡すだけ。
 		if (parseFailureLog != null) {
 			if (entry.kind === 'error') {
 				const errPayload = entry.error;
 				const message = typeof errPayload.message === 'string' ? errPayload.message : undefined;
 				const name = typeof errPayload.name === 'string' ? errPayload.name : undefined;
 				const statusCode = typeof errPayload.statusCode === 'number' ? errPayload.statusCode : undefined;
-				if (!isFilteredFailure('throw', message, name, statusCode)) {
-					parseFailureLog.record(url, 'throw', message);
-				}
+				parseFailureLog.record(url, 'throw', message, name, statusCode);
 			} else if (isThinSummary(entry.value)) {
 				parseFailureLog.record(url, 'thin');
 			}

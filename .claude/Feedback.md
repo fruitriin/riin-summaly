@@ -10,6 +10,12 @@
 
 ## 問題の記録
 
+- **2026-05-05 phase11.4 / 6.1 派生バグ**: 新規プラグイン (`npmjs` / `twitter`) が両 example の `[plugins.allowed]` リストに反映されておらず、本番で **deploy example の通り設定すると新規プラグインが無効化される** 状態が露呈。現象: `https://www.npmjs.com/package/<pkg>` が `general()` 経由で Cloudflare に直叩きされ 403。CLAUDE.md ステップ 4.5「設定ファイル example の更新（特に修正漏れしやすい！）→ `config.example.toml`（ルート）と `docs/deploy-examples/summaly-config.example.toml`（デプロイ用）の **両方**」というチェックが既に明記されているが、phase6.1 / phase11.4 の品質ゲートで両ファイル更新が漏れた
+  - 直接の原因: `[plugins.allowed]` がオプトイン許可リスト方式で、新規プラグインを足しても自動で有効にならない fail-close 仕様
+  - 根本原因: example が **新規プラグイン追加コミットと連動していない**。実装フェーズの「ドキュメントと実装の突き合わせ」ステップが個別の項目を列挙してチェックする設計になっておらず、「example 2 ファイル」という具体名を出しているのに見落とされた
+  - **改善アクション (実装済み 2026-05-05)**: [test/config-example-plugins.test.ts](../test/config-example-plugins.test.ts) を新設し、`src/plugins/*.ts` の `export const name = '...'` を全件抽出して `config.example.toml` と `docs/deploy-examples/summaly-config.example.toml` の **両方** にテキストとして言及されているか（コメントアウト行 `# "dlsite",` も「運用者が判断で活性化できる」のでパス扱い）を `pnpm test` で自動検証する。新規プラグイン追加時に example 反映漏れがあれば test fail する fail-close ガード。テンプレート側 (`ProgressTemplate.addf.md` ステップ 4.5) にも「新規プラグイン追加時の example 同期」を個別項目として明記する余地あり
+  - **2026-05-05 修正**: 両 example に `npmjs` を追加、`docs/deploy-examples/...` には phase6.1 で漏れていた `twitter` および NSFW 系 (`dlsite` / `iwara` / `komiflo` / `nijie`) のコメントアウト行も合わせて追加（NSFW 系はテスト通過のためというよりデプロイ運用者に「意図的にデフォルト除外している」ことをシグナル化する目的）。本番運用者は `config.toml` の `[plugins.allowed]` に `"npmjs"` (および欠けていれば `"twitter"`) を追加することで解消する
+
 ## 改善アクション
 
 ## ADDF 推進エンジンに関する記録
@@ -51,6 +57,13 @@
 - **2026-05-05 phase11.8 セッション**: レビュー agent が「pino の `errSerializer` が got の `RequestError.options.url` を列挙して出力する → スクレイピング先 URL のクエリ漏洩」という具体的な PII 漏洩経路を指摘した。仕様詳細を知らないと見逃しやすい。`err` を手動シリアライズ (`{ name, message, stack, statusCode? }`) に変更して根本対処
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
+
+## phase11.6 (迂回候補ログ) 知見
+
+- **2026-05-05 phase11.6 セッション**: 「機能追加と既存機能のリファクタリングを同時にやる」フェーズの好例。`JsonlAppender` を `ParseFailureLog` から内部クラスとして抽出（cap・I/O エラー連発抑制ロジックを class 化）して、candidate / blocked の 2 系統を綺麗に共存させた。Plan の Step 1 が「`analyzeFailure()` 統合」を提案していたが、実装段階で「`categorizeError` + `FILTERED_CATEGORIES` の組み合わせで十分」と判断して deviation。Plan は方向性として参考になるが具体実装は実装段階で再検討する余地を残す
+- **2026-05-05 phase11.6 セッション**: `record()` のシグネチャ拡張（`errorMessage?, errorName?, statusCode?` の optional 3 連）は **位置引数 5 つ**になって読みにくくなったが、互換性維持のため譲歩。レビュー agent の S-1（`reason === 'thin'` で `errorName` 渡す誤呼び出し）はオーバーロード型で防げるが、実装複雑化対実害ゼロでスキップ判断。**「型安全性 vs 実装複雑度」** のトレードオフで、利用者が 1 箇所しかない場合は型シグネチャの簡潔さ優先
+- **2026-05-05 phase11.6 セッション**: レビュー agent が **「`isFilteredFailure` と `categorizeError` の二重呼び出し」**(W-1) を指摘。`record()` 内部で `isFilteredFailure(...)` → `categorizeError(...)` の順で 2 回計算していた（`isFilteredFailure` 自身が内部で `categorizeError` を呼ぶため）。直接 `FILTERED_CATEGORIES` を参照する形に修正して 1 回呼び出しに統合。**「同じデータを 2 回計算するな」** のレビュー指摘は ホットパスでなくても読みやすさで効く
+- **2026-05-05 phase11.6 セッション**: `groupKeyOf('https://www.npmjs.com/package/mfm')` は **2 セグメント取って `www.npmjs.com/package/mfm`** を返す（plan の例 `www.npmjs.com/package` は 1 セグメントになっていて誤り）。Plan の例文を信じると test の expectation がズレる。**Plan の具体例は実装で必ず実機確認する**
 
 ## phase11.7 (favicon thumbnail fallback) 知見
 
