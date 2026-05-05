@@ -23,7 +23,7 @@
     "dev": "tsx dev/server.ts"
   },
   "devDependencies": {
-    "@fastify/static": "8.2.0",
+    "@fastify/static": "9.1.3",
     "@misskey-dev/eslint-plugin": "2.2.0",
     "@types/debug": "4.1.13",
     "@types/encoding-japanese": "2.2.1",
