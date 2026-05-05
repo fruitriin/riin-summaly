@@ -57,7 +57,7 @@ export const sampleGroups: SampleGroup[] = [
 		description: 'DOM 直接読み（OG/Twitter Card に頼らない）',
 		urls: [
 			{ label: 'Amazon JP', url: 'https://www.amazon.co.jp/dp/4297127830' },
-			{ label: 'amzn.asia 短縮', url: 'https://amzn.asia/d/00K7piwG', note: '⚠ HEAD リダイレクトが解決されず短縮 URL のまま汎用パスに落ちる既知の挙動。要調査' },
+			{ label: 'amzn.asia 短縮', url: 'https://amzn.asia/d/00K7piwG', note: 'HEAD 失敗時 GET fallback (phase9.1) で展開される' },
 		],
 	},
 	{

@@ -179,6 +179,67 @@ function cacheControlHeader(maxAge: number): string {
 	return maxAge === 0 ? 'no-store' : `public, max-age=${maxAge}`;
 }
 
+/**
+ * `summaly()` 内でリダイレクト解決に使う共通オプションを構築する。HEAD と GET fallback で
+ * 同じ timeout / agent / accept ヘッダ / maxRedirects を使うため切り出している。
+ */
+function buildResolveRequestOptions(opts: SummalyOptions) {
+	const timeout = opts.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT;
+	const operationTimeout = opts.operationTimeout ?? DEFAULT_OPERATION_TIMEOUT;
+	// enablePdf 真のときは Accept に application/pdf も含める（厳格なコンテントネゴシエーションサーバ向け）
+	const acceptHeader = opts.enablePdf
+		? 'text/html,application/xhtml+xml,application/pdf'
+		: 'text/html,application/xhtml+xml';
+	return {
+		headers: {
+			accept: acceptHeader,
+			'user-agent': opts.userAgent ?? DEFAULT_BOT_UA,
+			'accept-language': opts.lang ?? undefined,
+		} as Record<string, string | undefined>,
+		timeout: {
+			lookup: timeout,
+			connect: timeout,
+			secureConnect: timeout,
+			socket: timeout, // read timeout
+			response: timeout,
+			send: timeout,
+			request: operationTimeout, // whole operation timeout
+		},
+		agent,
+		http2: false,
+		retry: { limit: 0 },
+		// 短縮 URL からの多段リダイレクトを制限（SSRF チェイン緩和）
+		maxRedirects: 5,
+	};
+}
+
+/**
+ * 短縮 URL / 通常 URL を辿って最終 URL を解決する。
+ *
+ * 1. まず HEAD を試す（軽量、body を受信しない）
+ * 2. HEAD が失敗した場合は GET に fallback する。`amzn.asia` のように HEAD には 404 を返すが
+ *    GET には 301 でリダイレクトを返すサーバが存在するため (phase9.1)。GET には `Range: bytes=0-0` を
+ *    付けて body 受信量を最小化する（リダイレクトされる場合は body は無いし、最終ターゲットが
+ *    Range を尊重すれば 1 バイトだけで済む）
+ * 3. どちらも失敗した場合は元の URL をそのまま返す（既存挙動互換）
+ */
+async function resolveRedirect(url: string, opts: SummalyOptions): Promise<string> {
+	const reqOpts = buildResolveRequestOptions(opts);
+	try {
+		return await got.head(url, reqOpts).then(res => res.url);
+	} catch {
+		// HEAD 失敗時の GET fallback
+		try {
+			return await got.get(url, {
+				...reqOpts,
+				headers: { ...reqOpts.headers, range: 'bytes=0-0' },
+			}).then(res => res.url);
+		} catch {
+			return url;
+		}
+	}
+}
+
 export const summalyDefaultOptions = {
 	lang: null,
 	followRedirects: true,
@@ -203,49 +264,14 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 	const plugins = filteredBuiltins.concat(opts.plugins || []);
 
 	let actualUrl = url;
-	// followRedirects が true、または公式短縮 URL ホストの場合は HEAD で URL を解決する。
+	// followRedirects が true、または公式短縮 URL ホストの場合はリダイレクト解決を行う。
 	// Fastify モード（followRedirects: false）でも、サービス公式の短縮 URL に限り
 	// 解決後の URL でプラグインマッチングが行われるようにする。
 	let initialHost = '';
 	try { initialHost = new URL(url).hostname; } catch { /* malformed URL は後続の new URL で throw する */ }
 	const shouldResolve = opts.followRedirects || KNOWN_SHORT_HOSTS.has(initialHost);
 	if (shouldResolve) {
-		// .catch(() => url)にすればいいけど、jestにtrace-redirectを食わせるのが面倒なのでtry-catch
-		try {
-			const timeout = opts.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT;
-			const operationTimeout = opts.operationTimeout ?? DEFAULT_OPERATION_TIMEOUT;
-			// enablePdf 真のときは Accept に application/pdf も含める（厳格なコンテントネゴシエーションサーバ向け）
-			const headAcceptHeader = opts.enablePdf
-				? 'text/html,application/xhtml+xml,application/pdf'
-				: 'text/html,application/xhtml+xml';
-			actualUrl = await got
-				.head(url, {
-					headers: {
-						accept: headAcceptHeader,
-						'user-agent': opts.userAgent ?? DEFAULT_BOT_UA,
-						'accept-language': opts.lang ?? undefined,
-					},
-					timeout: {
-						lookup: timeout,
-						connect: timeout,
-						secureConnect: timeout,
-						socket: timeout, // read timeout
-						response: timeout,
-						send: timeout,
-						request: operationTimeout, // whole operation timeout
-					},
-					agent,
-					http2: false,
-					retry: {
-						limit: 0,
-					},
-					// 短縮 URL からの多段リダイレクトを制限（SSRF チェイン緩和）
-					maxRedirects: 5,
-				})
-				.then(res => res.url);
-		} catch {
-			actualUrl = url;
-		}
+		actualUrl = await resolveRedirect(url, opts);
 	}
 
 	const _url = new URL(actualUrl);

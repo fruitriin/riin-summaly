@@ -1905,6 +1905,78 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('短縮 URL HEAD 失敗時 GET fallback (phase9.1)', () => {
+		test('HEAD が 404 でも GET で 301 リダイレクトする URL は最終 URL に解決される', async () => {
+			let headHits = 0;
+			let getShortHits = 0;
+			app = fastify();
+			app.head('/short', (_req, reply) => {
+				headHits++;
+				return reply.status(404).send();
+			});
+			app.get('/short', (_req, reply) => {
+				getShortHits++;
+				reply.header('location', `${host}/resolved`);
+				return reply.status(301).send();
+			});
+			app.get('/resolved', (_req, reply) => {
+				const html = '<html><head><title>Resolved Page</title></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			await app.listen({ port });
+
+			const summary = await summaly(`${host}/short`, { followRedirects: true });
+			expect(summary.title).toBe('Resolved Page');
+			expect(summary.url).toBe(`${host}/resolved`);
+			expect(headHits).toBe(1);
+			expect(getShortHits).toBeGreaterThanOrEqual(1);
+		});
+
+		test('HEAD が 200 ならば GET fallback は呼ばれない（既存 HEAD 成功パスの回帰防止）', async () => {
+			let headHits = 0;
+			let getShortHits = 0;
+			app = fastify();
+			app.head('/short', (_req, reply) => {
+				headHits++;
+				reply.header('location', `${host}/resolved`);
+				return reply.status(301).send();
+			});
+			app.get('/short', (_req, reply) => {
+				getShortHits++;
+				reply.header('location', `${host}/resolved`);
+				return reply.status(301).send();
+			});
+			app.head('/resolved', (_req, reply) => {
+				return reply.status(200).send();
+			});
+			app.get('/resolved', (_req, reply) => {
+				const html = '<html><head><title>Resolved Page</title></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			await app.listen({ port });
+
+			const summary = await summaly(`${host}/short`, { followRedirects: true });
+			expect(summary.title).toBe('Resolved Page');
+			// HEAD だけで解決し、fallback の GET /short は呼ばれていないこと
+			expect(headHits).toBeGreaterThanOrEqual(1);
+			expect(getShortHits).toBe(0);
+		});
+
+		test('HEAD も GET も失敗した場合は元の URL のまま続行する（既存挙動互換）', async () => {
+			app = fastify();
+			app.head('/short', (_req, reply) => reply.status(500).send());
+			app.get('/short', (_req, reply) => reply.status(500).send());
+			await app.listen({ port });
+
+			// summaly が原 URL のままスクレイプを試みて 500 を踏み throw する
+			await expect(summaly(`${host}/short`, { followRedirects: true })).rejects.toThrow();
+		});
+	});
+
 	describe('DOM 後処理系プラグイン (phase3.2)', () => {
 		describe('dlsite', () => {
 			test('test() が www.dlsite.com にマッチ', () => {

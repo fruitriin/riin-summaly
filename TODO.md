@@ -5,13 +5,13 @@
 
 phase 番号は **着手順**（数値が小さいほど先）。同じ大番号内（例: 2.1 と 2.2）は並列着手可能。
 
-## 現在のフェーズ: phase9.1（次に着手可）
+## 現在のフェーズ: 次タスク確認待ち
 
 ## バックログ
 
 | 優先度 | Phase | 計画ファイル | サイズ | 状態 |
 |---|---|---|:---:|---|
-| 9 | 9.1 | [docs/plans/phase9.1-short-url-get-fallback.md](docs/plans/phase9.1-short-url-get-fallback.md) — 短縮 URL の HEAD 失敗時 GET フォールバック (`amzn.asia` 等) | S〜M | 未着手 |
+| — | — | （未着手タスクなし） | — | — |
 
 ### 並列実行マップ
 
@@ -29,9 +29,10 @@ phase5.1  完了
 phase7.1  完了
 phase8.1  完了
 phase6.1  完了
-   ↓
-phase9.1  ─┐  次に着手可（短縮 URL HEAD 失敗時 GET fallback、dev サーバで amzn.asia の挙動から発見）
+phase9.1  完了
 ```
+
+> **次の Plan 候補がない**: アクティブフェーズが全て完了。新規タスクはオーナーが docs/plans/ に追加する。
 
 ---
 
@@ -51,3 +52,4 @@ phase9.1  ─┐  次に着手可（短縮 URL HEAD 失敗時 GET fallback、dev
 | 7.1 | [docs/plans/phase7.1-dev-server.md](docs/plans/phase7.1-dev-server.md) — Dev サーバ（動作確認 UI） | 完了 (2026-05-05)、Progress: [.claude/Progresses/2026-05-05-phase7.1-dev-server.md](.claude/Progresses/2026-05-05-phase7.1-dev-server.md) |
 | 8.1 | [docs/plans/phase8.1-toml-config.md](docs/plans/phase8.1-toml-config.md) — TOML ベースの設定ファイルへの移行 | 完了 (2026-05-05)、Progress: [.claude/Progresses/2026-05-05-phase8.1-toml-config.md](.claude/Progresses/2026-05-05-phase8.1-toml-config.md) |
 | 6.1 | [docs/plans/phase6.1-plugin-twitter.md](docs/plans/phase6.1-plugin-twitter.md) — twitter (X) プラグイン取り込み（mei23 fork ベース + player iframe 追加） | 完了 (2026-05-05) |
+| 9.1 | [docs/plans/phase9.1-short-url-get-fallback.md](docs/plans/phase9.1-short-url-get-fallback.md) — 短縮 URL の HEAD 失敗時 GET フォールバック | 完了 (2026-05-05) |

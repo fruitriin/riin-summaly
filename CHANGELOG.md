@@ -1,5 +1,10 @@
 (unreleased)
 ------------------
+* 短縮 URL の HEAD 失敗時に GET fallback でリダイレクトを解決するように変更 (phase9.1):
+  * `amzn.asia` のように HEAD に 404 を返すが GET には 301 でリダイレクトを返す短縮ホストが解決できるようになる
+  * GET fallback には `Range: bytes=0-0` を付けて body 受信量を最小化（リダイレクトされる場合は body 自体無く、最終ターゲットが Range を尊重すれば 1 バイトで済む）
+  * HEAD が成功する短縮 URL（`spotify.link` 等）の挙動は変わらない
+  * HEAD も GET も失敗した場合は元の URL のまま続行（既存挙動互換）
 * twitter (X) プラグインを追加 (phase6.1):
   * `(twitter|x).com/<user>/status/<id>` をハンドル
   * `cdn.syndication.twimg.com/tweet-result` から JSON を取得して description / thumbnail / sensitive / `medias[]`（複数画像対応）を組み立てる

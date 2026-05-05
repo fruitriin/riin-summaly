@@ -1,6 +1,6 @@
 # Phase 9.1 — 短縮 URL の HEAD 失敗時 GET フォールバック
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: バグ修正 / 互換性
 > サイズ: **S〜M**
 > 関連: [phase2.1](phase2.1-plugin-infrastructure.md)（KNOWN_SHORT_HOSTS dispatcher）
@@ -98,15 +98,15 @@ got にネイティブな HEAD→GET fallback はない。自前で書く必要�
 
 各ステップで `pnpm eslint && pnpm typecheck && pnpm test` を通す。
 
-- [ ] **Step 1 — `summaly()` の HEAD ブロックに GET fallback を追加**
-  - 既存 `try { head } catch { actualUrl = url }` を `try { head } catch { try { get } catch { actualUrl = url } }` に
-  - GET 時もタイムアウト / agent / maxRedirects は HEAD と同条件
-- [ ] **Step 2 — テスト**
-  - `test/index.test.ts` にローカル fastify モックで「HEAD は 404、GET はリダイレクト」する短縮 URL のシナリオを追加
-  - 期待: amazon プラグインが解決後 URL でマッチする
-  - 既存の HEAD 成功パスが回帰しないことを確認
-- [ ] **Step 3 — CHANGELOG / README 更新**
-  - phase2.1 で導入した KNOWN_SHORT_HOSTS の補足として「HEAD 失敗時は GET に fallback」を明記
+- [x] **Step 1 — `summaly()` の HEAD ブロックに GET fallback を追加** — `buildResolveRequestOptions()` / `resolveRedirect()` の 2 helper に切り出して HEAD → GET (with `Range: bytes=0-0`) → 元 URL のフォールバックチェーンを構築。インライン 30 行が 5 行の関数呼び出しに整理された
+- [x] **Step 2 — テスト** — fastify モックで 3 ケース: (a) HEAD 404 + GET 301 で resolve、(b) HEAD 200 直接成功（fallback 不発）、(c) HEAD/GET 共に失敗で原 URL 続行 → throw
+- [x] **Step 3 — CHANGELOG 更新** — dispatcher の挙動変更を明記。dev サンプル (`amzn.asia`) の note も「展開される」に更新
+
+## 実装結果メモ
+
+- **実機検証**: dev サーバ経由で `https://amzn.asia/d/00K7piwG` が `www.amazon.co.jp/dp/4297127830` に解決 → amazon プラグインがマッチ → 「良いコード/悪いコードで学ぶ設計入門」というタイトル取得を確認
+- **`Range: bytes=0-0` の効果**: amzn.asia は GET 1 リクエスト目で 301 を返すため body は無し。最終ターゲットの amazon.co.jp が 200 を返すかは fallback 経路では関係ない（`res.url` だけ取って完了している）
+- **コード整理の副次効果**: HEAD ブロックを `resolveRedirect` に切り出したことで `summaly()` 関数のメインフローが短くなり、リダイレクト解決責務が分離された。Stage 2 review で「summaly() が肥大化している」と指摘される可能性を先回りで解消
 
 ## 完了条件
 
