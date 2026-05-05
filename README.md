@@ -41,7 +41,7 @@ URL から `title` / `description` / `thumbnail` / `icon` / `sitename` / 埋め�
 | **インメモリ LRU キャッシュ** | `Cache-Control` を解釈しない HTTP クライアント（Misskey の Got 等）でも summaly サーバ単独で重複アクセスを抑える | `inMemoryCache` |
 | **in-flight dedup** | Misskey ユーザーストリーミング由来の **thundering herd を 1 本化**。同 URL の並列リクエストは先頭リクエストの結果を共有し origin への同時アクセスを 1 件に絞る | `inFlightDedup`、`X-Cache: HIT-COALESCED` |
 | **TOML 設定ファイル** | `pnpm serve config.toml` で起動。コメント・セクション分割が書ける運用設定 | `config.example.toml` |
-| **dev サーバ UI** | `pnpm dev` で `http://127.0.0.1:3000`。URL を入れて JSON / Misskey 風カード / iframe プレーヤーを並列確認、サンプル URL ワンクリック | tsx + Vanilla JS |
+| **dev サーバ UI** | `pnpm dev` で `http://127.0.0.1:3000`。URL を入れて JSON / Misskey 風カード / iframe プレーヤーを並列確認、サンプル URL ワンクリック、proxy fallback の手元再現も対応 | tsx + Vanilla JS |
 | **パース失敗ログ集約** | 「OG/Twitter Card/`<title>` のいずれも取れず汎用パスでスカスカになった URL」を host + path 単位で集約。**プラグイン化候補のドメイン発見器**。集約データは JSONL ファイルに `cat \| jq` でアクセス（HTTP エンドポイントは phase11.5 で廃止） | `[diagnostics] parseFailureLog`、`parseFailureLogJsonlPath` |
 | **短縮 URL の HEAD→GET fallback** | `amzn.asia` のように HEAD に 404 を返すサーバを GET fallback で正しく解決 | `KNOWN_SHORT_HOSTS` |
 | **twitter (X) プラグイン** | `cdn.syndication.twimg.com` 直叩きで本文 + thumbnail + `medias[]` を返す。**player は null**（Misskey 側「ポストを展開」と重複しないように） | `(twitter\|x).com/<user>/status/<id>` |
@@ -156,11 +156,29 @@ pnpm dev                # 動作確認 UI（http://127.0.0.1:3000、tsx で src/
 
 `pnpm dev` で `http://127.0.0.1:3000` に動作確認用の Web UI が立ち上がります。本番 bundle (`./built/`) には含まれない dev 専用ツールです。
 
+![dev サーバの UI。Amazon の URL を入力し proxy fallback checkbox を ON にすると、左の JSON / 右のカードプレビューに正しい商品情報が表示される様子](docs/screenshots/dev-server-amazon-proxy.png)
+
 - 左ペインに **JSON 常時表示**、右ペインに **Misskey 風カードプレビュー** / **iframe プレーヤー** のタブ
-- 組み込みプラグイン対応サイトのサンプル URL を**ワンクリック**で入力欄に流し込める（PDF サンプルは `enablePdf` も自動 ON）
+- 組み込みプラグイン対応サイトのサンプル URL を**ワンクリック**で入力欄に流し込める（PDF サンプルは `enablePdf` も、Amazon proxy サンプルは `proxy` も自動 ON）
 - `lang` / `useRange` / `enablePdf` / `allowedPlugins` を**リクエスト単位**で切り替え可能
 - ローカル URL をプレビューできるよう `SUMMALY_ALLOW_PRIVATE_IP=true` を **dev サーバ内に閉じて** 設定（シェル env を汚染せず、`pnpm serve` 本番には影響しない）
 - iframe は `referrerpolicy` を browser default に戻し、YouTube oEmbed の「エラー 153」を回避
+
+#### proxy fallback の手元再現 (phase12.1)
+
+Vultr Tokyo IP からの `amazon.co.jp` が IP レピュテーション層で 500 を返す問題を、Cloudflare Workers 経由で救援する [phase12.1 の proxy fallback](docs/plans/phase12.1-cf-workers-proxy-fallback.md) も dev サーバから動作確認できます。
+
+```bash
+export SUMMALY_PROXY_URL="https://summaly-proxy.<your>.workers.dev"
+export SUMMALY_PROXY_SECRET="<wrangler secret put SHARED_SECRET と同値>"
+pnpm dev
+```
+
+両方の環境変数がセットされていると **proxy fallback (Amazon class IP block 救援、phase12.1) checkbox** が表示されます（env 未設定なら hidden、運用者の混乱を回避）。サンプル URL「Amazon JP (proxy 経由 — IP block 救援)」をクリックすると `presets.proxy: true` が自動適用されるので、ワンクリックで proxy 経由 Amazon プレビューを試せます。
+
+Worker 側のデプロイ手順は [tools/cf-proxy-worker/README.md](tools/cf-proxy-worker/README.md)、運用設定は [docs/SETUP.md の proxy セクション](docs/SETUP.md#outbound-proxy-フォールバック-phase121) を参照してください。
+
+> ⚠️ proxy 機能を使う場合は **デフォルト `HOST=127.0.0.1` を変更しないこと**。dev サーバは `SUMMALY_ALLOW_PRIVATE_IP=true` をプロセス内で固定セットしているため、`HOST=0.0.0.0` で起動すると LAN 内の別ホストから `?proxy=1` を叩かれる経路ができます（Worker 側 allowlist で守られていますが、二重防御として）。
 
 `PORT` / `HOST` 環境変数で待ち受けを変更可能（デフォルト `127.0.0.1:3000`）。
 
