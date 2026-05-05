@@ -48,6 +48,7 @@ export const sampleGroups: SampleGroup[] = [
 		description: 'DOM 直接読み（OG/Twitter Card に頼らない）',
 		urls: [
 			{ label: 'Amazon JP', url: 'https://www.amazon.co.jp/dp/4297127830' },
+			{ label: 'amzn.asia 短縮', url: 'https://amzn.asia/d/00K7piwG', note: 'KNOWN_SHORT_HOSTS の dispatcher で HEAD 解決される' },
 		],
 	},
 	{
