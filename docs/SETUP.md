@@ -12,6 +12,7 @@ summaly を Misskey 等のフロントエンドから利用するために、**�
 - [最小起動](#最小起動)
 - [Fastify モード固有のオプション](#fastify-モード固有のオプション)
 - [キャッシュ戦略](#キャッシュ戦略)
+- [Bot block フォールバック UA リトライ (phase11.9)](#bot-block-フォールバック-ua-リトライ-phase119)
 - [パース失敗ドメインのログ蓄積 (phase10.1)](#パース失敗ドメインのログ蓄積-phase101)
 - [バージョン確認エンドポイント `GET /v`](#バージョン確認エンドポイント-get-v)
 - [エラーレスポンスのカテゴリ (phase11.2)](#エラーレスポンスのカテゴリ-phase112)
@@ -147,6 +148,68 @@ summaly のキャッシュ・流量制御は **4 段重ね** で考えるのが�
 | dedup・LRU 共に無効 | （ヘッダなし） | 既存挙動 |
 
 異なる URL の並列数に上限はかけません（dedup は同 URL のみ）。Fastify 全体のリクエストキューイングは上位レイヤ（nginx の `limit_conn` 等）の責務です。
+
+Bot block フォールバック UA リトライ (phase11.9)
+----------------------------------------------------------------
+
+`SummalyBot` 文字列を WAF が検知して TCP/TLS 確立後に HTTP 応答前で切断する（`socket hang up` シグニチャ）サイトに対して、別 UA で 1 回だけリトライする救援機構です。
+
+### デフォルト UA の複合化
+
+phase11.9 から **デフォルト UA は `Mozilla/5.0` プレフィックス付きの複合 UA** になりました:
+
+```
+Mozilla/5.0 (compatible; SummalyBot/<version>; +https://github.com/fruitriin/riin-summaly)
+```
+
+これで「Mozilla プレフィックスを期待する WAF」は通るようになります。一方「`SummalyBot` 文字列を含むと弾く WAF」（`playing-games.com` 等で実証）には依然として届かないため、後述のフォールバック UA リトライで救援します。
+
+### フォールバック UA リトライ
+
+`config.toml`:
+
+```toml
+[scraping.fallback]
+enabled = true
+userAgent = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+categories = ["bot_blocked", "connection_dropped"]
+```
+
+| 設定キー | 説明 | デフォルト |
+|:--|:--|:--|
+| `enabled` | フォールバックリトライを有効化 | `true`（セクションがあれば） |
+| `userAgent` | リトライ時の UA。`SummalyBot` 文字列を含まないものを指定する | （指定必須） |
+| `categories` | リトライ発火対象のエラーカテゴリ | `["bot_blocked", "connection_dropped"]` |
+
+### 動作
+
+1. **1 回目**: 通常の UA（デフォルトは複合 UA）でリクエスト
+2. 失敗したら `categorizeError` でカテゴリ判定し、`categories` に含まれていれば
+3. **2 回目**: UA を `userAgent` に差し替えて再試行
+4. 2 回目も失敗したら **2 回目（最後）のエラー** を throw
+
+リトライ回数は常に最大 1 回（合計 2 回試行）。指数バックオフは入れません。
+
+### `facebookexternalhit/1.1` を採用した理由
+
+`facebookexternalhit/1.1` を share link 公開しているサイトの多くが OGP 取得用途として明示的に許可しています（fb / Twitter / Discord / Slack 等の正規 bot UA）。一方で「`SummalyBot` 文字列で WAF が弾く」サイトの多くは、これら正規 bot UA を allow リストに入れていることが実証されました（`playing-games.com` で 200 を返す等）。
+
+倫理的に気になる場合は中立的な `Mozilla/5.0 (compatible; LinkPreviewBot/1.0)` 等に差し替え可能です（ただし WAF を通る保証は減る）。
+
+### IP block は救えない
+
+UA を切り替えても 100% の沈黙を返すサイト（`rawchili.com` 等、Linode 互いの IP レンジを丸ごと弾いているケース）は本機構の射程外です。専用プロキシ経由でのリトライは別 phase の検討課題。
+
+### 観測
+
+`req.log` の pino 出力で `error.category` を見れば「フォールバックを試みる対象だったか」がわかります:
+
+```bash
+# bot block / connection_dropped で失敗した URL（フォールバックで救えなかった分）を抽出
+sudo journalctl -u summaly -o cat | jq -c 'select(.err.category == "bot_blocked" or .err.category == "connection_dropped")'
+```
+
+リトライで救えた分はログに出ません（成功扱いのため）。救援統計を取りたい場合は phase11.6（迂回候補ログ）で別 JSONL に書き出す設計を予定しています。
 
 パース失敗ドメインのログ蓄積 (phase10.1)
 ----------------------------------------------------------------
@@ -293,6 +356,7 @@ Fastify モードで `summaly()` が throw した場合、500 ステータス + 
 | `content_too_large` | ページが大きすぎてプレビュー対象外 | `useRange: true` で先頭領域取得を検討 |
 | `ssrf_blocked` | プライベート IP はプレビュー禁止 | URL を確認 |
 | `network_error` | サーバに到達できません | URL のホスト名を確認 |
+| `connection_dropped` | サーバが応答せず切断されました | WAF 黙殺の典型。`[scraping.fallback]` の対象 |
 | `parse_error` | プレビューが取得できませんでした | プラグイン化候補（パース失敗ログで追跡） |
 | `unknown` | 不明なエラー | ログを確認 |
 

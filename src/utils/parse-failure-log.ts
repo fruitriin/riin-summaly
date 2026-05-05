@@ -105,6 +105,7 @@ export function isThinSummary(summary: SummalyResult): boolean {
  * - `content_too_large` `contentLengthLimit` 超過 (10 MiB デフォルト)
  * - `ssrf_blocked` プライベート IP 拒否（IP パース失敗で投げられる `Invalid IP` も含む）
  * - `network_error` DNS 失敗 / 接続拒否 (`ENOTFOUND` 等)
+ * - `connection_dropped` TCP/TLS は通ったが HTTP 応答前に切断 (`socket hang up` / `EPIPE` / `ECONNRESET` / `Empty reply`) — bot block 系の典型
  * - `parse_error` HTML は取れたが summarize が null / cheerio パース失敗
  * - `unknown` 上記いずれにも該当しない（catch-all）
  */
@@ -117,6 +118,7 @@ export type SummalyErrorCategory =
 	| 'content_too_large'
 	| 'ssrf_blocked'
 	| 'network_error'
+	| 'connection_dropped'
 	| 'parse_error'
 	| 'unknown';
 
@@ -149,7 +151,13 @@ export function categorizeError(
 		if (/Rejected by type filter/i.test(errorMessage)) return 'unsupported_type';
 		if (/maxSize exceeded/i.test(errorMessage)) return 'content_too_large';
 		if (/timeout|timed out|aborted/i.test(errorMessage)) return 'timeout';
-		if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN/i.test(errorMessage)) {
+		// connection_dropped を network_error より前に判定する。`ECONNRESET` は両方にマッチしうるが、
+		// 「TCP は通ったが HTTP 応答前に切断」という意味は connection_dropped 側に寄せる
+		// （bot block 系 WAF の典型シグニチャ。フォールバック UA リトライの対象）。
+		if (/socket hang up|EPIPE|ECONNRESET|Empty reply/i.test(errorMessage)) {
+			return 'connection_dropped';
+		}
+		if (/ENOTFOUND|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN/i.test(errorMessage)) {
 			return 'network_error';
 		}
 		if (/failed summarize/i.test(errorMessage)) return 'parse_error';
@@ -191,6 +199,7 @@ const FILTERED_CATEGORIES = new Set<SummalyErrorCategory>([
 	'content_too_large',
 	'ssrf_blocked',
 	'network_error',
+	'connection_dropped',
 ]);
 
 /**

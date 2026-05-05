@@ -256,4 +256,74 @@ describe('parseTomlConfigString', () => {
 			`)).toThrow(/parseFailureLogJsonlMaxBytes.*non-negative/);
 		});
 	});
+
+	describe('[scraping.fallback] (phase11.9)', () => {
+		test('userAgent / categories をマップ', () => {
+			const cfg = parseTomlConfigString(`
+				[scraping.fallback]
+				enabled = true
+				userAgent = "facebookexternalhit/1.1"
+				categories = ["bot_blocked", "connection_dropped"]
+			`);
+			expect(cfg.summaly.fallbackUserAgent).toBe('facebookexternalhit/1.1');
+			expect(cfg.summaly.fallbackRetryCategories).toEqual(['bot_blocked', 'connection_dropped']);
+		});
+
+		test('enabled = false のときは何もマップしない', () => {
+			const cfg = parseTomlConfigString(`
+				[scraping.fallback]
+				enabled = false
+				userAgent = "facebookexternalhit/1.1"
+				categories = ["bot_blocked"]
+			`);
+			expect(cfg.summaly.fallbackUserAgent).toBeUndefined();
+			expect(cfg.summaly.fallbackRetryCategories).toBeUndefined();
+		});
+
+		test('セクション省略時は undefined のまま', () => {
+			const cfg = parseTomlConfigString(`
+				[summaly]
+				responseTimeout = 5000
+			`);
+			expect(cfg.summaly.fallbackUserAgent).toBeUndefined();
+			expect(cfg.summaly.fallbackRetryCategories).toBeUndefined();
+		});
+
+		test('userAgent 省略時は DEFAULT_FALLBACK_UA (facebookexternalhit) で埋める (phase11.9 W-2)', () => {
+			const cfg = parseTomlConfigString(`
+				[scraping.fallback]
+				enabled = true
+			`);
+			expect(cfg.summaly.fallbackUserAgent).toContain('facebookexternalhit');
+		});
+
+		test('userAgent 空文字列は RangeError (有効化時)', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.fallback]
+				enabled = true
+				userAgent = ""
+			`)).toThrow(/scraping\.fallback\.userAgent.*must not be empty/);
+		});
+
+		test('categories の型違いは TypeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.fallback]
+				categories = [1, 2]
+			`)).toThrow(/scraping\.fallback\.categories.*array of strings/);
+		});
+
+		test('enabled の型違いは TypeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.fallback]
+				enabled = "yes"
+			`)).toThrow(/scraping\.fallback\.enabled.*boolean/);
+		});
+
+		test('categories に未知のカテゴリは RangeError (S-3 typo 検出)', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.fallback]
+				categories = ["bot_blocked", "typo_category"]
+			`)).toThrow(/scraping\.fallback\.categories.*unknown category.*typo_category/);
+		});
+	});
 });

@@ -149,6 +149,18 @@ export type GeneralScrapingOptions = {
 	 * 詳細は SummalyOptions.enablePdf を参照。
 	 */
 	enablePdf?: boolean;
+
+	/**
+	 * Bot block 検出時のフォールバック UA。指定すると、`fallbackRetryCategories` に含まれる
+	 * カテゴリのエラーが発生したとき、UA をこの値に差し替えて 1 回だけ再試行する。
+	 * `undefined` または空文字列ならリトライ無効（既存挙動）。詳細は SummalyOptions.fallbackUserAgent。
+	 */
+	fallbackUserAgent?: string;
+
+	/**
+	 * フォールバック UA リトライを発火するエラーカテゴリ。デフォルト: `['bot_blocked', 'connection_dropped']`。
+	 */
+	fallbackRetryCategories?: import('@/utils/parse-failure-log.js').SummalyErrorCategory[];
 };
 
 export async function general(_url: URL | string, opts?: GeneralScrapingOptions): Promise<Summary | null> {
@@ -168,6 +180,8 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 		contentLengthRequired: opts?.contentLengthRequired,
 		useRange: opts?.useRange,
 		enablePdf: opts?.enablePdf,
+		fallbackUserAgent: opts?.fallbackUserAgent,
+		fallbackRetryCategories: opts?.fallbackRetryCategories,
 	});
 
 	if (res.pdf != null) {

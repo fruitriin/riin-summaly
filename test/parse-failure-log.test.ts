@@ -170,8 +170,20 @@ describe('categorizeError (phase11.2)', () => {
 	test('低レベルネットワーク到達不能 → network_error', () => {
 		expect(categorizeError('getaddrinfo ENOTFOUND example.invalid')).toBe('network_error');
 		expect(categorizeError('connect ECONNREFUSED 127.0.0.1:443')).toBe('network_error');
-		expect(categorizeError('connect ECONNRESET')).toBe('network_error');
 		expect(categorizeError('connect EHOSTUNREACH')).toBe('network_error');
+	});
+
+	test('TCP/TLS 後の切断系 → connection_dropped (phase11.9)', () => {
+		// bot block 系 WAF が「`SummalyBot` 文字列を検知してから TCP/TLS 確立後に
+		// HTTP レスポンス前で切断する」典型パターン。フォールバック UA でリトライ価値あり。
+		expect(categorizeError('socket hang up')).toBe('connection_dropped');
+		expect(categorizeError('write EPIPE')).toBe('connection_dropped');
+		expect(categorizeError('Empty reply from server')).toBe('connection_dropped');
+		// ECONNRESET は意味的に socket hang up とほぼ同じなので connection_dropped 側に寄せる
+		// （phase11.2 までは network_error 配下だったが、リトライ判定の精度を上げるため再分類）
+		expect(categorizeError('connect ECONNRESET')).toBe('connection_dropped');
+		// got が wrap せず Node.js が直接 throw する `read ECONNRESET` 形式もマッチする
+		expect(categorizeError('read ECONNRESET')).toBe('connection_dropped');
 	});
 
 	test('failed summarize メッセージ → parse_error', () => {

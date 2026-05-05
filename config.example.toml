@@ -37,6 +37,21 @@ inFlightDedup = true                  # 同一 URL の並列リクエストを 1
 # キーをコメントアウト or 削除すると env を見るフォールバックが効く。
 enabled = false
 
+[scraping.fallback]
+# Bot block 検出時に別 UA で 1 回リトライする (phase11.9)。
+# `SummalyBot` 文字列を WAF が弾くサイト (`playing-games.com` 等) を救援する用途。
+# デフォルト UA は `Mozilla/5.0 (compatible; SummalyBot/<ver>; +<repo>)` 形式の複合 UA で、
+# Mozilla プレフィックス必須の WAF は通る。`SummalyBot` 文字列で弾くタイプは下記でリトライ。
+enabled = true
+# リトライ時に使う UA。**省略すると `facebookexternalhit/1.1` がデフォルト** で使われる。
+# share link を発行している多くのサイトが OGP 取得用途として明示的に許可しているため
+# 互換性が高い。倫理的に嫌な場合は `Mozilla/5.0 (compatible; LinkPreviewBot/1.0)` 等の
+# 中立的な UA に差し替え可能。
+# userAgent = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+# どのカテゴリでリトライを発火するか。`bot_blocked` (4xx 系) と `connection_dropped`
+# (TCP は通ったが HTTP 応答前に切断 = WAF 黙殺) がデフォルト。
+categories = ["bot_blocked", "connection_dropped"]
+
 [plugins]
 # 利用許可するプラグイン名の配列。
 #   - 配列が無い / 省略  → 全プラグイン有効（互換挙動）

@@ -19,6 +19,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 11.8 | [docs/plans/phase11.8-fastify-error-logging.md](docs/plans/phase11.8-fastify-error-logging.md) — Fastify モードのエラー観測性回復（500 を pino ログに出す） | S | 完了 (2026-05-05) |
 | — | 11.1 | [docs/plans/phase11.1-deps-update.md](docs/plans/phase11.1-deps-update.md) — 依存更新（patch/minor 安全帯 + major 個別検証） | S〜M | 完了 (2026-05-05、eslint 10 のみ次回送り) |
 | — | 11.3 | [docs/plans/phase11.3-scpaping-follow-redirect.md](docs/plans/phase11.3-scpaping-follow-redirect.md) — Fastify モードで scpaping のリダイレクト follow が無効化されているバグ修正（[riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) 真因） | S | 完了 (2026-05-05) |
+| — | 11.9 | [docs/plans/phase11.9-bot-block-ua-retry.md](docs/plans/phase11.9-bot-block-ua-retry.md) — bot block 対策（複合 UA + フォールバック UA リトライ）。`SummalyBot` 文字列で WAF に弾かれるサイトを救援（実証 2/3 救える） | M | 完了 (2026-05-05、pino fallback フィールドは phase11.6 に廆す) |
 
 ### 外部リポ連携（summaly スコープ外）
 
@@ -56,6 +57,7 @@ phase11.5 完了（診断エンドポイント廃止）
 phase11.6 未着手（迂回候補ログ）       ← 11.5 後着手なら API がスッキリ
 phase11.7 未着手（favicon サムネ）     ← 全部と並列可
 phase11.8 完了（エラーログ出力）
+phase11.9 完了（bot block UA リトライ、pino fallback フィールドは phase11.6 に廆す）
 ```
 
 ---

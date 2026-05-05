@@ -2526,6 +2526,104 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('Bot block フォールバック UA リトライ (phase11.9)', () => {
+		test('1 回目 403 / 2 回目 200 (UA 切り替え) でフォールバック成功', async () => {
+			let firstUa: string | undefined;
+			let secondUa: string | undefined;
+			let attempts = 0;
+			app = fastify();
+			app.get('/page', (req, reply) => {
+				attempts++;
+				const ua = req.headers['user-agent'];
+				if (attempts === 1) {
+					firstUa = ua;
+					return reply.status(403).send('blocked');
+				}
+				secondUa = ua;
+				const html = '<html><head><title>Rescued</title></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			await app.listen({ port });
+
+			const summary = await summaly(`${host}/page`, {
+				followRedirects: false, // HEAD/GET probe を抑制して fallback リトライだけを観測
+				fallbackUserAgent: 'Twitterbot/1.0',
+			});
+			expect(summary.title).toBe('Rescued');
+			expect(attempts).toBe(2);
+			expect(firstUa).toContain('SummalyBot/'); // デフォルト複合 UA に含まれる
+			expect(secondUa).toBe('Twitterbot/1.0');
+		});
+
+		test('1 回目 404 はフォールバック対象外（not_found）でリトライしない', async () => {
+			let attempts = 0;
+			app = fastify();
+			app.get('/page', (_req, reply) => {
+				attempts++;
+				return reply.status(404).send('not found');
+			});
+			await app.listen({ port });
+
+			await expect(summaly(`${host}/page`, {
+				followRedirects: false,
+				fallbackUserAgent: 'Twitterbot/1.0',
+			})).rejects.toThrow();
+			expect(attempts).toBe(1); // リトライしない
+		});
+
+		test('fallbackUserAgent 未指定なら 1 回目失敗で即 throw（既存挙動）', async () => {
+			let attempts = 0;
+			app = fastify();
+			app.get('/page', (_req, reply) => {
+				attempts++;
+				return reply.status(403).send('blocked');
+			});
+			await app.listen({ port });
+
+			await expect(summaly(`${host}/page`, { followRedirects: false })).rejects.toThrow();
+			expect(attempts).toBe(1);
+		});
+
+		test('1 回目 / 2 回目両方失敗 → 2 回目（最後の）エラーが throw される', async () => {
+			let attempts = 0;
+			app = fastify();
+			app.get('/page', (_req, reply) => {
+				attempts++;
+				if (attempts === 1) {
+					return reply.status(403).send('blocked');
+				}
+				return reply.status(429).send('rate limited');
+			});
+			await app.listen({ port });
+
+			await expect(summaly(`${host}/page`, {
+				followRedirects: false,
+				fallbackUserAgent: 'Twitterbot/1.0',
+			})).rejects.toThrow(/429/);
+			expect(attempts).toBe(2);
+		});
+
+		test('fallbackRetryCategories で発火カテゴリを限定できる', async () => {
+			let attempts = 0;
+			app = fastify();
+			app.get('/page', (_req, reply) => {
+				attempts++;
+				return reply.status(403).send('blocked');
+			});
+			await app.listen({ port });
+
+			// connection_dropped だけリトライ対象 → 403 (bot_blocked) はリトライしない
+			await expect(summaly(`${host}/page`, {
+				followRedirects: false,
+				fallbackUserAgent: 'Twitterbot/1.0',
+				fallbackRetryCategories: ['connection_dropped'],
+			})).rejects.toThrow();
+			expect(attempts).toBe(1);
+		});
+	});
+
 	describe('DOM 後処理系プラグイン (phase3.2)', () => {
 		describe('dlsite', () => {
 			test('test() が www.dlsite.com にマッチ', () => {

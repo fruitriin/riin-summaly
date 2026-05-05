@@ -52,6 +52,14 @@
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
 
+## phase11.9 (bot block UA リトライ) 知見
+
+- **2026-05-05 phase11.9 セッション**: M サイズフェーズで Plan の 11 ステップを完遂すると実装規模が大きくなりがち。Step 8（pino fallback フィールド追加）は実装規模対観測コストが見合わないと判断して **別 phase (phase11.6) に廆す deferral 判断** を実装途中で行った。Plan に「方針からの変更」として記録 + CHANGELOG ではこの分は触れず、phase11.6 完了時に合流させる前提。**Plan 完了率より「動くものを出す」優先** の判断。phase11.4 の `dist-tags.latest` null フォールバックと同種の deferral パターン
+- **2026-05-05 phase11.9 セッション**: ユーザーから実装途中で「UAデフォルトは riin-summaly がいいかも」という指摘。`misskey-dev/summaly` ではなく fork URL を指す方が運用的に正しい（運用者が問い合わせ可能な場所）。**指摘を即反映 + 倫理判断（fork なのに upstream URL を名乗るのは fork 側の責任を曖昧にする）として knowhow に記録**
+- **2026-05-05 phase11.9 セッション**: フォールバック UA リトライのテストで `summaly()` 全体経路を動かすと **HEAD/GET probe (resolveRedirect) が attempts カウントに混入** する。`followRedirects: false` を明示してリトライ機構の挙動だけを切り出すのが綺麗。テスト戦略として `docs/knowhow/bot-block-ua-retry.md` に記録
+- **2026-05-05 phase11.9 セッション**: レビュー agent が **「`enabled = true` + `userAgent` 未指定がサイレントに無効化される」** という診断困難な運用バグを W-2 で指摘。`DEFAULT_FALLBACK_UA` をデフォルトとして埋める形で修正。同時に **「`DEFAULT_FALLBACK_UA` がどこからも参照されていない」(S-2)** も解消（W-2 修正で参照するようになった）。**「export しているがどこからも参照されていない定数」のレビュー観点が良い**
+- **2026-05-05 phase11.9 セッション**: TOML パーサーで `categories = ["bot_blocked", "typo_category"]` のような typo を許容する潜在バグをレビュー agent が S-3 で指摘。`VALID_ERROR_CATEGORIES` セットを `bin/config-loader.ts` に追加して typo 検出。ただし **`SummalyErrorCategory` ユニオンとの手動同期** が必要になり、新カテゴリ追加時の保守箇所が分散する。`as const` + `Object.values` でカテゴリ一覧を単一ソース化するリファクタ案は別 phase 候補（軽い負債として記録）
+
 ## phase11.4 (npmjs プラグイン / Cloudflare 配下 JSON API 直叩き) 知見
 
 - **2026-05-05 phase11.4 セッション**: 「Cloudflare Bot Management で蓋されているサイトでも公式 JSON API は素通し」というパターンが発見器として有効。npm の `www.npmjs.com` (HTML 403) ↔ `registry.npmjs.org` (JSON 200) は典型例。Plan で `curl -A SummalyBot/x.y.z` の事前検証コマンドを記録しておくと、レビュー段階で「実装前に検証済み」と確認できる。`docs/knowhow/plugin-infrastructure-patterns.md` に汎用化したパターンを追記済み

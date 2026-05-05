@@ -1,5 +1,21 @@
 (unreleased)
 ------------------
+* **feat**: Bot block 対策のフォールバック UA リトライを追加 (phase11.9):
+  * `SummalyBot` 文字列を WAF が検知して TCP/TLS 確立後に HTTP 応答前で切断する（`socket hang up`）サイトに対する救援機構。`config.toml` の `[scraping.fallback]` でデフォルト ON
+  * 1 回目失敗 + `categorizeError` 結果がリトライ対象カテゴリ（デフォルト `bot_blocked` / `connection_dropped`）なら、UA を `facebookexternalhit/1.1` 等に差し替えて 1 回だけ再試行
+  * 実証データ: `playing-games.com` / `wacoca.com` のように WAF が `SummalyBot` 文字列で弾くサイト 2/3 を救援できる（残り 1/3 は IP block で射程外）
+  * 倫理的配慮: フォールバック UA は `[scraping.fallback].userAgent` で差し替え可能。`facebookexternalhit/1.1` をデフォルトにしたのは、share link を公開するサイトの多くが OGP 取得用途として明示的に許可しているため
+  * 副作用: bot block されるサイトは worst case リクエスト数が 1 → 2 に増える。LRU キャッシュ HIT で 2 度目以降は 0 リクエスト、in-flight dedup により並列でも先頭の 1 ユーザーだけが 2 リクエスト払う
+  * ライブラリ利用者向け: `summaly()` の `opts.fallbackUserAgent` / `opts.fallbackRetryCategories` で同等のリトライを指定可能
+* **enhance**: デフォルト UA を Mozilla プレフィックス付きの複合 UA に変更 (phase11.9):
+  * 旧: `SummalyBot/<version>`
+  * 新: `Mozilla/5.0 (compatible; SummalyBot/<version>; +https://github.com/fruitriin/riin-summaly)`
+  * 自己同定（`SummalyBot/<version>` + URL）は維持。「Mozilla プレフィックス必須」タイプの WAF を底上げで通すための変更
+  * 自己説明 URL は riin-summaly fork のリポジトリを指す
+* **enhance**: `categorizeError` に `connection_dropped` カテゴリを追加 (phase11.9):
+  * 「TCP/TLS は通ったが HTTP 応答を返さず切断」シグニチャ（`socket hang up` / `EPIPE` / `ECONNRESET` / `Empty reply`）を `network_error` から分離
+  * **`ECONNRESET` の再分類**: 既存 `network_error` 配下から `connection_dropped` 側に移動（意味的に `socket hang up` とほぼ同じため）。`network_error` で監視している運用者は `connection_dropped` も見るように追加してください
+  * pino ログレベルは `warn`（既存 `network_error` と同等）
 * **feat**: npmjs.com プラグインを追加 (phase11.4):
   * `https://www.npmjs.com/package/<pkg>` および scoped `/package/@scope/name` で Cloudflare 配下の HTML スクレイプを諦め、Registry API (`https://registry.npmjs.org/<pkg>`) を直叩きして Summary を組み立てる
   * `dist-tags.latest` の `name` / `description` を最優先、無ければ `versions[latest].description` にフォールバック

@@ -10,6 +10,26 @@
 import { readFileSync } from 'node:fs';
 import { parse as parseToml } from 'smol-toml';
 import type { SummalyOptions } from '../src/index.js';
+import { DEFAULT_FALLBACK_UA } from '../src/utils/got.js';
+
+/**
+ * `SummalyErrorCategory` の現存値一覧（typo を防ぐための検証用）。
+ * `src/utils/parse-failure-log.ts` の `SummalyErrorCategory` ユニオンに合わせる。
+ * 新カテゴリ追加時はこちらも追記する必要がある（現状は手動同期）。
+ */
+const VALID_ERROR_CATEGORIES: ReadonlySet<string> = new Set([
+	'timeout',
+	'bot_blocked',
+	'not_found',
+	'origin_error',
+	'unsupported_type',
+	'content_too_large',
+	'ssrf_blocked',
+	'network_error',
+	'connection_dropped',
+	'parse_error',
+	'unknown',
+]);
 
 export interface ServerOptions {
 	host?: string;
@@ -79,8 +99,57 @@ export function parseTomlConfigString(toml: string): ParsedConfig {
 
 	const server = parseServerSection(parsed.server);
 	const summaly = parseSummalySection(parsed.summaly, parsed.plugins, parsed.diagnostics);
+	parseScrapingSection(parsed.scraping, summaly);
 
 	return { server, summaly };
+}
+
+/**
+ * `[scraping.fallback]` セクションを処理し、`SummalyOptions` の
+ * `fallbackUserAgent` / `fallbackRetryCategories` にマップする (phase11.9)。
+ *
+ * - `enabled = false` のときは何もマップしない（リトライ無効）
+ * - `enabled = true` (or undefined) で `userAgent` 指定があれば `fallbackUserAgent` に
+ * - `categories` 指定があれば `fallbackRetryCategories` に
+ */
+function parseScrapingSection(rawScraping: Toml, out: SummalyOptions): void {
+	if (rawScraping === undefined) return;
+	if (!isObject(rawScraping)) {
+		throw new TypeError('config: `[scraping]` must be a table');
+	}
+	const fallback = rawScraping.fallback;
+	if (fallback === undefined) return;
+	if (!isObject(fallback)) {
+		throw new TypeError('config: `[scraping.fallback]` must be a table');
+	}
+	let enabled = true;
+	if (fallback.enabled !== undefined) {
+		expectType(fallback.enabled, 'boolean', 'scraping.fallback.enabled');
+		enabled = fallback.enabled as boolean;
+	}
+	if (!enabled) return;
+	// `userAgent` 省略時は `DEFAULT_FALLBACK_UA` (`facebookexternalhit/1.1`) を採用。
+	// 「`enabled = true` を書いたのにリトライしない」サイレントバグを防ぐため (phase11.9 W-2)。
+	if (fallback.userAgent !== undefined) {
+		expectType(fallback.userAgent, 'string', 'scraping.fallback.userAgent');
+		const ua = (fallback.userAgent as string).trim();
+		if (ua === '') {
+			throw new RangeError('config: `scraping.fallback.userAgent` must not be empty when fallback is enabled');
+		}
+		out.fallbackUserAgent = ua;
+	} else {
+		out.fallbackUserAgent = DEFAULT_FALLBACK_UA;
+	}
+	if (fallback.categories !== undefined) {
+		expectStringArray(fallback.categories, 'scraping.fallback.categories');
+		// 各値が `SummalyErrorCategory` の既存メンバーかをチェック（typo 検出）
+		for (const c of fallback.categories) {
+			if (!VALID_ERROR_CATEGORIES.has(c)) {
+				throw new RangeError(`config: \`scraping.fallback.categories\` contains unknown category "${c}"`);
+			}
+		}
+		out.fallbackRetryCategories = fallback.categories as SummalyOptions['fallbackRetryCategories'];
+	}
 }
 
 function parseServerSection(raw: Toml): ServerOptions {

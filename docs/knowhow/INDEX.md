@@ -21,6 +21,7 @@
 | ファイル | 要約 | キーワード |
 |---|---|---|
 | [plugin-infrastructure-patterns.md](plugin-infrastructure-patterns.md) | プラグイン基盤（getJson / name / BROWSER_UA / KNOWN_SHORT_HOSTS）の設計判断と SSRF 防御パターン。**Cloudflare 配下サイトの公式 JSON API 直叩きパターン**（npmjs プラグインで採用、registry.npmjs.org / 適用判断チェックリスト / scope エンコード `pkg.replace('/', '%2F')` / アイコン陳腐化対策） | プラグイン, getJson, oEmbed, name 一致テスト, BROWSER_UA, 短縮URL, SSRF, dispatcher, maxRedirects, typeFilter, Cloudflare Bot Management, registry.npmjs.org, npmjs, JSON API 直叩き, scope エンコード |
+| [bot-block-ua-retry.md](bot-block-ua-retry.md) | Bot block 対策の複合 UA + フォールバック UA リトライ (phase11.9)。`SummalyBot` 文字列で WAF 弾く WAF（playing-games.com 等）への救援、`socket hang up` シグニチャと `connection_dropped` カテゴリ、`facebookexternalhit/1.1` を default fallback UA に採用した倫理判断、IP block (rawchili 系) は射程外、`followRedirects: false` を使うテスト戦略 | bot block, WAF, socket hang up, connection_dropped, facebookexternalhit, fallback UA, getResponseWithFallback, Mozilla プレフィックス複合 UA, ECONNRESET 再分類, IP block 射程外 |
 | [sanitize-and-agent-patterns.md](sanitize-and-agent-patterns.md) | 結果 URL の sanitize（player リセット・data: バイト長制限）、keep-alive デフォルト agent、useRange / allowedPlugins の設計判断 | sanitize-url, javascript: スキーム, data: URI, keep-alive agent, SUMMALY_FAMILY, useRange, allowedPlugins, isExternalAgentSet, player リセット, encoding-japanese, jschardet |
 
 ## summaly Fastify モード（キャッシュ・流量制御）

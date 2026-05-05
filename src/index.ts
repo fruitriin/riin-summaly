@@ -185,6 +185,25 @@ export type SummalyOptions = {
 	 * 「PDF を扱う／扱わない」の最終判断は運用者に委ねる方針。
 	 */
 	enablePdf?: boolean;
+
+	/**
+	 * Bot block 検出時のフォールバック UA (phase11.9)。
+	 *
+	 * `summaly()` の内部リクエストが `fallbackRetryCategories` に含まれるエラーカテゴリで失敗したとき、
+	 * UA をこの値に差し替えて 1 回だけ再試行する。`undefined` または空文字列ならリトライ無効
+	 * （既存挙動互換）。
+	 *
+	 * 想定: `SummalyBot` 文字列を WAF が弾くサイトに対し、`facebookexternalhit/1.1` のような
+	 * share-link 用の正規 bot UA で救援する用途。Fastify モードでは `config.toml` の
+	 * `[scraping.fallback]` から自動注入される。
+	 */
+	fallbackUserAgent?: string;
+
+	/**
+	 * `fallbackUserAgent` が発火するエラーカテゴリ (phase11.9)。
+	 * デフォルト: `['bot_blocked', 'connection_dropped']`。
+	 */
+	fallbackRetryCategories?: SummalyErrorCategory[];
 };
 
 const DEFAULT_CACHE_MAX_AGE = 604800;
@@ -371,6 +390,8 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		contentLengthRequired: opts.contentLengthRequired,
 		useRange: opts.useRange,
 		enablePdf: opts.enablePdf,
+		fallbackUserAgent: opts.fallbackUserAgent,
+		fallbackRetryCategories: opts.fallbackRetryCategories,
 	};
 
 	// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition

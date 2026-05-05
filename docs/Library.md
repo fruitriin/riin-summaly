@@ -87,6 +87,8 @@ opts (`SummalyOptions`) — ライブラリ利用時に効くオプション
 | **allowedPlugins** | *string[]* | 利用許可するプラグイン名の配列。`undefined` で全有効、`[]` で組み込み全 disable | `undefined` |
 | **useRange** | *boolean* | `Range: bytes=0-N-1` で先頭領域のみ取得して帯域節約（サーバ未対応時は通常 GET と同等にフォールバック） | `false` |
 | **enablePdf** | *boolean* | PDF レスポンスのタイトル取得を有効化（5 層のハング対策付き）。`false` を明示すると環境変数 `SUMMALY_ENABLE_PDF=true` を上書きする | `undefined` |
+| **fallbackUserAgent** | *string* | Bot block 検出時に UA を差し替えて 1 回だけ再試行する (phase11.9)。`undefined` または空文字列ならリトライ無効。`SummalyBot` 文字列を WAF が弾くサイトを `facebookexternalhit/1.1` 等で救援する用途 | `undefined` |
+| **fallbackRetryCategories** | *SummalyErrorCategory[]* | `fallbackUserAgent` が発火するカテゴリ。デフォルトは `['bot_blocked', 'connection_dropped']` | `undefined` (= デフォルト) |
 
 ### 環境変数
 
@@ -185,6 +187,7 @@ await fastify.register(Summaly, {
 | `content_too_large` | `contentLengthLimit` 超過 (デフォルト 10 MiB) | 巨大 HTML、`useRange` 推奨 |
 | `ssrf_blocked` | プライベート IP 拒否 | `192.168.*` 等 (ガード有効時)、IP パース失敗の `Invalid IP` も含む |
 | `network_error` | DNS 失敗 / 接続拒否 | `ENOTFOUND` / `ECONNREFUSED` |
+| `connection_dropped` | TCP/TLS 後の HTTP 応答前切断 (phase11.9) | `socket hang up` / `EPIPE` / `ECONNRESET` / WAF 黙殺 |
 | `parse_error` | summarize null / cheerio 失敗 | `failed summarize` |
 | `unknown` | 上記いずれにも該当しない | catch-all |
 

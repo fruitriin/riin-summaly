@@ -22,6 +22,12 @@ inFlightDedup = true
 [summaly.pdf]
 enabled = false
 
+[scraping.fallback]
+# bot block (4xx / WAF 黙殺) に当たったら別 UA で 1 回リトライ (phase11.9)
+enabled = true
+userAgent = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+categories = ["bot_blocked", "connection_dropped"]
+
 [plugins]
 allowed = [
   "amazon",

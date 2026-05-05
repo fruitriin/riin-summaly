@@ -43,6 +43,10 @@ describe('chooseLogLevel', () => {
 		expect(chooseLogLevel(new Error('getaddrinfo ENOTFOUND example.invalid'))).toBe('warn');
 	});
 
+	test('Error("socket hang up") → warn (connection_dropped, phase11.9)', () => {
+		expect(chooseLogLevel(new Error('socket hang up'))).toBe('warn');
+	});
+
 	test('Error("failed summarize") → error (parse_error)', () => {
 		expect(chooseLogLevel(new Error('failed summarize'))).toBe('error');
 	});

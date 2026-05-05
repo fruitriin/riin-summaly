@@ -6,6 +6,7 @@ import type { GeneralScrapingOptions } from '@/general.js';
 import { StatusError } from '@/utils/status-error.js';
 import { detectEncoding, toUtf8 } from '@/utils/encoding.js';
 import { defaultHttpAgent, defaultHttpsAgent } from '@/utils/agent.js';
+import { categorizeError, type SummalyErrorCategory } from '@/utils/parse-failure-log.js';
 
 /**
  * 外部から `setAgent` で渡された agent。設定されている場合は keep-alive デフォルトより優先される。
@@ -66,7 +67,16 @@ function isPdfEnabled(enablePdf: boolean | undefined): boolean {
 export const DEFAULT_RESPONSE_TIMEOUT = 20 * 1000;
 export const DEFAULT_OPERATION_TIMEOUT = 60 * 1000;
 export const DEFAULT_MAX_RESPONSE_SIZE = 10 * 1024 * 1024;
-export const DEFAULT_BOT_UA = `SummalyBot/${_VERSION_}`;
+// Mozilla プレフィックス必須の WAF を底上げで通すために複合 UA を採用 (phase11.9)。
+// 「`SummalyBot` 文字列で WAF が弾く」サイトには別途 fallback UA リトライ機構があり、
+// このデフォルトはそれと併用する想定。自己同定 (`SummalyBot/<ver>` + URL) は維持。
+// URL は riin-summaly fork のリポジトリを指す（運用者が問い合わせ可能な場所）。
+export const DEFAULT_BOT_UA = `Mozilla/5.0 (compatible; SummalyBot/${_VERSION_}; +https://github.com/fruitriin/riin-summaly)`;
+// SummalyBot 文字列を含まないフォールバック UA。bot block で 1 回目が `connection_dropped` /
+// `bot_blocked` カテゴリに該当する場合に使う。`facebookexternalhit` を採用しているのは
+// share link を発行している多くのサイトが OGP 取得用途として明示的に許可しているため。
+// 倫理的に気になる場合は config で差し替え可能。
+export const DEFAULT_FALLBACK_UA = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
 
 export function getGotOptions(url: string, opts?: GeneralScrapingOptions): Omit<GotOptions, 'method'> {
 	const maxSize = opts?.contentLengthLimit ?? DEFAULT_MAX_RESPONSE_SIZE;
@@ -133,10 +143,11 @@ export async function scpaping(
 ): Promise<ScpapingResult> {
 	const args = getGotOptions(url, opts);
 
-	const response = await getResponse({
+	const fallback = buildFallbackConfig(opts);
+	const response = await getResponseWithFallback({
 		...args,
 		method: 'GET',
-	});
+	}, fallback);
 
 	// PDF レスポンスは別パスで処理する。
 	// enablePdf が真のときのみ typeFilter で application/pdf を許可しているため、
@@ -316,6 +327,80 @@ export async function getResponse(args: GotOptions) {
 	}
 
 	return res;
+}
+
+/**
+ * フォールバック UA リトライ設定 (phase11.9)。
+ *
+ * 1 度目のリクエストが `categories` に含まれるエラーカテゴリで失敗したら、
+ * UA を `userAgent` に差し替えて 1 度だけ再試行する。
+ */
+export type FallbackUaConfig = {
+	userAgent: string;
+	/** リトライ発火対象のエラーカテゴリ */
+	categories: SummalyErrorCategory[];
+};
+
+export const DEFAULT_FALLBACK_RETRY_CATEGORIES: SummalyErrorCategory[] = [
+	'bot_blocked',
+	'connection_dropped',
+];
+
+/**
+ * `GeneralScrapingOptions` の `fallbackUserAgent` / `fallbackRetryCategories` から
+ * `FallbackUaConfig` を組み立てる。`fallbackUserAgent` 未指定 / 空文字列なら `undefined`。
+ */
+export function buildFallbackConfig(opts?: GeneralScrapingOptions): FallbackUaConfig | undefined {
+	const ua = opts?.fallbackUserAgent;
+	if (ua == null || ua === '') return undefined;
+	return {
+		userAgent: ua,
+		categories: opts?.fallbackRetryCategories ?? DEFAULT_FALLBACK_RETRY_CATEGORIES,
+	};
+}
+
+/**
+ * `getResponse` のラッパで、bot block 検出時に別 UA で 1 回だけリトライする (phase11.9)。
+ *
+ * - `fallback === undefined` のときは通常の `getResponse(args)` 1 回呼び出しと等価
+ * - 1 回目失敗 → `categorizeError` でカテゴリ判定 → `fallback.categories` に含まれていれば
+ *   UA だけ差し替えて 2 回目を実行
+ * - 2 回目も失敗したら **2 回目のエラー（最後のエラー）を throw**。フォールバックでも
+ *   失敗したという情報が末端まで伝わる
+ * - 成功時は通常の `Got.Response<string>` を返す
+ *
+ * リトライ回数は常に最大 1 回（合計 2 回試行）。指数バックオフは入れない。
+ */
+export async function getResponseWithFallback(
+	args: GotOptions,
+	fallback?: FallbackUaConfig,
+): Promise<Got.Response<string>> {
+	if (fallback == null) {
+		return await getResponse(args);
+	}
+	try {
+		return await getResponse(args);
+	} catch (firstErr) {
+		const message = firstErr instanceof Error ? firstErr.message : undefined;
+		const name = firstErr instanceof Error ? firstErr.name : undefined;
+		const statusCode = firstErr instanceof StatusError ? firstErr.statusCode : undefined;
+		const category = categorizeError(message, name, statusCode);
+		if (!fallback.categories.includes(category)) {
+			throw firstErr;
+		}
+		// UA を差し替えて 1 回だけ再試行する。Headers の他のキーは維持。
+		// 注: 上書きは小文字 `'user-agent'` で固定する。`getGotOptions` も小文字で生成しているため
+		// この経路では大文字小文字の二重キー問題は発生しない（外部から `args.headers` に
+		// 大文字 `'User-Agent'` を入れて呼び出す場合は呼出側で正規化する責任を負う）。
+		const retryArgs: GotOptions = {
+			...args,
+			headers: {
+				...args.headers,
+				'user-agent': fallback.userAgent,
+			},
+		};
+		return await getResponse(retryArgs);
+	}
 }
 
 async function receiveResponse<T>(args: {
