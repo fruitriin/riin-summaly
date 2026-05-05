@@ -433,6 +433,10 @@ button:disabled {
 	border-radius: 6px;
 	width: 100%;
 	max-width: 720px;
+	/* max-height でも cap することで YouTube Shorts (9:16 縦長) が画面いっぱいに伸びるのを防ぐ。
+	   横長 (16:9 720x405) は width で先に頭打ちになるため影響なし。
+	   縦長は height = 600 / aspect-ratio までに収まる（9:16 なら ~338px 幅）。 */
+	max-height: 600px;
 	display: block;
 }
 
