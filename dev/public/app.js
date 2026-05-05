@@ -161,6 +161,32 @@ function renderResult(result) {
 	paneJson.textContent = JSON.stringify(result, null, 2);
 	renderCard(result);
 	renderPlayer(result);
+	updatePlayerTabState(result);
+	// 取得のたびにカードプレビュータブへ戻す（player なしのときに iframe タブを見せ続けないため）
+	activateTab('card');
+}
+
+/** player.url が無いと iframe タブをグレーアウトする（クリック自体は可能、視覚的に「null」を伝える） */
+function updatePlayerTabState(result) {
+	const playerTab = document.querySelector('.tab[data-tab="player"]');
+	if (!playerTab) return;
+	const hasPlayer = result?.player?.url != null;
+	playerTab.classList.toggle('is-null', !hasPlayer);
+	playerTab.title = hasPlayer ? '' : 'player.url が null';
+}
+
+/** 指定タブをアクティブにする（タブ click handler と同じ挙動を関数化） */
+function activateTab(target) {
+	$$('.tab').forEach((b) => {
+		const active = b.dataset.tab === target;
+		b.classList.toggle('active', active);
+		b.setAttribute('aria-selected', active ? 'true' : 'false');
+	});
+	$$('.tab-pane').forEach((p) => {
+		const active = p.id === `pane-${target}`;
+		p.classList.toggle('active', active);
+		p.hidden = !active;
+	});
 }
 
 function renderCard(result) {
@@ -281,17 +307,7 @@ function renderPlayer(result) {
 
 $$('.tab').forEach((btn) => {
 	btn.addEventListener('click', () => {
-		const target = btn.dataset.tab;
-		$$('.tab').forEach((b) => {
-			const active = b === btn;
-			b.classList.toggle('active', active);
-			b.setAttribute('aria-selected', active ? 'true' : 'false');
-		});
-		$$('.tab-pane').forEach((p) => {
-			const active = p.id === `pane-${target}`;
-			p.classList.toggle('active', active);
-			p.hidden = !active;
-		});
+		activateTab(btn.dataset.tab);
 	});
 });
 

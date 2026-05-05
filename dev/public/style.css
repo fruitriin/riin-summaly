@@ -297,6 +297,18 @@ button:disabled {
 	border-bottom-color: var(--accent);
 }
 
+/* player.url が null のときの iframe タブ表示。クリックは可能、視覚的に「内容なし」を伝える */
+.tab.is-null {
+	color: var(--text-dim);
+	opacity: 0.55;
+	font-style: italic;
+}
+
+.tab.is-null::after {
+	content: ' (null)';
+	font-size: 11px;
+}
+
 .tab-pane {
 	min-height: 360px;
 	overflow: auto;
