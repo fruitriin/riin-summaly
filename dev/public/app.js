@@ -82,6 +82,7 @@ function renderSampleGroups(groups) {
 			a.addEventListener('click', (ev) => {
 				ev.preventDefault();
 				urlInput.value = sample.url;
+				applyPresets(sample.presets);
 				urlInput.focus();
 			});
 			li.appendChild(a);
@@ -96,6 +97,17 @@ function renderSampleGroups(groups) {
 		section.appendChild(ul);
 
 		sampleGroupsContainer.appendChild(section);
+	}
+}
+
+/** サンプル URL をクリックしたときに、フォームのチェックボックス類を自動設定する */
+function applyPresets(presets) {
+	if (!presets) return;
+	if (presets.enablePdf != null) enablePdfInput.checked = presets.enablePdf;
+	if (presets.useRange != null) useRangeInput.checked = presets.useRange;
+	if (presets.allowedPlugins) {
+		const allowed = new Set(presets.allowedPlugins);
+		$$('#allowed-plugins input').forEach((cb) => { cb.checked = allowed.has(cb.value); });
 	}
 }
 
@@ -286,20 +298,27 @@ function renderPlayer(result) {
 		return;
 	}
 
+	// 実寸ラベル: summaly が返した width × height を表示（dev での見やすさのため iframe は CSS で拡大表示）
+	const meta = document.createElement('div');
+	meta.className = 'player-meta';
+	const w = player.width ?? '?';
+	const h = player.height ?? '?';
+	meta.textContent = `summaly が返した player サイズ: ${w} × ${h} (dev では aspect ratio を保ったまま拡大表示)`;
+	panePlayer.appendChild(meta);
+
 	const iframe = document.createElement('iframe');
 	iframe.src = player.url;
-	if (player.width != null) {
-		iframe.width = String(player.width);
-	} else {
-		iframe.style.width = '100%';
+	// dev では `iframe.width` / `iframe.height` 属性を設定せず、CSS で 100% 幅 + aspect-ratio で拡大表示する。
+	// summaly の YouTube oEmbed は 200x113 等の小さい寸法を返すため、属性をそのまま使うと
+	// 視覚的に「動作していない」ように見えてしまう。実寸はラベルで別途確認できる。
+	if (player.width && player.height) {
+		iframe.style.aspectRatio = `${player.width} / ${player.height}`;
 	}
-	iframe.height = String(player.height);
 	if (Array.isArray(player.allow) && player.allow.length > 0) {
 		iframe.setAttribute('allow', player.allow.join('; '));
 	}
 	iframe.setAttribute('referrerpolicy', 'no-referrer');
 	iframe.setAttribute('sandbox', IFRAME_SANDBOX);
-	iframe.setAttribute('loading', 'lazy');
 	panePlayer.appendChild(iframe);
 }
 

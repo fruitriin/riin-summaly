@@ -413,7 +413,16 @@ button:disabled {
 #pane-player iframe {
 	border: 1px solid var(--border);
 	border-radius: 6px;
-	max-width: 100%;
+	width: 100%;
+	max-width: 720px;
+	display: block;
+}
+
+#pane-player .player-meta {
+	color: var(--text-dim);
+	font-size: 11px;
+	margin-bottom: 8px;
+	font-family: ui-monospace, "SF Mono", Consolas, monospace;
 }
 
 #pane-player .empty {

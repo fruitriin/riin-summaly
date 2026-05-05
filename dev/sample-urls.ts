@@ -9,6 +9,15 @@ export type SampleUrl = {
 	label: string;
 	url: string;
 	note?: string;
+	/**
+	 * クリック時にフォームへ自動適用する presets。
+	 * チェックボックスや `allowedPlugins` を設定する必要があるサンプル用。
+	 */
+	presets?: {
+		enablePdf?: boolean;
+		useRange?: boolean;
+		allowedPlugins?: string[];
+	};
 };
 
 export type SampleGroup = {
@@ -48,7 +57,7 @@ export const sampleGroups: SampleGroup[] = [
 		description: 'DOM 直接読み（OG/Twitter Card に頼らない）',
 		urls: [
 			{ label: 'Amazon JP', url: 'https://www.amazon.co.jp/dp/4297127830' },
-			{ label: 'amzn.asia 短縮', url: 'https://amzn.asia/d/00K7piwG', note: 'KNOWN_SHORT_HOSTS の dispatcher で HEAD 解決される' },
+			{ label: 'amzn.asia 短縮', url: 'https://amzn.asia/d/00K7piwG', note: '⚠ HEAD リダイレクトが解決されず短縮 URL のまま汎用パスに落ちる既知の挙動。要調査' },
 		],
 	},
 	{
@@ -69,7 +78,7 @@ export const sampleGroups: SampleGroup[] = [
 		name: 'dlsite / iwara / komiflo / nijie',
 		description: 'NSFW 対応プラグイン（sensitive 判定の動作確認）',
 		urls: [
-			{ label: 'DLsite work', url: 'https://www.dlsite.com/home/work/=/product_id/RJ01000000.html', note: '差し替え用テンプレ' },
+			{ label: 'DLsite work', url: 'https://www.dlsite.com/app/work/=/product_id/RJ01355633.html' },
 			{ label: 'iwara video', url: 'https://www.iwara.tv/video/example', note: '差し替え用テンプレ' },
 			{ label: 'komiflo comic', url: 'https://komiflo.com/comics/123456', note: '差し替え用テンプレ' },
 			{ label: 'nijie view', url: 'https://nijie.info/view.php?id=123456', note: '差し替え用テンプレ' },
@@ -85,9 +94,13 @@ export const sampleGroups: SampleGroup[] = [
 	},
 	{
 		name: 'PDF (enablePdf)',
-		description: '`enablePdf: true` を有効にした上でテスト',
+		description: 'クリックで `enablePdf: true` を自動 ON。クリック前のチェックボックス操作不要',
 		urls: [
-			{ label: 'Sample PDF', url: 'https://www.adobe.com/support/products/enterprise/knowledgecenter/media/c4611_sample_explain.pdf' },
+			{
+				label: 'Sample PDF',
+				url: 'https://www.adobe.com/support/products/enterprise/knowledgecenter/media/c4611_sample_explain.pdf',
+				presets: { enablePdf: true },
+			},
 		],
 	},
 ];
