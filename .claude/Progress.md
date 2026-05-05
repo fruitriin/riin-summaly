@@ -27,7 +27,8 @@
    - **失敗した場合 → 実装に差し戻す**。原因分析 → 修正 → 再実行
 4.5. **ドキュメントと実装の突き合わせ**: 今回の変更に対応する文書・サンプル・設定例が更新されているかチェックする
    - 公開 API（`SummalyOptions` / `SummalyResult` / プラグインインターフェース等）の変更 → README, docs/Library.md, docs/Plugins.md
-   - Fastify モード設定・運用機能の変更 → docs/SETUP.md, config.example.toml, docs/deploy-examples/
+   - Fastify モード設定・運用機能の変更 → docs/SETUP.md, docs/deploy-examples/README.md
+   - **設定ファイル example の更新**（特に修正漏れしやすい！）→ `config.example.toml`（ルート）と `docs/deploy-examples/summaly-config.example.toml`（デプロイ用）の **両方**。新規 TOML キー・デフォルト値変更・セクション追加すべて
    - 新規 / 変更されたユーザー向け機能 → CHANGELOG (unreleased セクション)
    - dev サーバ周りの変更 → dev/sample-urls.ts, dev/public/ の関連箇所
    - knowhow に値する設計判断 → docs/knowhow/ + docs/knowhow/INDEX.md
