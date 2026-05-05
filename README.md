@@ -1,4 +1,4 @@
-summaly
+riin-summaly
 ================================================================
 
 [![][npm-badge]][npm-link]
@@ -30,6 +30,14 @@ URL から `title` / `description` / `thumbnail` / `icon` / `sitename` / 埋め�
 - **SSRF 対策**: プライベート IP 拒否・レスポンスサイズ上限（10 MiB）・結果 URL のスキーム検証（`javascript:` 等を null に置換）
 - **キャッシュ機構**: `Cache-Control` ヘッダ・プロセス内 LRU キャッシュ
 - **多文字コード対応**: UTF-8 / Shift_JIS / ISO-2022-JP（[issue #39](https://github.com/misskey-dev/summaly/issues/39)）
+
+
+riin-summaly vs Misskey-dev(Official) summaly vs mei23 summaly
+
+||riin-summaly|official|mei23|
+|ベース||||
+|並行リクエスト| | | |
+
 
 Misskey 管理人として導入する場合
 ----------------------------------------------------------------
