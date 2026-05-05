@@ -120,6 +120,12 @@ form.addEventListener('submit', async (ev) => {
 	await runFetch(url);
 });
 
+// 進行中リクエストの AbortController。連続クリック・別 URL への切り替え時に古いリクエストを明示中断する
+// （古いリクエストが裏で残ってて新規発射が "Failed to fetch" になる事故を防ぐ）。
+let inFlightController = null;
+// fetch にデフォルトタイムアウトが無いため明示的な timeout を入れる。amazon 等の重いサイト対応で 90 秒。
+const FETCH_TIMEOUT_MS = 90 * 1000;
+
 async function runFetch(url) {
 	hideError();
 	fetchButton.disabled = true;
@@ -140,8 +146,21 @@ async function runFetch(url) {
 	const allowed = $$('#allowed-plugins input:checked').map(cb => cb.value);
 	if (allowed.length > 0) params.set('allowedPlugins', allowed.join(','));
 
+	// 古いリクエストを中断 + 新規 AbortController を生成
+	if (inFlightController != null) inFlightController.abort();
+	const controller = new AbortController();
+	inFlightController = controller;
+	const timeoutId = setTimeout(() => controller.abort(new Error(`timeout (${FETCH_TIMEOUT_MS / 1000}s)`)), FETCH_TIMEOUT_MS);
+
+	// 経過時間ティック表示（重いサイトで無反応に見える事故を防ぐ）
+	const startedAt = Date.now();
+	const tick = setInterval(() => {
+		const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+		paneJson.textContent = `取得中... ${elapsed}s`;
+	}, 250);
+
 	try {
-		const res = await fetch(`/api/summaly?${params.toString()}`);
+		const res = await fetch(`/api/summaly?${params.toString()}`, { signal: controller.signal });
 		const text = await res.text();
 		let json;
 		try {
@@ -160,9 +179,24 @@ async function runFetch(url) {
 		lastResult = json;
 		renderResult(json);
 	} catch (e) {
-		showError(e.message ?? String(e));
-		paneJson.textContent = '';
+		// AbortError は「古いリクエストを意図して中断した」ケースが多い。新規リクエストの完了表示で
+		// 上書きされるため、エラー表示は出さずに paneJson もクリアしない（前の表示を残す）
+		if (e?.name === 'AbortError' && controller.signal.reason?.message?.startsWith('timeout')) {
+			showError(`タイムアウト: ${FETCH_TIMEOUT_MS / 1000}s 以内にレスポンスが返りませんでした (heavy なサイト or サーバ応答停止)`);
+			paneJson.textContent = '';
+		} else if (e?.name !== 'AbortError') {
+			// "TypeError: Failed to fetch" 系: ネットワーク失敗 / CORS / TLS / proxy 切断 等
+			const hint = e?.message === 'Failed to fetch'
+				? '\n(原因候補: dev サーバが落ちた / 接続が切られた / ブラウザ拡張がブロックした)'
+				: '';
+			showError((e?.message ?? String(e)) + hint);
+			paneJson.textContent = '';
+		}
 	} finally {
+		clearTimeout(timeoutId);
+		clearInterval(tick);
+		// 自分が最後の controller のままなら null に戻す（古い request の finally では触らない）
+		if (inFlightController === controller) inFlightController = null;
 		fetchButton.disabled = false;
 	}
 }
