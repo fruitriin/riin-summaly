@@ -2218,7 +2218,8 @@ describe('local tests', () => {
 			expect(errorLogs[0].data.url).toBe(`${host}/`);
 			// err は phase11.8 W-1 対応で手動シリアライズした { name, message, stack, statusCode } オブジェクト
 			// (got の RequestError.options.url 経由の PII 漏洩を防ぐため)
-			const errInfo = errorLogs[0].data.err as { name: string; message: string; statusCode?: number };
+			const errInfo = errorLogs[0].data.err as { type: string; name: string; message: string; statusCode?: number };
+			expect(errInfo.type).toBe('StatusError');
 			expect(errInfo.name).toBe('StatusError');
 			expect(errInfo.statusCode).toBe(500);
 		});

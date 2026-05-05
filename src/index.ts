@@ -531,11 +531,13 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 				// の `options.url` などを列挙可能プロパティとして含めて出力するため、対象 URL のクエリ
 				// （token / session 等）が漏れる経路がある (phase11.8 review W-1)。
 				// `name` / `message` / `stack` / `statusCode` だけを明示的に渡すことで漏洩経路を遮断する。
+				// `type` は pino の慣例フィールド（errSerializer 互換）。Error クラス名を入れることで
+				// jq での grep が `select(.err.type == "StatusError")` の形で書けるようになる。
 				const level = chooseLogLevel(e);
 				const statusCode = e instanceof StatusError ? e.statusCode : undefined;
 				const errInfo = e instanceof Error
-					? { name: e.name, message: e.message, stack: e.stack, ...(statusCode !== undefined ? { statusCode } : {}) }
-					: { name: 'NonError', message: String(e) };
+					? { type: e.name, name: e.name, message: e.message, stack: e.stack, ...(statusCode !== undefined ? { statusCode } : {}) }
+					: { type: 'NonError', name: 'NonError', message: String(e) };
 				req.log[level](
 					{ err: errInfo, url: sanitizeUrlForLog(url), lang, statusCode },
 					'summaly error',

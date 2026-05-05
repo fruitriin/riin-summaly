@@ -343,9 +343,29 @@ journalctl -u summaly --priority=warning -f
   "url": "https://www.amazon.co.jp/dp/B0989HTQ32",
   "lang": "ja-JP",
   "statusCode": 500,
-  "err": { "type": "StatusError", "message": "500 Internal Server Error", "stack": "...", "statusCode": 500 }
+  "err": { "type": "StatusError", "name": "StatusError", "message": "500 Internal Server Error", "stack": "...", "statusCode": 500 }
 }
 ```
+
+### ログのフィルタ (jq + journalctl)
+
+```bash
+# error / fatal だけ (アプリバグ系)
+sudo journalctl -u summaly -o cat | jq -c --unbuffered 'select(.level >= 50)'
+
+# warn 以上 (運用上気にすべき分)
+sudo journalctl -u summaly -o cat | jq -c --unbuffered 'select(.level >= 40)'
+
+# tail (リアルタイム)
+sudo journalctl -u summaly -f -o cat | jq -c --unbuffered 'select(.msg == "summaly error")'
+
+# 特定 Error クラス
+sudo journalctl -u summaly -o cat | jq -c 'select(.err.type == "StatusError" and .err.statusCode >= 500)'
+```
+
+`-o cat` で MESSAGE フィールド (= pino JSON) のみ抜き出し jq に渡す。`--priority=err` (syslog priority) は pino の level と対応しないため使えないので、JSON の `level` を JSON 側で見るのが確実。
+
+pino のレベル値: `trace=10, debug=20, info=30, warn=40, error=50, fatal=60`
 
 ### スパム抑制
 
