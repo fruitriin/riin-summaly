@@ -5,12 +5,13 @@
 
 phase 番号は **着手順**（数値が小さいほど先）。同じ大番号内（例: 2.1 と 2.2）は並列着手可能。
 
-## 現在のフェーズ: 次タスク確認待ち（phase6.1 は保留中）
+## 現在のフェーズ: phase9.1（次に着手可、phase6.1 は保留中）
 
 ## バックログ
 
 | 優先度 | Phase | 計画ファイル | サイズ | 状態 |
 |---|---|---|:---:|---|
+| 9 | 9.1 | [docs/plans/phase9.1-short-url-get-fallback.md](docs/plans/phase9.1-short-url-get-fallback.md) — 短縮 URL の HEAD 失敗時 GET フォールバック (`amzn.asia` 等) | S〜M | 未着手 |
 | — | 6.1 | [docs/plans/phase6.1-plugin-twitter.md](docs/plans/phase6.1-plugin-twitter.md) — twitter プラグイン | S | 保留（運用判断待ち） |
 
 ### 並列実行マップ
@@ -29,10 +30,10 @@ phase5.1  完了
 phase7.1  完了
 phase8.1  完了
    ↓
+phase9.1  ─┐  次に着手可（短縮 URL HEAD 失敗時 GET fallback、dev サーバで amzn.asia の挙動から発見）
+           ↓
 phase6.1  ← 採用判断後（保留）
 ```
-
-> **次の Plan 候補がない**: 全アクティブフェーズが完了。次の作業候補があればオーナーが新規 Plan を docs/plans/ に追加するか、phase6.1 の運用判断を行う。
 
 ---
 
