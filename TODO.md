@@ -5,7 +5,7 @@
 
 phase 番号は **着手順**（数値が小さいほど先）。同じ大番号内（例: 2.1 と 2.2）は並列着手可能。
 
-## 現在のフェーズ: phase11.6 / 11.7 から選択
+## 現在のフェーズ: phase11.6 のみ
 
 ## バックログ
 
@@ -15,7 +15,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 11.4 | [docs/plans/phase11.4-plugin-npmjs.md](docs/plans/phase11.4-plugin-npmjs.md) — npmjs.com プラグイン（Cloudflare 配下の HTML を諦め Registry API 直叩き） | S | 完了 (2026-05-05) |
 | — | 11.5 | [docs/plans/phase11.5-remove-diagnostics-endpoint.md](docs/plans/phase11.5-remove-diagnostics-endpoint.md) — `/__diagnostics/parse-failures` 診断エンドポイント廃止（プライバシーリスク撤去） | S | 完了 (2026-05-05) |
 | 中 | 11.6 | [docs/plans/phase11.6-blocked-failure-log.md](docs/plans/phase11.6-blocked-failure-log.md) — 迂回候補ログ（4xx/5xx・timeout 等を別 JSONL に記録、別 API 発見器） | S〜M | 未着手 |
-| 中 | 11.7 | [docs/plans/phase11.7-favicon-thumbnail-fallback.md](docs/plans/phase11.7-favicon-thumbnail-fallback.md) — 汎用パスで OG 画像が無い場合 favicon を thumbnail に採用（[riin-summaly#3](https://github.com/fruitriin/riin-summaly/issues/3)） | S | 未着手 |
+| — | 11.7 | [docs/plans/phase11.7-favicon-thumbnail-fallback.md](docs/plans/phase11.7-favicon-thumbnail-fallback.md) — 汎用パスで OG 画像が無い場合 favicon を thumbnail に採用（[riin-summaly#3](https://github.com/fruitriin/riin-summaly/issues/3)） | S | 完了 (2026-05-05) |
 | — | 11.8 | [docs/plans/phase11.8-fastify-error-logging.md](docs/plans/phase11.8-fastify-error-logging.md) — Fastify モードのエラー観測性回復（500 を pino ログに出す） | S | 完了 (2026-05-05) |
 | — | 11.1 | [docs/plans/phase11.1-deps-update.md](docs/plans/phase11.1-deps-update.md) — 依存更新（patch/minor 安全帯 + major 個別検証） | S〜M | 完了 (2026-05-05、eslint 10 のみ次回送り) |
 | — | 11.3 | [docs/plans/phase11.3-scpaping-follow-redirect.md](docs/plans/phase11.3-scpaping-follow-redirect.md) — Fastify モードで scpaping のリダイレクト follow が無効化されているバグ修正（[riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) 真因） | S | 完了 (2026-05-05) |
@@ -55,7 +55,7 @@ phase11.2 完了（エラーカテゴリ化）
 phase11.4 完了（npmjs プラグイン）
 phase11.5 完了（診断エンドポイント廃止）
 phase11.6 未着手（迂回候補ログ）       ← 11.5 後着手なら API がスッキリ
-phase11.7 未着手（favicon サムネ）     ← 全部と並列可
+phase11.7 完了（favicon サムネ）
 phase11.8 完了（エラーログ出力）
 phase11.9 完了（bot block UA リトライ、pino fallback フィールドは phase11.6 に廆す）
 ```

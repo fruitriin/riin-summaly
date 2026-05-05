@@ -1,5 +1,10 @@
 (unreleased)
 ------------------
+* **enhance**: 汎用パスで OG 画像が無い場合 favicon を thumbnail に採用 (phase11.7, [riin-summaly#3](https://github.com/fruitriin/riin-summaly/issues/3)):
+  * `parseGeneral` の thumbnail 解決を `og:image` → `twitter:image` → `image_src` → `apple-touch-icon` → **`favicon` (新規)** の順に拡張
+  * 「タイトルだけのスカスカプレビュー」が「サイトアイコン入りの最低限の見た目」に格上げされる
+  * favicon は `getIcon()` で HEAD 検証済みの URL のみ採用するため、リンク切れや `data:` URI のケースは安全にフォールバックしない（既存挙動維持）
+  * `isThinSummary` を補正: `thumbnail === icon` のとき thin 候補として継続判定する。プラグイン化候補のシグナル品質は phase10.1 と同等を維持
 * **feat**: Bot block 対策のフォールバック UA リトライを追加 (phase11.9):
   * `SummalyBot` 文字列を WAF が検知して TCP/TLS 確立後に HTTP 応答前で切断する（`socket hang up`）サイトに対する救援機構。`config.toml` の `[scraping.fallback]` でデフォルト ON
   * 1 回目失敗 + `categorizeError` 結果がリトライ対象カテゴリ（デフォルト `bot_blocked` / `connection_dropped`）なら、UA を `facebookexternalhit/1.1` 等に差し替えて 1 回だけ再試行

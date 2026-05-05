@@ -173,6 +173,79 @@ describe('local tests', () => {
 		expect(summary.icon).toBe(null);
 	});
 
+	describe('favicon thumbnail fallback (phase11.7)', () => {
+		test('OG/Twitter/image_src/apple-touch-icon が無く favicon が HEAD 200 → thumbnail に favicon を採用', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				const html = '<html><head><title>Bare Page</title><link rel="icon" href="/favicon.ico"></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			app.get('/favicon.ico', (_req, reply) => reply.status(200).send());
+			await app.listen({ port });
+
+			const summary = await summaly(host);
+			expect(summary.icon).toBe(`${host}/favicon.ico`);
+			expect(summary.thumbnail).toBe(`${host}/favicon.ico`);
+			expect(summary.thumbnail).toBe(summary.icon);
+		});
+
+		test('OG 画像があるとき favicon は採用しない（既存挙動維持）', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				const html = '<html><head><title>OG Page</title>'
+					+ '<meta property="og:image" content="/og.png">'
+					+ '<link rel="icon" href="/favicon.ico"></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			app.get('/favicon.ico', (_req, reply) => reply.status(200).send());
+			await app.listen({ port });
+
+			const summary = await summaly(host);
+			expect(summary.thumbnail).toBe(`${host}/og.png`);
+			expect(summary.thumbnail).not.toBe(summary.icon);
+		});
+
+		test('apple-touch-icon が favicon より優先される', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				const html = '<html><head><title>Touch Page</title>'
+					+ '<link rel="apple-touch-icon" href="/touch.png">'
+					+ '<link rel="icon" href="/favicon.ico"></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			app.get('/favicon.ico', (_req, reply) => reply.status(200).send());
+			await app.listen({ port });
+
+			const summary = await summaly(host);
+			expect(summary.thumbnail).toBe(`${host}/touch.png`);
+			expect(summary.icon).toBe(`${host}/favicon.ico`);
+			expect(summary.thumbnail).not.toBe(summary.icon);
+		});
+
+		test('favicon が HEAD 失敗（404）なら thumbnail は null（既存挙動維持）', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				const html = '<html><head><title>No Icon Page</title></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			// favicon を明示的に 404 で返す（fastify のデフォルト 404 に依存しない読みやすさ）
+			app.get('/favicon.ico', (_req, reply) => reply.status(404).send());
+			await app.listen({ port });
+
+			const summary = await summaly(host);
+			expect(summary.icon).toBeNull();
+			expect(summary.thumbnail).toBeNull();
+		});
+	});
+
 	test('titleがcleanupされる', async () => {
 		app = fastify();
 		app.get('/', (request, reply) => {

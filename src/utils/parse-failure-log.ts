@@ -75,15 +75,26 @@ export function sanitizeUrlForLog(url: string): string {
 /**
  * Summary が「汎用パスで取れたスカスカ」かを判定する。
  *
- * - description / thumbnail / player.url のいずれかがあれば false（汎用パスでも何かは取れている）
+ * - description があれば false
+ * - thumbnail があり、かつ `thumbnail !== icon` (= favicon フォールバック発動以外) であれば false (phase11.7)
+ * - player.url / medias[] があれば false
  * - title が null / 空文字 / hostname と一致 → 「実質取れていない」とみなして true
  *
  * プラグインがマッチして取得した結果（title が `<user> on X` 等）は false 判定になる。
  * 完璧な判定ではないが、プラグイン化候補を取りこぼすよりノイズが少し増える方を許容する設計。
+ *
+ * **phase11.7 補正**: `thumbnail === icon` は parseGeneral の favicon フォールバック発動状態
+ * （OG/Twitter/image_src/apple-touch-icon が全部無く favicon を thumbnail に流用したケース）なので、
+ * thumbnail があっても thin 候補として継続判定する。「favicon あり + title だけ」は依然として
+ * プラグイン化候補のシグナル。
+ *
+ * **注意**: `thumbnail === icon` の比較は **文字列完全一致** で行う。`parseGeneral` は同一の
+ * `URL.href` 値を両方に代入するため通常は一致する。カスタムプラグインが両者に異なる正規化
+ * 形式（末尾スラッシュあり/なし等）を入れた場合は、本フォールバック検出が効かない可能性がある。
  */
 export function isThinSummary(summary: SummalyResult): boolean {
 	if (summary.description != null && summary.description !== '') return false;
-	if (summary.thumbnail != null) return false;
+	if (summary.thumbnail != null && summary.thumbnail !== summary.icon) return false;
 	if (summary.player.url != null) return false;
 	// medias[] が乗っていれば（複数画像対応プラグイン由来）コンテンツは取れているので thin ではない
 	if (summary.medias != null && summary.medias.length > 0) return false;

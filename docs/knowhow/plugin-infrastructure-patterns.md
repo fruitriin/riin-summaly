@@ -159,6 +159,38 @@ npm の固定ハッシュ PNG (`58a19602036db1daee0d7863c94673a4.png`) のよう
 
 `buildSummaryFromRegistry(body)` を pure 関数として export し、フィクスチャを **直接渡してテスト** する（fastify モックサーバ不要）。spotify / youtube の `buildSummaryFromOEmbed` と同じパターン。`extractPackageName` `buildRegistryUrl` も独立 export してパス組み立ての境界条件を網羅できる。
 
+## 汎用パスの thumbnail/icon 二段フォールバック (phase11.7)
+
+`parseGeneral` で OG/Twitter/image_src/apple-touch-icon が全部無いサイト（個人ブログや古いサイトに多い）への対策として、**HEAD 検証済みの favicon を thumbnail に流用** するパターン。
+
+```ts
+const [icon, oEmbed] = await Promise.all([getIcon(), getOEmbedPlayer($, url.href)]);
+
+// OG/Twitter/image_src/apple-touch-icon が全部無い場合、HEAD 検証済みの favicon を採用
+const thumbnail = image ?? icon?.href ?? null;
+```
+
+### 設計の決め手
+
+- **`getIcon()` の HEAD 検証を再利用**: 別途 HEAD を発行せず、`Promise.all` 後の `icon` を使う。リクエスト数を増やさない
+- **`data:` URI / 巨大 favicon の安全策**: `getIcon()` が `<link rel="icon" href="data:...">` を HEAD すると失敗する → `icon: null` → フォールバックも発動しない。安全
+- **プラグイン経由は影響なし**: `parseGeneral` 内のみの変更。`amazon` / `wikipedia` / `twitter` 等の独自プラグインは自前で thumbnail を組み立てているので無関係
+
+### `isThinSummary` 側の補正が必須
+
+「favicon フォールバック発動 = `thumbnail === icon`」状態を thin 候補として残すため、`isThinSummary` を補正:
+
+```ts
+// 旧: if (summary.thumbnail != null) return false;
+// 新: if (summary.thumbnail != null && summary.thumbnail !== summary.icon) return false;
+```
+
+これでプラグイン化候補のシグナル品質を phase10.1 と同等に維持する。**機能追加と観測機構の整合性を一緒にメンテしないと検出器の純度が落ちる** という教訓。
+
+### 16×16 favicon の見た目問題はクライアント側責務
+
+favicon が 16×16 だと Misskey クライアントの大きなサムネ枠で拡大表示されてボヤける。「`thumbnail === icon` ならアイコン扱いの小枠表示」のような分岐は Misskey fork 側の責務（summaly の射程外）。
+
 ## 関連
 
 - [object-assign-mutable-target.md](object-assign-mutable-target.md) — オプション扱いの落とし穴

@@ -85,6 +85,25 @@ describe('isThinSummary', () => {
 		expect(isThinSummary(dummySummary({ thumbnail: 'https://example.com/img.jpg' }))).toBe(false);
 	});
 
+	test('thumbnail === icon は thin 判定継続 (phase11.7 favicon フォールバック)', () => {
+		// favicon フォールバックが発動しているケースは「OG 画像が無いので favicon を流用した」
+		// 状態。プラグイン化候補のシグナルとして残したいので thin 判定を継続する
+		const fav = 'https://example.com/favicon.ico';
+		expect(isThinSummary(dummySummary({
+			title: 'example.com',
+			url: 'https://example.com/',
+			icon: fav,
+			thumbnail: fav,
+		}))).toBe(true);
+		// title が独自であれば（hostname と異なる）thin ではない
+		expect(isThinSummary(dummySummary({
+			title: 'Some Article',
+			url: 'https://example.com/article',
+			icon: fav,
+			thumbnail: fav,
+		}))).toBe(false);
+	});
+
 	test('player.url があれば false', () => {
 		expect(isThinSummary(dummySummary({ player: { url: 'https://e/embed', width: 100, height: 100, allow: [] } }))).toBe(false);
 	});

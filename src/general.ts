@@ -343,11 +343,17 @@ export async function parseGeneral(_url: URL | string, res: Awaited<ReturnType<t
 		title = siteName;
 	}
 
+	// OG/Twitter Card/image_src/apple-touch-icon が全部無い場合、HEAD 検証済みの favicon を
+	// thumbnail フォールバックとして採用する (phase11.7, riin-summaly#3)。
+	// 「タイトルだけのスカスカプレビュー」を「サイトアイコン入りの最低限の見た目」に格上げ。
+	// favicon が HEAD 失敗 (`icon?.href === undefined`) ならフォールバックも発動しない。
+	const thumbnail = image ?? icon?.href ?? null;
+
 	return {
 		title: title || null,
 		icon: icon?.href || null,
 		description: description || null,
-		thumbnail: image || null,
+		thumbnail,
 		player: oEmbed ?? {
 			url: playerUrl || null,
 			width: Number.isNaN(playerWidth) ? null : playerWidth,

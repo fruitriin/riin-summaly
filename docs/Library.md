@@ -121,7 +121,7 @@ opts (`SummalyOptions`) — ライブラリ利用時に効くオプション
 | **title** | *string* \| *null* | ページのタイトル |
 | **icon** | *string* \| *null* | ページのアイコン URL |
 | **description** | *string* \| *null* | ページの説明 |
-| **thumbnail** | *string* \| *null* | ページのサムネイル URL |
+| **thumbnail** | *string* \| *null* | ページのサムネイル URL。汎用パスでは og:image / twitter:image / image_src / apple-touch-icon の順で探し、いずれも無い場合は HEAD 検証済みの favicon を採用する (phase11.7)。`thumbnail === icon` のとき favicon フォールバックが発動した状態 |
 | **sitename** | *string* \| *null* | サイト名 |
 | **player** | *Player* | 埋め込みプレーヤー情報 |
 | **sensitive** | *boolean* | 成人向け等、機微なコンテンツの可能性 |

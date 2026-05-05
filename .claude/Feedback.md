@@ -52,6 +52,12 @@
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
 
+## phase11.7 (favicon thumbnail fallback) 知見
+
+- **2026-05-05 phase11.7 セッション**: 機能追加に伴って **観測機構 (`isThinSummary`) の純度を維持する補正** が必須になるパターン。新機能 `thumbnail = image ?? icon?.href ?? null` を入れただけだと、phase10.1 の thin 検出器が「favicon あり = thin ではない」と誤判定してしまい、プラグイン化候補の取りこぼしが発生する。`thumbnail !== icon` の補正で復旧。**機能と観測機構をセットでメンテしないと検出器が静かに腐る** という教訓。`docs/knowhow/plugin-infrastructure-patterns.md` に記録
+- **2026-05-05 phase11.7 セッション**: レビュー agent が **JSDoc 冒頭の説明と補正後の挙動の食い違い** (W-1) を指摘。新しい条件を入れたとき、JSDoc 全体を読み直して整合性チェックする習慣を持たないと、後で読む実装者が古い説明を信じて誤った変更を入れる。**「補正」を `**phase11.7 補正**` セクションで追記したつもりでも、冒頭の箇条書きが古いままでは効果半減**
+- **2026-05-05 phase11.7 セッション**: 既存 thin テスト（phase10.1 / 11.5）が `<title>localhost</title>` のみの HTML で `/favicon.ico` を mock していなかったため、fastify のデフォルト 404 に暗黙依存していた。phase11.7 実装後も `icon: null → thumbnail: null` で従来挙動が偶然維持された。**「動いているテストが暗黙の前提に依存している」可能性をレビュー agent が指摘** (S-1) → 該当テストでは `app.get('/favicon.ico', (_, reply) => reply.status(404).send())` を明示する形にした。読みやすさ + 将来 fastify の挙動変更耐性
+
 ## phase11.9 (bot block UA リトライ) 知見
 
 - **2026-05-05 phase11.9 セッション**: M サイズフェーズで Plan の 11 ステップを完遂すると実装規模が大きくなりがち。Step 8（pino fallback フィールド追加）は実装規模対観測コストが見合わないと判断して **別 phase (phase11.6) に廆す deferral 判断** を実装途中で行った。Plan に「方針からの変更」として記録 + CHANGELOG ではこの分は触れず、phase11.6 完了時に合流させる前提。**Plan 完了率より「動くものを出す」優先** の判断。phase11.4 の `dist-tags.latest` null フォールバックと同種の deferral パターン

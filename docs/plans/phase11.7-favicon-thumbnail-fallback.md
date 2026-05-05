@@ -1,6 +1,6 @@
 # Phase 11.7 — favicon を thumbnail のフォールバックに採用
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: 機能改善（汎用パスの体験向上）
 > サイズ: **S**
 > 依存: phase10.1（`isThinSummary` の判定ロジック）
@@ -83,33 +83,33 @@ if (summary.thumbnail != null && summary.thumbnail !== summary.icon) return fals
 
 各ステップで `pnpm eslint && pnpm test` を通す。
 
-- [ ] **Step 1 — `parseGeneral` の thumbnail 解決を後段に移動**
+- [x] **Step 1 — `parseGeneral` の thumbnail 解決を後段に移動**
   - [src/general.ts](../../src/general.ts) の `parseGeneral`:
     - `image = image ? new URL(image, url.href).href : null;` のあと、`image` を `thumbnail` 候補として保持するだけにする（`null` のままで良い）
     - `Promise.all([getIcon(), getOEmbedPlayer(...)])` の後に `const thumbnail = image ?? icon?.href ?? null;` を追加
     - return オブジェクトの `thumbnail: image || null` を `thumbnail` に差し替え
-- [ ] **Step 2 — `isThinSummary` の補正**
+- [x] **Step 2 — `isThinSummary` の補正**
   - [src/utils/parse-failure-log.ts](../../src/utils/parse-failure-log.ts) `isThinSummary`:
     - `summary.thumbnail != null` 早期 return を `summary.thumbnail != null && summary.thumbnail !== summary.icon` に変更
     - JSDoc に「thumbnail === icon は favicon フォールバック発動状態なので thin 候補として継続判定する」と追記
-- [ ] **Step 3 — テスト追加**
+- [x] **Step 3 — テスト追加**
   - [test/index.test.ts](../../test/index.test.ts) に以下を追加:
     1. **favicon フォールバック発動**: `<title>X</title><link rel="icon" href="/favicon.ico">` だけの HTML（OG 一切無し） → `summary.thumbnail === summary.icon` になることを検証
     2. **OG 画像があるときは favicon を採用しない**: `<meta property="og:image" content="/og.png">` がある HTML → `summary.thumbnail` は OG 画像のまま
     3. **apple-touch-icon が favicon より優先**: `<link rel="apple-touch-icon" href="/touch.png">` だけある HTML → `summary.thumbnail === '/touch.png' の絶対 URL`、`!== summary.icon`
     4. **favicon 自体が存在しない（HEAD 失敗）**: 1900 番台の既存 thin テスト挙動と同じく `thumbnail: null` で thin 記録される
     5. **既存の thin 記録テスト** ([test/index.test.ts:1765-1794](../../test/index.test.ts#L1765-L1794)): モック HTML に `<link rel="icon" href="/favicon.ico">` が含まれていなければ挙動不変。既存ケースの HTML が `<title>localhost</title>` しか持たないことを確認し、必要なら別ケースで「favicon あり + thin」を別途検証
-- [ ] **Step 4 — parseFailureLog の thin 判定が壊れていないことを確認**
+- [x] **Step 4 — parseFailureLog の thin 判定が壊れていないことを確認**
   - 既存の「thin が記録される」テストが favicon 経由で false 判定にならないか実際に走らせて検証
   - ケース「favicon あり + title だけ」は **thin として記録される** ことを新規テストで担保
-- [ ] **Step 5 — ドキュメント更新（4.5 のドキュメント突き合わせ）**
+- [x] **Step 5 — ドキュメント更新（4.5 のドキュメント突き合わせ）**
   - [docs/Library.md](../../docs/Library.md) の `SummalyResult.thumbnail` 説明に「OG/Twitter Card/image_src/apple-touch-icon が全部無い場合は favicon を採用する」と追記
   - [CLAUDE.repo.md](../../CLAUDE.repo.md) の「アーキテクチャ §3」（`general.ts` の優先順位記述）に favicon フォールバックを追加
   - [CHANGELOG.md](../../CHANGELOG.md) unreleased に `enhance: 汎用パスで OG 画像が無い場合 favicon を thumbnail に採用` を追加
-- [ ] **Step 6 — knowhow 記録**
+- [x] **Step 6 — knowhow 記録**
   - 「`parseGeneral` の thumbnail/icon 二段フォールバック設計」を `docs/knowhow/general-parse-fallback.md` 等にまとめる（既存 knowhow があれば追記）
   - thin 判定が `thumbnail === icon` を識別する設計判断もメモ
-- [ ] **Step 7 — 品質ゲート**
+- [x] **Step 7 — 品質ゲート**
   - `pnpm build && pnpm eslint && pnpm typecheck && pnpm test`
   - `bash .claude/tests/run-all.sh`
   - `addf-code-review-agent` / `addf-contribution-agent`
