@@ -160,6 +160,36 @@ await fastify.register(Summaly, {
 
 スタンドアロン HTTP サーバとして起動・運用する詳細（TOML 設定 / nginx + systemd / パース失敗ログ等）は **[SETUP.md](SETUP.md)** を参照。
 
+### Fastify モードのエラーレスポンス (phase11.2)
+
+`summaly()` が throw すると Fastify ハンドラが 500 と JSON ボディを返します。失敗理由を機械可読に区別するため `error.category` を含みます:
+
+```jsonc
+{
+  "error": {
+    "category": "bot_blocked",     // SummalyErrorCategory
+    "message": "403 Forbidden",
+    "name": "StatusError",
+    "statusCode": 403              // StatusError のときのみ
+  }
+}
+```
+
+| `category` | 意味 | 典型例 |
+|:--|:--|:--|
+| `timeout` | 取得タイムアウト / abort | got の `TimeoutError`、`responseTimeout` 超過 |
+| `bot_blocked` | 4xx (404 以外) | Akamai/Cloudflare の 403、429 Too Many Requests |
+| `not_found` | 404 | リンク切れ / ASIN 廃番 |
+| `origin_error` | 5xx | 上流障害 |
+| `unsupported_type` | typeFilter で reject | 非 HTML レスポンス（`enablePdf: false` での PDF 等） |
+| `content_too_large` | `contentLengthLimit` 超過 (デフォルト 10 MiB) | 巨大 HTML、`useRange` 推奨 |
+| `ssrf_blocked` | プライベート IP 拒否 | `192.168.*` 等 (ガード有効時)、IP パース失敗の `Invalid IP` も含む |
+| `network_error` | DNS 失敗 / 接続拒否 | `ENOTFOUND` / `ECONNREFUSED` |
+| `parse_error` | summarize null / cheerio 失敗 | `failed summarize` |
+| `unknown` | 上記いずれにも該当しない | catch-all |
+
+既存の `error.message` / `error.name` も維持しており、`category` を見ない実装は単に無視するだけ（後方互換）。Misskey 等の UI でカテゴリ別メッセージを出し分ける用途を想定しています。
+
 カスタムエージェント / プロキシ
 ----------------------------------------------------------------
 

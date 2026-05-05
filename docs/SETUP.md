@@ -14,6 +14,7 @@ summaly を Misskey 等のフロントエンドから利用するために、**�
 - [キャッシュ戦略](#キャッシュ戦略)
 - [パース失敗ドメインのログ蓄積 (phase10.1)](#パース失敗ドメインのログ蓄積-phase101)
 - [バージョン確認エンドポイント `GET /v`](#バージョン確認エンドポイント-get-v)
+- [エラーレスポンスのカテゴリ (phase11.2)](#エラーレスポンスのカテゴリ-phase112)
 - [PDF 対応](#pdf-対応)
 - [プラグインの絞り込み](#プラグインの絞り込み)
 - [HTTP エージェント / プロキシ / IP family](#http-エージェント--プロキシ--ip-family)
@@ -276,6 +277,39 @@ $ curl https://summaly.example.com/v
 - bug fix 後のロールアウト確認（「`amzn.asia` の HEAD→GET fallback はもう入ったか?」）
 - 監視ツール (uptime check 等) でサーバ生存確認 + バージョン記録
 - 開発時に「dev サーバが古いままじゃないか」のサニティチェック
+
+エラーレスポンスのカテゴリ (phase11.2)
+----------------------------------------------------------------
+
+Fastify モードで `summaly()` が throw した場合、500 ステータス + JSON ボディに `error.category` フィールドが乗ります。Misskey 等のクライアントが「プレビューできませんでした」を細分化表示する用途。
+
+```jsonc
+{
+  "error": {
+    "category": "not_found",
+    "message": "404 Not Found",
+    "name": "StatusError",
+    "statusCode": 404
+  }
+}
+```
+
+| `error.category` | 推奨ユーザー向けメッセージ例 | 対応すべきか |
+|:--|:--|:--|
+| `timeout` | サーバが応答しません（タイムアウト） | 一時的なら再試行を案内 |
+| `bot_blocked` | このサイトはプレビュー取得をブロックしています | サイト側ポリシー、対応不可 |
+| `not_found` | ページが見つかりません (404) | リンク切れ確認 |
+| `origin_error` | サイト側でエラーが起きています (5xx) | 一時的なら再試行を案内 |
+| `unsupported_type` | このコンテンツタイプはプレビュー対象外（PDF 等） | `enablePdf` 設定の見直し |
+| `content_too_large` | ページが大きすぎてプレビュー対象外 | `useRange: true` で先頭領域取得を検討 |
+| `ssrf_blocked` | プライベート IP はプレビュー禁止 | URL を確認 |
+| `network_error` | サーバに到達できません | URL のホスト名を確認 |
+| `parse_error` | プレビューが取得できませんでした | プラグイン化候補（パース失敗ログで追跡） |
+| `unknown` | 不明なエラー | ログを確認 |
+
+`StatusError` のときは `error.statusCode` も同梱されるため、Misskey 側で `URL_PREVIEW_NOT_FOUND` (404) と `URL_PREVIEW_BOT_BLOCKED` (403/429 等) を分けて API エラーコードを返すことができます。
+
+**後方互換**: 既存の `error.message` / `error.name` は維持されます。`category` を見ない既存実装は影響を受けません。
 
 PDF 対応
 ----------------------------------------------------------------

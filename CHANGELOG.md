@@ -1,5 +1,13 @@
 (unreleased)
 ------------------
+* **Fastify モードのエラーレスポンスをカテゴリ化** (phase11.2, [riin-summaly#2](https://github.com/fruitriin/riin-summaly/issues/2)):
+  * 失敗時のレスポンスに `error.category` フィールドを追加 (`SummalyErrorCategory` 型)
+  * カテゴリ: `timeout` / `bot_blocked` / `not_found` / `origin_error` / `unsupported_type` / `content_too_large` / `ssrf_blocked` / `network_error` / `parse_error` / `unknown`
+  * `StatusError` のときは `error.statusCode` も同梱（HTTP 由来エラーの上流コードが分かる）
+  * 既存フィールド (`message` / `name`) は維持して後方互換
+  * 利用側 (Misskey 等) で「プレビューできませんでした」を「タイムアウト」「bot block」「リンク切れ」等に細分化表示できる。Misskey 側の対応は本 fork 連携 Plan に記録
+  * `categorizeError(message, name, statusCode)` を `src/utils/parse-failure-log.ts` から export し、`isFilteredFailure` (phase10.1) もこの関数ベースに refactor
+
 * **バージョン確認エンドポイント** `GET /v` を追加:
   * 返却 JSON: `{ version, commit, message }`（package.json のバージョン + git の HEAD コミット short hash + コミットメッセージの 1 行目）
   * `Cache-Control: no-store` でキャッシュ無効化（再起動毎に値が変わるため）

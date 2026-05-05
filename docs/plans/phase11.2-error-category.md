@@ -1,10 +1,18 @@
 # Phase 11.2 — エラーレスポンスをカテゴリ化（プレビュー失敗理由の細分化）
 
-> 状態: **未着手**
+> 状態: **完了 (2026-05-05)**
 > 種別: 観測性 / API 拡張
 > サイズ: **S**
 > 関連 issue: [riin-summaly#2](https://github.com/fruitriin/riin-summaly/issues/2)
 > 関連: [phase10.1 パース失敗ログ](phase10.1-parse-failure-log.md)（`isFilteredFailure` のロジックを流用）、[external-misskey-fork-urlpreview-lang.md](external-misskey-fork-urlpreview-lang.md)（同じく Misskey fork 側修正が必要）
+
+## 実装結果メモ
+
+- **判定優先順位を Plan から変更**: Plan 案では `StatusError + statusCode` を最優先にしていたが、`Private IP rejected` (内部で `StatusError(_, 400)`) や `Invalid IP` (同 500) が `bot_blocked` / `origin_error` と誤判定される問題があり、**メッセージ高シグナルパターン → errorName timeout 系 → statusCode → メッセージ先頭 3 桁** の順に変更した。意味重視の優先順位
+- **カテゴリを Plan から 1 つ追加**: `content_too_large` (S-1 レビュー指摘)。`maxSize exceeded` メッセージを別カテゴリに昇格。プラグインで救えない類型として `FILTERED_CATEGORIES` に含める
+- **`Invalid IP` も `ssrf_blocked` に分類** (W-2 レビュー指摘): IP パース失敗 (`StatusError(_, 500, 'Invalid IP')`) は意味的に SSRF ガード由来なので `origin_error` ではなく `ssrf_blocked`。`got.ts` のメッセージ変更ではなく `categorizeError` 側でパターン追加して対応
+- **`SummalyErrorCategory` を `src/index.ts` から re-export** (W-1 レビュー指摘): `SerializableError['category']` で間接参照する必要が無いよう、ライブラリ公開 API として直接 export
+- **timeout カテゴリの Fastify 統合テストは未カバー**: フレーキー要素 (`responseTimeout` を意図的に短くする) を生むため別 phase 案件として保留
 
 ## 目的・背景
 
@@ -140,26 +148,11 @@ function serializableError(e: unknown): { message?: string; name?: string; statu
 
 各ステップで `pnpm eslint && pnpm typecheck && pnpm test` を通す。
 
-- [ ] **Step 1 — `categorizeError` を実装**
-  - `src/utils/parse-failure-log.ts` に追加（または `src/utils/error-category.ts` に分離）
-  - `SummalyErrorCategory` type を export
-  - 単体テスト 9 件 (各カテゴリ + statusCode 渡し優先 + unknown フォールバック)
-- [ ] **Step 2 — `isFilteredFailure` を `categorizeError` ベースに**
-  - 既存挙動は変えない（`category in [timeout, bot_blocked, not_found, origin_error, unsupported_type, ssrf_blocked, network_error]` で true）
-  - `parse_error` / `unknown` は false（記録対象）
-  - 既存テストが全 pass することで挙動互換を担保
-- [ ] **Step 3 — `serializableError` を拡張**
-  - `category` フィールドを返すように
-  - `e instanceof StatusError` のときは `statusCode` も
-- [ ] **Step 4 — Fastify ハンドラの動作確認**
-  - 既存テストでレスポンスシェイプが `{ message, name, category, statusCode? }` になっていることを確認
-- [ ] **Step 5 — テスト追加**
-  - レスポンス JSON に `category` フィールドが乗ることを直接 assert（404 / 5xx / timeout / type filter / SSRF / network / parse のシナリオで）
-- [ ] **Step 6 — ドキュメント更新（doc-sync 4.5 ステップ）**
-  - `docs/Library.md` の `SummalyResult` セクションに `error.category` enum を追記（Fastify モードレスポンスとして）
-  - `docs/SETUP.md` の運用注意点にエラーカテゴリ早見表を追加
-  - `CHANGELOG.md` (unreleased) にエントリ
-  - knowhow に値する判断があれば `docs/knowhow/`
+- [x] **Step 1 — `categorizeError` 実装** + 単体テスト 14 件 (基本 12 + Invalid IP + maxSize)
+- [x] **Step 2 — `isFilteredFailure` を `categorizeError` ベースに** (既存 31 件互換、`statusCode` 引数追加)
+- [x] **Step 3 — `serializableError` 拡張** (`{ message?, name?, category, statusCode? }` の `SerializableError` 型を export、`CacheEntry.error` も型を絞った)
+- [x] **Step 4-5 — Fastify 統合テスト 7 件** (404/403/503/non-HTML/SSRF/DNS 失敗/成功時 category 無し)
+- [x] **Step 6 — ドキュメント更新** (Library.md / SETUP.md にカテゴリ早見表、CHANGELOG)
 
 ## 完了条件
 

@@ -11,6 +11,7 @@ import {
 	sanitizeUrlForLog,
 	isThinSummary,
 	isFilteredFailure,
+	categorizeError,
 	serializeJsonlLine,
 	ParseFailureLog,
 } from '@/utils/parse-failure-log.js';
@@ -119,6 +120,78 @@ describe('isThinSummary', () => {
 			url: 'https://example.com/',
 			medias: [],
 		}))).toBe(true);
+	});
+});
+
+describe('categorizeError (phase11.2)', () => {
+	test('StatusError + statusCode 404 → not_found', () => {
+		expect(categorizeError('404 Not Found', 'StatusError', 404)).toBe('not_found');
+	});
+
+	test('StatusError + statusCode 4xx (404 以外) → bot_blocked', () => {
+		expect(categorizeError('403 Forbidden', 'StatusError', 403)).toBe('bot_blocked');
+		expect(categorizeError('401 Unauthorized', 'StatusError', 401)).toBe('bot_blocked');
+		expect(categorizeError('429 Too Many Requests', 'StatusError', 429)).toBe('bot_blocked');
+	});
+
+	test('StatusError + statusCode 5xx → origin_error', () => {
+		expect(categorizeError('500 Internal Server Error', 'StatusError', 500)).toBe('origin_error');
+		expect(categorizeError('503 Service Unavailable', 'StatusError', 503)).toBe('origin_error');
+	});
+
+	test('TimeoutError / AbortError / CancelError → timeout', () => {
+		expect(categorizeError('timeout', 'TimeoutError')).toBe('timeout');
+		expect(categorizeError('aborted', 'AbortError')).toBe('timeout');
+		expect(categorizeError('', 'CancelError')).toBe('timeout');
+	});
+
+	test('メッセージ先頭の 3 桁ステータスでも分類できる（StatusError 名前無しのフォールバック）', () => {
+		expect(categorizeError('404 Not Found')).toBe('not_found');
+		expect(categorizeError('403 Forbidden')).toBe('bot_blocked');
+		expect(categorizeError('502 Bad Gateway')).toBe('origin_error');
+	});
+
+	test('Private IP rejected メッセージ → ssrf_blocked', () => {
+		expect(categorizeError('Private IP rejected 192.168.1.1')).toBe('ssrf_blocked');
+	});
+
+	test('Invalid IP (IP パース失敗) も ssrf_blocked に分類 (statusCode 500 由来 origin_error より優先)', () => {
+		expect(categorizeError('Invalid IP some-bad-string', 'StatusError', 500)).toBe('ssrf_blocked');
+	});
+
+	test('Rejected by type filter メッセージ → unsupported_type', () => {
+		expect(categorizeError('Rejected by type filter application/pdf')).toBe('unsupported_type');
+	});
+
+	test('maxSize exceeded メッセージ → content_too_large', () => {
+		expect(categorizeError('maxSize exceeded (15728640 > 10485760) on response')).toBe('content_too_large');
+	});
+
+	test('低レベルネットワーク到達不能 → network_error', () => {
+		expect(categorizeError('getaddrinfo ENOTFOUND example.invalid')).toBe('network_error');
+		expect(categorizeError('connect ECONNREFUSED 127.0.0.1:443')).toBe('network_error');
+		expect(categorizeError('connect ECONNRESET')).toBe('network_error');
+		expect(categorizeError('connect EHOSTUNREACH')).toBe('network_error');
+	});
+
+	test('failed summarize メッセージ → parse_error', () => {
+		expect(categorizeError('failed summarize')).toBe('parse_error');
+	});
+
+	test('未知のエラー → unknown', () => {
+		expect(categorizeError('cheerio internal error')).toBe('unknown');
+		expect(categorizeError(undefined, undefined)).toBe('unknown');
+		expect(categorizeError()).toBe('unknown');
+	});
+
+	test('statusCode 優先: errorMessage より statusCode の方が信頼できる', () => {
+		// メッセージは 200 OK だが statusCode が 503 の場合 (ありえない組み合わせだが優先順位確認)
+		expect(categorizeError('something went wrong', 'StatusError', 503)).toBe('origin_error');
+	});
+
+	test('StatusError + 範囲外 statusCode (例: 200, 600) はメッセージにフォールバック', () => {
+		// 4xx/5xx 外は status による分類スキップ → メッセージ先頭の 3 桁を見て分類
+		expect(categorizeError('300 Multiple Choices', 'StatusError', 300)).toBe('unknown');
 	});
 });
 

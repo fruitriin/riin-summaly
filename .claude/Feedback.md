@@ -38,3 +38,9 @@
 
 - **2026-05-05 phase11.1 セッション**: `pnpm update` だけだと固定バージョン記法 (`"x.y.z"` 形式、`^` `~` なし) の package.json は変わらない。`--latest` フラグ必須。pnpm の挙動として「version range 内で最新を取る」のがデフォルトで、固定バージョンならそもそも range が無いので何もしない。次回も同パターンで詰まりやすいので明示記録
 - **2026-05-05 phase11.1 セッション**: eslint 10 への bump は `@misskey-dev/eslint-plugin@2.2.0` がまだ追従しておらず、`@eslint/eslintrc` の resolve エラー + `@stylistic/eslint-plugin@>=5` / `globals@>=16` の peer dep 不整合で fail。Plan の見送り条件「`@misskey-dev/eslint-plugin` が eslint 10 に追従していなければ次回送り」が機能した
+
+## phase11.2 (エラーカテゴリ化) 知見
+
+- **2026-05-05 phase11.2 セッション**: `categorizeError` の判定優先順位は **メッセージ高シグナル先 → statusCode 後** が正解。`Private IP rejected` / `Invalid IP` は内部で `StatusError(_, 400/500)` で投げられるため、statusCode を先に見ると `bot_blocked` / `origin_error` 誤判定。意味重視の優先順位を選ぶ
+- **2026-05-05 phase11.2 セッション**: レビュー agent が「`SummalyErrorCategory` が npm 公開エントリから直接 import できない」を指摘。`SerializableError['category']` で間接参照は不格好。**type も `export type` で公開する**のが基本。built/index.d.ts のサーフェスを確認するレビュー agent の知識ベースが効いている
+- **2026-05-05 phase11.2 セッション**: phase10.1 で導入した `isFilteredFailure` を `categorizeError` ベースに refactor したことで、エラー類型の判定ロジックが 1 箇所に集約され、新カテゴリ追加 (`content_too_large` 等) が `enum 追加 + パターン追加 + FILTERED_CATEGORIES に追加` の 3 行で済むようになった。**初期実装での共通基盤化が後続 phase の差分を小さくする**好例

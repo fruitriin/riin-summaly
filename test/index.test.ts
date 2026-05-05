@@ -2153,6 +2153,128 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('エラーレスポンスの category フィールド (phase11.2)', () => {
+		const proxyPort = port + 1;
+		let proxyApp: FastifyInstance | null = null;
+
+		afterEach(async () => {
+			if (proxyApp != null) {
+				await proxyApp.close();
+				proxyApp = null;
+			}
+		});
+
+		async function bringUpProxy() {
+			proxyApp = fastify();
+			await proxyApp.register(summalyPlugin, {});
+			await proxyApp.listen({ port: proxyPort });
+		}
+
+		test('origin が 404 → category: not_found + statusCode: 404', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => reply.status(404).send('<html><head><title>404</title></head></html>'));
+			await app.listen({ port });
+			await bringUpProxy();
+
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(500);
+			const body = JSON.parse(r.body) as { error: { category: string; statusCode?: number; name?: string } };
+			expect(body.error.category).toBe('not_found');
+			expect(body.error.statusCode).toBe(404);
+			expect(body.error.name).toBe('StatusError');
+		});
+
+		test('origin が 403 → category: bot_blocked', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => reply.status(403).send());
+			await app.listen({ port });
+			await bringUpProxy();
+
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(500);
+			const body = JSON.parse(r.body) as { error: { category: string; statusCode?: number } };
+			expect(body.error.category).toBe('bot_blocked');
+			expect(body.error.statusCode).toBe(403);
+		});
+
+		test('origin が 503 → category: origin_error', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => reply.status(503).send());
+			await app.listen({ port });
+			await bringUpProxy();
+
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(500);
+			const body = JSON.parse(r.body) as { error: { category: string; statusCode?: number } };
+			expect(body.error.category).toBe('origin_error');
+			expect(body.error.statusCode).toBe(503);
+		});
+
+		test('非 HTML レスポンス → category: unsupported_type', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-type', 'image/png');
+				return reply.status(200).send(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+			});
+			await app.listen({ port });
+			await bringUpProxy();
+
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(500);
+			const body = JSON.parse(r.body) as { error: { category: string; message?: string } };
+			expect(body.error.category).toBe('unsupported_type');
+		});
+
+		test('プライベート IP ガード (SSRF block) → category: ssrf_blocked', async () => {
+			// SUMMALY_ALLOW_PRIVATE_IP を一時的に明示 false にして本物の SSRF ガードを発動
+			// (削除でなく明示 false の方が「意図的に無効化」が読みやすい)
+			process.env.SUMMALY_ALLOW_PRIVATE_IP = 'false';
+			try {
+				app = fastify();
+				app.get('/', (_req, reply) => {
+					reply.header('content-type', 'text/html');
+					return reply.send('<html></html>');
+				});
+				await app.listen({ port });
+				await bringUpProxy();
+
+				const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+				expect(r.statusCode).toBe(500);
+				const body = JSON.parse(r.body) as { error: { category: string; message?: string } };
+				expect(body.error.category).toBe('ssrf_blocked');
+				expect(body.error.message).toMatch(/Private IP rejected/);
+			} finally {
+				process.env.SUMMALY_ALLOW_PRIVATE_IP = 'true';
+			}
+		});
+
+		test('DNS 失敗 → category: network_error', async () => {
+			// app は立てない。host を実在しない hostname に
+			await bringUpProxy();
+			const fakeUrl = 'https://this-domain-definitely-does-not-exist-12345.invalid/';
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: fakeUrl } });
+			expect(r.statusCode).toBe(500);
+			const body = JSON.parse(r.body) as { error: { category: string } };
+			expect(body.error.category).toBe('network_error');
+		});
+
+		test('成功時は category フィールド無し（既存挙動）', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				reply.header('content-type', 'text/html');
+				return reply.send('<html><head><title>OK</title></head></html>');
+			});
+			await app.listen({ port });
+			await bringUpProxy();
+
+			const r = await proxyApp!.inject({ method: 'GET', url: '/', query: { url: host } });
+			expect(r.statusCode).toBe(200);
+			const body = JSON.parse(r.body) as Record<string, unknown>;
+			expect(body.error).toBeUndefined();
+			expect(body.title).toBe('OK');
+		});
+	});
+
 	describe('scpaping のリダイレクト follow (phase11.3)', () => {
 		test('Fastify モード相当 (followRedirects: false) でも scpaping は 301 を follow する', async () => {
 			let pageHits = 0;

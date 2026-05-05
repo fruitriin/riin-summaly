@@ -94,39 +94,122 @@ export function isThinSummary(summary: SummalyResult): boolean {
 }
 
 /**
- * 「絶対失敗する類型」を判定する。プラグインを書いても救えないため、ログに記録するとノイズになる。
+ * `summaly` Fastify モードの **エラーレスポンス用カテゴリ**（phase11.2）。
+ * `error.category` フィールドで Misskey 等の利用側に渡し、UI の出し分けに使う。
  *
- * skip 条件:
- * - HTTP 4xx / 5xx ステータス（broken link / origin 障害 / Akamai/Cloudflare の bot block など）
- * - SSRF ガードによるプライベート IP 拒否
- * - 非 HTML レスポンス（type filter で reject、PDF や画像など）
- * - タイムアウト / abort（一時的な遅延）
- *
- * これらは「プラグインを書けば preview が綺麗になる候補」ではないため、`thin` 経路の純度を上げるために除外する。
+ * - `timeout` 取得タイムアウト / abort
+ * - `bot_blocked` 4xx — Akamai / Cloudflare 等の bot 検知含む（404 を除く）
+ * - `not_found` 404 のみ別カテゴリ（リンク切れ判別）
+ * - `origin_error` 5xx 上流障害
+ * - `unsupported_type` type filter — 非 HTML（PDF 無効時の PDF 等）
+ * - `content_too_large` `contentLengthLimit` 超過 (10 MiB デフォルト)
+ * - `ssrf_blocked` プライベート IP 拒否（IP パース失敗で投げられる `Invalid IP` も含む）
+ * - `network_error` DNS 失敗 / 接続拒否 (`ENOTFOUND` 等)
+ * - `parse_error` HTML は取れたが summarize が null / cheerio パース失敗
+ * - `unknown` 上記いずれにも該当しない（catch-all）
  */
-export function isFilteredFailure(reason: ParseFailureReason, errorMessage?: string, errorName?: string): boolean {
-	if (reason !== 'throw') return false;
+export type SummalyErrorCategory =
+	| 'timeout'
+	| 'bot_blocked'
+	| 'not_found'
+	| 'origin_error'
+	| 'unsupported_type'
+	| 'content_too_large'
+	| 'ssrf_blocked'
+	| 'network_error'
+	| 'parse_error'
+	| 'unknown';
 
-	if (errorName === 'StatusError') return true;
-	if (errorName === 'TimeoutError' || errorName === 'AbortError') return true;
-	if (errorName === 'CancelError') return true;
-
+/**
+ * エラーオブジェクトからカテゴリを判定する。
+ *
+ * 優先順位:
+ * 1. **メッセージ内の高シグナルパターン** (`Private IP rejected` / `Rejected by type filter` /
+ *    timeout 系 / 低レベルネットワーク到達不能 / `failed summarize`) — これらは内部で
+ *    `StatusError(_, 400)` 等として投げられても本来の意味で分類したい
+ * 2. `errorName === 'TimeoutError' / AbortError / CancelError` で timeout
+ * 3. `errorName === 'StatusError'` で `statusCode` が分かれば status 由来カテゴリ
+ * 4. メッセージ先頭の 3 桁ステータスコードでフォールバック分類
+ * 5. どれにも当たらなければ `'unknown'`
+ *
+ * ヒューリスティックは将来 got やライブラリのエラーメッセージ変更で false negative になる可能性があるが、
+ * 既存挙動の互換性を保ちつつカテゴリを増やしていく。`'parse_error'` は `failed summarize` メッセージで判別する
+ * 暫定実装で、将来 `SummarizeError` カスタムエラークラスに昇格すれば `errorName === 'SummarizeError'` で判定できる。
+ */
+export function categorizeError(
+	errorMessage?: string,
+	errorName?: string,
+	statusCode?: number,
+): SummalyErrorCategory {
+	// 1. メッセージ内の高シグナルパターン（StatusError の statusCode より優先）
+	//    `Private IP rejected` / `Invalid IP` は内部で `StatusError(_, 400/500)` として投げられるので、
+	//    statusCode を先に見ると `bot_blocked` / `origin_error` と誤判定してしまう。意味重視で先にメッセージ判定する。
 	if (errorMessage != null) {
-		// got が SUMMALY_BOT で踏む CDN bot block 等。`Response code 4xx/5xx` 形式
-		if (/^\s*\d{3}\s/.test(errorMessage)) {
-			const code = Number(errorMessage.match(/^\s*(\d{3})/)?.[1]);
-			if (Number.isFinite(code) && code >= 400) return true;
-		}
-		if (/Private IP rejected/i.test(errorMessage)) return true;
-		if (/Rejected by type filter/i.test(errorMessage)) return true;
-		if (/timeout|timed out|aborted/i.test(errorMessage)) return true;
-		// got `RequestError` などの低レベルネットワーク到達不能エラー
-		// （ドメイン消失 / サーバ落ち）— プラグインを書いても救えない
+		if (/Private IP rejected|Invalid IP/i.test(errorMessage)) return 'ssrf_blocked';
+		if (/Rejected by type filter/i.test(errorMessage)) return 'unsupported_type';
+		if (/maxSize exceeded/i.test(errorMessage)) return 'content_too_large';
+		if (/timeout|timed out|aborted/i.test(errorMessage)) return 'timeout';
 		if (/ENOTFOUND|ECONNREFUSED|ECONNRESET|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN/i.test(errorMessage)) {
-			return true;
+			return 'network_error';
+		}
+		if (/failed summarize/i.test(errorMessage)) return 'parse_error';
+	}
+
+	// 2. errorName ベースの timeout 系
+	if (errorName === 'TimeoutError' || errorName === 'AbortError' || errorName === 'CancelError') {
+		return 'timeout';
+	}
+
+	// 3. StatusError + statusCode で HTTP ステータス由来の分類
+	if (errorName === 'StatusError' && typeof statusCode === 'number') {
+		if (statusCode === 404) return 'not_found';
+		if (statusCode >= 500 && statusCode < 600) return 'origin_error';
+		if (statusCode >= 400 && statusCode < 500) return 'bot_blocked';
+	}
+
+	// 4. メッセージ先頭の 3 桁ステータスでフォールバック分類（StatusError 名前無しケース）
+	if (errorMessage != null) {
+		const m = /^\s*(\d{3})/.exec(errorMessage);
+		if (m != null) {
+			const code = Number(m[1]);
+			if (code === 404) return 'not_found';
+			if (code >= 500 && code < 600) return 'origin_error';
+			if (code >= 400 && code < 500) return 'bot_blocked';
 		}
 	}
-	return false;
+
+	return 'unknown';
+}
+
+/** `categorizeError` の戻り値のうち「プラグインを書いても救えない類型」の集合 */
+const FILTERED_CATEGORIES = new Set<SummalyErrorCategory>([
+	'timeout',
+	'bot_blocked',
+	'not_found',
+	'origin_error',
+	'unsupported_type',
+	'content_too_large',
+	'ssrf_blocked',
+	'network_error',
+]);
+
+/**
+ * 「絶対失敗する類型」を判定する。プラグインを書いても救えないため、`thin` 経路の純度を上げるために
+ * パース失敗ログから除外する。実装は `categorizeError` の結果を `FILTERED_CATEGORIES` で篩に掛けるだけ。
+ *
+ * - `reason !== 'throw'` （= `'thin'`）は常に false （`thin` はプラグイン候補なので残す）
+ * - `parse_error` / `unknown` は false （ノイズが少なく実装改善のヒントになり得るので残す）
+ * - 上記以外（4xx/5xx/timeout/type filter/SSRF/network）は true で記録対象から除外
+ */
+export function isFilteredFailure(
+	reason: ParseFailureReason,
+	errorMessage?: string,
+	errorName?: string,
+	statusCode?: number,
+): boolean {
+	if (reason !== 'throw') return false;
+	const category = categorizeError(errorMessage, errorName, statusCode);
+	return FILTERED_CATEGORIES.has(category);
 }
 
 export interface ParseFailureLogConfig {

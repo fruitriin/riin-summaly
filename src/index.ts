@@ -13,7 +13,17 @@ import { DEFAULT_BOT_UA, DEFAULT_OPERATION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT, ag
 import { plugins as builtinPlugins } from '@/plugins/index.js';
 import { KNOWN_SHORT_HOSTS } from '@/utils/short-urls.js';
 import { sanitizeUrl } from '@/utils/sanitize-url.js';
-import { ParseFailureLog, isThinSummary, isFilteredFailure } from '@/utils/parse-failure-log.js';
+import { StatusError } from '@/utils/status-error.js';
+import {
+	ParseFailureLog,
+	isThinSummary,
+	isFilteredFailure,
+	categorizeError,
+	type SummalyErrorCategory,
+} from '@/utils/parse-failure-log.js';
+
+// 公開型として再 export（消費者が SerializableError['category'] でなく直接の名前で参照できるよう）
+export type { SummalyErrorCategory };
 
 export type SummalyResult = _SummalyResult;
 
@@ -193,7 +203,7 @@ const DEFAULT_PARSE_FAILURE_LOG_SAMPLES_PER_GROUP = 5;
 
 type CacheEntry =
 	| { kind: 'success'; value: SummalyResult }
-	| { kind: 'error'; error: unknown };
+	| { kind: 'error'; error: SerializableError };
 
 /**
  * Fastify モードのインメモリキャッシュキーを生成する。
@@ -214,16 +224,35 @@ function normalizeCacheKey(url: string, lang: string | undefined): string | null
 }
 
 /**
+ * Fastify モードのエラーレスポンスに乗せるシリアライズ済みエラー (phase11.2)。
+ * - `message` / `name`: 既存フィールド（後方互換）
+ * - `category`: クライアント (Misskey 等) が UI 出し分けに使う公開カテゴリ
+ * - `statusCode`: `StatusError` のときのみ。HTTP 由来のエラーが上流のどのコードか分かる
+ */
+export interface SerializableError {
+	message?: string;
+	name?: string;
+	category: SummalyErrorCategory;
+	statusCode?: number;
+}
+
+/**
  * エラーをキャッシュ可能な形に変換する。
  * `Error` インスタンスは `JSON.stringify` で `{}` になりレスポンスから情報が消えるため、
- * `{ message, name }` の plain object に正規化して HIT/MISS でレスポンスの一貫性を保つ。
- * stack トレースは積み重ねでメモリ消費の遠因になるため捨てる。
+ * `{ message, name, category, statusCode? }` の plain object に正規化して HIT/MISS で
+ * レスポンスの一貫性を保つ。stack トレースは積み重ねでメモリ消費の遠因になるため捨てる。
  */
-function serializableError(e: unknown): unknown {
-	if (e instanceof Error) {
-		return { message: e.message, name: e.name };
-	}
-	return e;
+function serializableError(e: unknown): SerializableError {
+	const message = e instanceof Error ? e.message : (typeof e === 'string' ? e : undefined);
+	const name = e instanceof Error ? e.name : undefined;
+	const statusCode = e instanceof StatusError ? e.statusCode : undefined;
+	const category = categorizeError(message, name, statusCode);
+	return {
+		...(message !== undefined ? { message } : {}),
+		...(name !== undefined ? { name } : {}),
+		...(statusCode !== undefined ? { statusCode } : {}),
+		category,
+	};
 }
 
 function cacheControlHeader(maxAge: number): string {
@@ -522,14 +551,11 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		// `isFilteredFailure` で除外する。プラグインを書いても救えないためログに詰むとノイズになる。
 		if (parseFailureLog != null) {
 			if (entry.kind === 'error') {
-				const errPayload = entry.error as { message?: string; name?: string } | undefined;
-				const message = (errPayload != null && typeof errPayload.message === 'string')
-					? errPayload.message
-					: String(entry.error);
-				const name = (errPayload != null && typeof errPayload.name === 'string')
-					? errPayload.name
-					: undefined;
-				if (!isFilteredFailure('throw', message, name)) {
+				const errPayload = entry.error;
+				const message = typeof errPayload.message === 'string' ? errPayload.message : undefined;
+				const name = typeof errPayload.name === 'string' ? errPayload.name : undefined;
+				const statusCode = typeof errPayload.statusCode === 'number' ? errPayload.statusCode : undefined;
+				if (!isFilteredFailure('throw', message, name, statusCode)) {
 					parseFailureLog.record(url, 'throw', message);
 				}
 			} else if (isThinSummary(entry.value)) {
