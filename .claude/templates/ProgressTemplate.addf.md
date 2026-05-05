@@ -25,6 +25,13 @@
    - プロジェクト固有のコマンドは [CLAUDE.repo.md](../../CLAUDE.repo.md#テスト) を参照
    - ADD フレームワークテスト: `bash .claude/tests/run-all.sh`
    - **失敗した場合 → 実装に差し戻す**。原因分析 → 修正 → 再実行
+4.5. **ドキュメントと実装の突き合わせ**: 今回の変更に対応する文書・サンプル・設定例が更新されているかチェックする
+   - 公開 API（`SummalyOptions` / `SummalyResult` / プラグインインターフェース等）の変更 → README, docs/Library.md, docs/Plugins.md
+   - Fastify モード設定・運用機能の変更 → docs/SETUP.md, config.example.toml, docs/deploy-examples/
+   - 新規 / 変更されたユーザー向け機能 → CHANGELOG (unreleased セクション)
+   - dev サーバ周りの変更 → dev/sample-urls.ts, dev/public/ の関連箇所
+   - knowhow に値する設計判断 → docs/knowhow/ + docs/knowhow/INDEX.md
+   - **見落としがあれば実装フェーズに差し戻す**。「実装は完成したがドキュメント未反映」の状態でレビューに進まない
 5. `addf-code-review-agent` でコードレビューを実施する
 6. `addf-contribution-agent` で ADD フレームワークへのコントリビューション候補を検出する
 7. レビュー指摘への対応:
