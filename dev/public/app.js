@@ -201,72 +201,93 @@ function activateTab(target) {
 	});
 }
 
+// Misskey の Note timeline で使われる compact mode 風レイアウト:
+// 左に 120sq の正方形サムネイル / 右に sitename + title + description + url。
+// 旧実装は 100% 幅バナーだったため、profile 画像が thumbnail にフォールバックされる
+// プラグイン（twitter 等）でアイコンが過剰に主張する問題があった。
 function renderCard(result) {
 	paneCard.innerHTML = '';
 	const card = document.createElement('div');
 	card.className = 'mk-card';
 
-	const thumb = result.thumbnail;
-	if (thumb && /^https?:|^data:/i.test(thumb)) {
+	// 左カラム: thumbnail（無ければ icon にフォールバック、どちらも無ければ thumb 自体を出さない）
+	const thumbSrc = pickSafeImageUrl(result.thumbnail) ?? pickSafeImageUrl(result.icon);
+	if (thumbSrc != null) {
+		const thumbBox = document.createElement('div');
+		thumbBox.className = 'thumb';
 		const img = document.createElement('img');
-		img.className = 'thumbnail';
-		img.src = thumb;
+		img.src = thumbSrc;
 		img.alt = '';
-		img.addEventListener('error', () => img.remove());
-		card.appendChild(img);
+		img.addEventListener('error', () => thumbBox.remove());
+		thumbBox.appendChild(img);
+		card.appendChild(thumbBox);
 	}
 
+	// 右カラム: meta
 	const body = document.createElement('div');
 	body.className = 'body';
-
-	if (result.icon && /^https?:|^data:/i.test(result.icon)) {
-		const icon = document.createElement('img');
-		icon.className = 'icon';
-		icon.src = result.icon;
-		icon.alt = '';
-		icon.addEventListener('error', () => icon.remove());
-		body.appendChild(icon);
-	}
-
-	const meta = document.createElement('div');
-	meta.className = 'meta';
 
 	if (result.sensitive) {
 		const sens = document.createElement('div');
 		sens.className = 'sensitive-label';
 		sens.textContent = '⚠ センシティブな内容';
-		meta.appendChild(sens);
+		body.appendChild(sens);
 	}
 
-	if (result.sitename) {
-		const sn = document.createElement('div');
-		sn.className = 'sitename';
-		sn.textContent = result.sitename;
-		meta.appendChild(sn);
+	// sitename 行: 小さい favicon (16px) + sitename テキストを横並び
+	if (result.sitename || result.icon) {
+		const snRow = document.createElement('div');
+		snRow.className = 'sitename-row';
+		const faviconSrc = pickSafeImageUrl(result.icon);
+		if (faviconSrc != null) {
+			const fav = document.createElement('img');
+			fav.className = 'favicon';
+			fav.src = faviconSrc;
+			fav.alt = '';
+			fav.addEventListener('error', () => fav.remove());
+			snRow.appendChild(fav);
+		}
+		if (result.sitename) {
+			const snText = document.createElement('span');
+			snText.className = 'sitename';
+			snText.textContent = result.sitename;
+			snRow.appendChild(snText);
+		}
+		body.appendChild(snRow);
 	}
 
 	const title = document.createElement('div');
 	title.className = 'title';
 	title.textContent = result.title ?? '(no title)';
-	meta.appendChild(title);
+	body.appendChild(title);
 
 	if (result.description) {
 		const desc = document.createElement('p');
 		desc.className = 'description';
 		desc.textContent = result.description;
-		meta.appendChild(desc);
+		body.appendChild(desc);
 	}
 
 	if (result.url) {
 		const url = document.createElement('div');
 		url.className = 'url';
 		url.textContent = result.url;
-		meta.appendChild(url);
+		body.appendChild(url);
 	}
 
-	body.appendChild(meta);
 	card.appendChild(body);
 	paneCard.appendChild(card);
+}
+
+/**
+ * `result.thumbnail` / `result.icon` などをそのまま `<img src>` に流すと
+ * `javascript:` 等の危険な URL を踏みうるため、http(s) / data: 以外を弾く。
+ * summaly 出口の sanitizeUrl も同等のことをしているが UI 側でも二重ガード。
+ */
+function pickSafeImageUrl(value) {
+	if (typeof value !== 'string' || value === '') return null;
+	if (!/^https?:|^data:/i.test(value)) return null;
+	return value;
 }
 
 function renderPlayer(result) {
