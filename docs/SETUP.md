@@ -211,6 +211,43 @@ location /__diagnostics/ {
 
 サンプルに保存される `url` は **`${origin}${pathname}` のみ**（query / fragment / basic auth は捨てる）。session ID / API token がクエリに乗っているケースをある程度防ぎます。それでも path 自体に機密が含まれるサイトのプレビュー URL は記録されるため、エンドポイント公開時の nginx ガードは必須です。
 
+### JSONL 永続化（オプトイン）
+
+プロセス再起動で in-memory ログは消えるため、月次レビュー等で過去ログを残したい場合は JSONL ファイルへの append を有効化できます:
+
+```toml
+[diagnostics]
+parseFailureLog = true
+parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
+parseFailureLogJsonlMaxBytes = 10485760   # 10 MiB（デフォルト）
+```
+
+| 設定キー | 説明 | デフォルト |
+|:--|:--|:--|
+| `parseFailureLogJsonlPath` | 永続化先 JSONL パス | `undefined`（永続化なし） |
+| `parseFailureLogJsonlMaxBytes` | これを超えたら以降の append を停止（**ローテーションはしない**） | `10485760`（10 MiB） |
+
+挙動:
+- `record()` 1 回ごとに `{"key":"...","url":"...","ts":...,"reason":"thin|throw","errorMessage":"..."}` を 1 行 append
+- 起動時に既存ファイルサイズを読んで cap 判定の起点にする
+- 書き込み権限エラー / ディレクトリ未存在は **サイレントに失敗**（リクエスト処理を止めない）。stderr に 1 度だけ警告を出力
+- cap 越え後の挙動は「以降の append を**停止**」のみ。**ファイルローテーションはしない**ため、運用者は `logrotate` や cron で `mv` / `rm` する想定
+
+ローテーションを `logrotate` で組むなら:
+
+```
+/var/log/summaly/parse-failures.jsonl {
+    monthly
+    rotate 6
+    missingok
+    notifempty
+    nocreate
+    copytruncate
+}
+```
+
+`copytruncate` を使うと summaly プロセスを再起動せずローテートできますが、in-memory のサイズキャッシュとファイル実体に齟齬が出るため、ローテート後は `summaly serve` を再起動するのが確実です。
+
 PDF 対応
 ----------------------------------------------------------------
 

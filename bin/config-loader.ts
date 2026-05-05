@@ -219,6 +219,19 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 			expectType(d.parseFailureLogEndpoint, 'boolean', 'diagnostics.parseFailureLogEndpoint');
 			out.parseFailureLogEndpoint = d.parseFailureLogEndpoint as boolean;
 		}
+		if (d.parseFailureLogJsonlPath !== undefined) {
+			expectType(d.parseFailureLogJsonlPath, 'string', 'diagnostics.parseFailureLogJsonlPath');
+			const path = (d.parseFailureLogJsonlPath as string).trim();
+			if (path === '') {
+				throw new RangeError('config: `diagnostics.parseFailureLogJsonlPath` must not be empty');
+			}
+			out.parseFailureLogJsonlPath = path;
+		}
+		if (d.parseFailureLogJsonlMaxBytes !== undefined) {
+			expectType(d.parseFailureLogJsonlMaxBytes, 'number', 'diagnostics.parseFailureLogJsonlMaxBytes');
+			expectNonNegativeFiniteNumber(d.parseFailureLogJsonlMaxBytes as number, 'diagnostics.parseFailureLogJsonlMaxBytes');
+			out.parseFailureLogJsonlMaxBytes = d.parseFailureLogJsonlMaxBytes as number;
+		}
 	}
 
 	return out;

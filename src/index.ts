@@ -154,6 +154,19 @@ export type SummalyOptions = {
 	parseFailureLogEndpoint?: boolean;
 
 	/**
+	 * パース失敗ログの永続化用 JSONL ファイルパス。指定すると `record()` のたびに 1 行 append される。
+	 * 起動時に既存ファイルサイズを読み、`parseFailureLogJsonlMaxBytes` を超えていたら以降 append しない。
+	 * 未指定の場合はメモリのみで永続化なし（プロセス再起動で消える）。
+	 */
+	parseFailureLogJsonlPath?: string;
+
+	/**
+	 * JSONL ファイルの最大バイト数。これを超えたら以降の append を停止する（ローテーションはしない）。
+	 * 「気付いたタイミングで運用者が rm / mv する」運用想定。デフォルト 10 MiB。
+	 */
+	parseFailureLogJsonlMaxBytes?: number;
+
+	/**
 	 * PDF レスポンスのタイトル取得を有効化する（オプトイン）。
 	 * `true` または環境変数 `SUMMALY_ENABLE_PDF=true` のいずれかが設定されている場合のみ
 	 * PDF を type filter で許可し、`pdf-parse` で先頭メタデータからタイトルを取得する。
@@ -402,6 +415,8 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		? new ParseFailureLog({
 			maxGroups: options.parseFailureLogMaxGroups ?? DEFAULT_PARSE_FAILURE_LOG_MAX_GROUPS,
 			samplesPerGroup: options.parseFailureLogSamplesPerGroup ?? DEFAULT_PARSE_FAILURE_LOG_SAMPLES_PER_GROUP,
+			jsonlPath: options.parseFailureLogJsonlPath,
+			jsonlMaxBytes: options.parseFailureLogJsonlMaxBytes,
 		})
 		: null;
 

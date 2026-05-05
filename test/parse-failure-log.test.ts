@@ -2,12 +2,16 @@
  * src/utils/parse-failure-log.ts の単体テスト (phase10.1)。
  */
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
 	groupKeyOf,
 	sanitizeUrlForLog,
 	isThinSummary,
 	isFilteredFailure,
+	serializeJsonlLine,
 	ParseFailureLog,
 } from '@/utils/parse-failure-log.js';
 import type { SummalyResult } from '@/index.js';
@@ -262,5 +266,154 @@ describe('ParseFailureLog', () => {
 		expect(log.size).toBe(1);
 		log.clear();
 		expect(log.size).toBe(0);
+	});
+});
+
+describe('serializeJsonlLine', () => {
+	test('1 行で改行終端、key + sample フィールドが flat に乗る', () => {
+		const line = serializeJsonlLine('example.com/a', {
+			url: 'https://example.com/a/b',
+			ts: 1000,
+			reason: 'thin',
+		});
+		expect(line.endsWith('\n')).toBe(true);
+		expect(line.includes('\n')).toBe(true);
+		const parsed = JSON.parse(line.trim());
+		expect(parsed).toEqual({
+			key: 'example.com/a',
+			url: 'https://example.com/a/b',
+			ts: 1000,
+			reason: 'thin',
+		});
+	});
+
+	test('errorMessage が改行を含んでも 1 行に収まる（JSON.stringify がエスケープ）', () => {
+		const line = serializeJsonlLine('example.com/x', {
+			url: 'https://example.com/x',
+			ts: 1,
+			reason: 'throw',
+			errorMessage: 'first line\nsecond line',
+		});
+		expect(line.split('\n').filter(Boolean)).toHaveLength(1);
+	});
+});
+
+describe('ParseFailureLog (JSONL 永続化)', () => {
+	let tmpDir: string;
+	beforeEach(() => {
+		tmpDir = mkdtempSync(join(tmpdir(), 'summaly-pflog-'));
+	});
+	afterEach(() => {
+		rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	test('jsonlPath 未指定なら fs に書かない', () => {
+		const log = new ParseFailureLog({ maxGroups: 10, samplesPerGroup: 5 });
+		log.record('https://example.com/a', 'thin');
+		// 何も起きないことの確認は副次的。一応 tmpDir に file が無いこと
+		expect(existsSync(join(tmpDir, 'any.jsonl'))).toBe(false);
+	});
+
+	test('jsonlPath 指定で record のたび JSONL 1 行が append される', () => {
+		const path = join(tmpDir, 'pf.jsonl');
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: path,
+		});
+		log.record('https://example.com/articles/foo/a', 'thin');
+		log.record('https://example.com/articles/foo/b', 'thin');
+		log.record('https://example.com/x/y', 'throw', 'BOOM');
+
+		const lines = readFileSync(path, 'utf8').split('\n').filter(Boolean);
+		expect(lines).toHaveLength(3);
+		const parsed = lines.map(l => JSON.parse(l));
+		expect(parsed[0]).toMatchObject({ key: 'example.com/articles/foo', url: 'https://example.com/articles/foo/a', reason: 'thin' });
+		expect(parsed[1]).toMatchObject({ key: 'example.com/articles/foo', url: 'https://example.com/articles/foo/b', reason: 'thin' });
+		expect(parsed[2]).toMatchObject({ key: 'example.com/x/y', url: 'https://example.com/x/y', reason: 'throw', errorMessage: 'BOOM' });
+	});
+
+	test('既存ファイルがあると append（上書きしない）', () => {
+		const path = join(tmpDir, 'pf.jsonl');
+		writeFileSync(path, '{"key":"existing.com/x","url":"https://existing.com/x","ts":1,"reason":"thin"}\n');
+
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: path,
+		});
+		log.record('https://example.com/a', 'thin');
+
+		const lines = readFileSync(path, 'utf8').split('\n').filter(Boolean);
+		expect(lines).toHaveLength(2);
+		expect(JSON.parse(lines[0])).toMatchObject({ key: 'existing.com/x' });
+		expect(JSON.parse(lines[1])).toMatchObject({ url: 'https://example.com/a' });
+	});
+
+	test('jsonlMaxBytes を超える append はスキップ（既存ファイルが既に超えていれば一切書かない）', () => {
+		const path = join(tmpDir, 'pf.jsonl');
+		// 既存サイズが 200 byte で cap が 100 byte → 起動時から cap 越え
+		writeFileSync(path, 'x'.repeat(200));
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: path,
+			jsonlMaxBytes: 100,
+		});
+		log.record('https://example.com/a', 'thin');
+
+		// 既存 200 バイトのまま（追記されない）
+		expect(statSync(path).size).toBe(200);
+	});
+
+	test('jsonlMaxBytes 直近で次の line が cap を越えるなら書かない（厳格 cap）', () => {
+		const path = join(tmpDir, 'pf.jsonl');
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: path,
+			jsonlMaxBytes: 80,  // 1 line ≒ 90 バイト想定
+		});
+		log.record('https://example.com/articles/foo/very-long-url-that-exceeds-cap', 'thin');
+		// 1 行追加すると cap 越えなので書かれない
+		expect(existsSync(path)).toBe(false);
+	});
+
+	test('cap 越え後、in-memory 集約は引き続き機能する', () => {
+		const path = join(tmpDir, 'pf.jsonl');
+		writeFileSync(path, 'x'.repeat(200));
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: path,
+			jsonlMaxBytes: 100,
+		});
+		log.record('https://example.com/a', 'thin');
+		log.record('https://example.com/b', 'thin');
+		// in-memory には記録されている
+		expect(log.size).toBe(2);
+	});
+
+	test('jsonlMaxBytes が負数だと RangeError', () => {
+		expect(() => new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: '/tmp/x.jsonl',
+			jsonlMaxBytes: -1,
+		})).toThrow(/jsonlMaxBytes/);
+	});
+
+	test('書き込み権限が無い path はサイレントに失敗する（エラーで request を止めない）', () => {
+		// /proc/null のような書き込み不可パス（環境依存）。代わりに tmpDir 内の存在しないサブディレクトリを使う
+		const path = join(tmpDir, 'no-such-dir', 'pf.jsonl');
+		const log = new ParseFailureLog({
+			maxGroups: 10,
+			samplesPerGroup: 5,
+			jsonlPath: path,
+		});
+		// throw しないことだけ確認
+		expect(() => log.record('https://example.com/a', 'thin')).not.toThrow();
+		// in-memory は記録される
+		expect(log.size).toBe(1);
 	});
 });

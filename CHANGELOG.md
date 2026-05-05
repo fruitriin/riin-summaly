@@ -7,6 +7,7 @@
   * サンプルに保存する URL は `${origin}${pathname}` のみ（query / fragment / basic auth を捨てる）
   * 上限: グループ数 1000、サンプル数 5/group。同 URL の重複追加は抑制
   * デフォルト無効、`SummalyOptions.parseFailureLog` / TOML の `[diagnostics]` セクションでオプトイン
+  * **JSONL ファイル永続化** (`parseFailureLogJsonlPath`): record 毎に 1 行 append。`parseFailureLogJsonlMaxBytes`（デフォルト 10 MiB）を超えたら以降 append を停止する（ローテーションはしない、`logrotate` 等で運用者が rm/mv 想定）。書き込み失敗はサイレントスキップ + stderr に 1 回警告
 * 短縮 URL の HEAD 失敗時に GET fallback でリダイレクトを解決するように変更 (phase9.1):
   * `amzn.asia` のように HEAD に 404 を返すが GET には 301 でリダイレクトを返す短縮ホストが解決できるようになる
   * GET fallback には `Range: bytes=0-0` を付けて body 受信量を最小化（リダイレクトされる場合は body 自体無く、最終ターゲットが Range を尊重すれば 1 バイトで済む）

@@ -84,3 +84,10 @@ parseFailureLogSamplesPerGroup = 5       # 1 グループあたりの直近サ�
 #   location /__diagnostics/ { allow 127.0.0.1; deny all; }
 # 過去の preview 試行 URL が外部から見える状態になりプライバシー漏洩につながる。
 parseFailureLogEndpoint = false
+
+# パース失敗ログを JSONL ファイルに永続化する（オプトイン）。
+# プロセス再起動で in-memory ログは消えるため、月次レビュー等で確認したい場合に指定する。
+# `parseFailureLogJsonlMaxBytes` を超えたら以降の append は停止する（ローテーションはしない）。
+# 「気付いたタイミングで運用者が rm / mv する」運用想定。
+# parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
+# parseFailureLogJsonlMaxBytes = 10485760  # 10 MiB（デフォルト）

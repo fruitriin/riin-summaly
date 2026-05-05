@@ -12,6 +12,7 @@
  * 「プラグイン化候補のドメイン発見器」が主目的のため精度より運用シンプルさ優先。
  */
 
+import { appendFileSync, statSync } from 'node:fs';
 import type { SummalyResult } from '@/index.js';
 
 export type ParseFailureReason = 'throw' | 'thin';
@@ -131,6 +132,23 @@ export function isFilteredFailure(reason: ParseFailureReason, errorMessage?: str
 export interface ParseFailureLogConfig {
 	maxGroups: number;
 	samplesPerGroup: number;
+	/**
+	 * 永続化用の JSONL ファイルパス。指定されたら record() 毎に 1 行 append する。
+	 * undefined の場合は in-memory のみ。
+	 */
+	jsonlPath?: string;
+	/**
+	 * JSONL ファイルがこのバイト数を超えたら以降の append を停止する（ローテーションはしない）。
+	 * 「気付いたタイミングで運用者が rm / mv する」運用想定。デフォルト 10 MiB。
+	 */
+	jsonlMaxBytes?: number;
+}
+
+const DEFAULT_JSONL_MAX_BYTES = 10 * 1024 * 1024;
+
+/** 1 行 JSONL のシリアライズ。改行文字を含むメッセージも 1 行に収まるよう JSON.stringify 任せ */
+export function serializeJsonlLine(key: string, sample: ParseFailureSample): string {
+	return JSON.stringify({ key, ...sample }) + '\n';
 }
 
 /**
@@ -139,6 +157,12 @@ export interface ParseFailureLogConfig {
 export class ParseFailureLog {
 	readonly maxGroups: number;
 	readonly samplesPerGroup: number;
+	readonly jsonlPath?: string;
+	readonly jsonlMaxBytes: number;
+	/** 現在の JSONL ファイルサイズの in-memory キャッシュ。append のたびに更新 */
+	private jsonlBytes: number;
+	/** ファイル書き込みエラーを連続記録しないよう連発防止フラグ */
+	private jsonlWriteErrorLogged = false;
 	private readonly map: Map<string, ParseFailureSample[]> = new Map();
 
 	constructor(config: ParseFailureLogConfig) {
@@ -150,6 +174,21 @@ export class ParseFailureLog {
 		}
 		this.maxGroups = config.maxGroups;
 		this.samplesPerGroup = config.samplesPerGroup;
+		this.jsonlPath = config.jsonlPath;
+		this.jsonlMaxBytes = config.jsonlMaxBytes ?? DEFAULT_JSONL_MAX_BYTES;
+		if (!Number.isFinite(this.jsonlMaxBytes) || this.jsonlMaxBytes < 0) {
+			throw new RangeError(`parseFailureLog.jsonlMaxBytes must be a non-negative finite number, got ${this.jsonlMaxBytes}`);
+		}
+		// 起動時に既存ファイルサイズを取得（後続の append サイズチェックの基準値）
+		this.jsonlBytes = 0;
+		if (this.jsonlPath != null) {
+			try {
+				const st = statSync(this.jsonlPath);
+				this.jsonlBytes = st.size;
+			} catch {
+				// ファイル未存在は OK（最初の append で作成される）
+			}
+		}
 	}
 
 	/**
@@ -188,6 +227,34 @@ export class ParseFailureLog {
 			const oldest = this.map.keys().next().value;
 			if (oldest === undefined) break;
 			this.map.delete(oldest);
+		}
+
+		// JSONL 永続化（オプトイン）。サイズ cap を越えたら以降の append は停止。
+		// in-memory map への記録とは独立に効くため、cap 到達後も in-memory は更新が続く。
+		this.appendJsonl(key, sample);
+	}
+
+	/** 1 サンプルを JSONL ファイルに append。サイズキャップ越え or ファイル I/O 失敗時はサイレントスキップ。 */
+	private appendJsonl(key: string, sample: ParseFailureSample): void {
+		if (this.jsonlPath == null) return;
+		if (this.jsonlBytes >= this.jsonlMaxBytes) return; // 既に cap 越え
+		const line = serializeJsonlLine(key, sample);
+		const lineBytes = Buffer.byteLength(line, 'utf8');
+		// この append で cap を越える場合も書き込まない（cap を厳守し、不揃いな半分書き込みを避ける）
+		if (this.jsonlBytes + lineBytes > this.jsonlMaxBytes) {
+			this.jsonlBytes = this.jsonlMaxBytes; // 以降スキップさせる
+			return;
+		}
+		try {
+			appendFileSync(this.jsonlPath, line, 'utf8');
+			this.jsonlBytes += lineBytes;
+		} catch (e) {
+			// ディレクトリが無い / 権限エラー等。連発を避けて 1 回だけ stderr に出す
+			if (!this.jsonlWriteErrorLogged) {
+				this.jsonlWriteErrorLogged = true;
+				const msg = e instanceof Error ? e.message : String(e);
+				process.stderr.write(`[summaly][parseFailureLog] JSONL write failed (subsequent errors suppressed): ${msg}\n`);
+			}
 		}
 	}
 
