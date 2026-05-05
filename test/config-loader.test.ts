@@ -471,7 +471,9 @@ describe('parseTomlConfigString', () => {
 			`)).toThrow(/scraping\.proxy\.categories.*unknown category.*typo_cat/);
 		});
 
-		test('categories のデフォルトは ["origin_error"]', () => {
+		test('categories のデフォルトは ["origin_error", "bot_blocked"] (phase12.1 followup)', () => {
+			// Amazon は IP block で 5xx もしくは 200 + content-type 欠落 (= bot_blocked カテゴリ)
+			// の両方で弾くため、デフォルトで両方を proxy 発火対象にする
 			const cfg = parseTomlConfigString(`
 				[scraping.proxy]
 				enabled = true
@@ -479,7 +481,7 @@ describe('parseTomlConfigString', () => {
 				secret = "x"
 				domains = ["amazon.co.jp"]
 			`);
-			expect(cfg.summaly.proxyFallback?.categories).toEqual(['origin_error']);
+			expect(cfg.summaly.proxyFallback?.categories).toEqual(['origin_error', 'bot_blocked']);
 		});
 
 		test('timeoutMs のデフォルトは 30000', () => {

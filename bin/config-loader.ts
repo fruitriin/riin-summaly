@@ -198,7 +198,7 @@ function parseProxySection(rawProxy: Toml, out: SummalyOptions): void {
 		);
 		return;
 	}
-	let categories: string[] = ['origin_error'];
+	let categories: string[] = ['origin_error', 'bot_blocked'];
 	if (rawProxy.categories !== undefined) {
 		expectStringArray(rawProxy.categories, 'scraping.proxy.categories');
 		for (const c of rawProxy.categories) {

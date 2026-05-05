@@ -112,7 +112,8 @@ export function isThinSummary(summary: SummalyResult): boolean {
  * - `bot_blocked` 4xx — Akamai / Cloudflare 等の bot 検知含む（404 を除く）
  * - `not_found` 404 のみ別カテゴリ（リンク切れ判別）
  * - `origin_error` 5xx 上流障害
- * - `unsupported_type` type filter — 非 HTML（PDF 無効時の PDF 等）
+ * - `unsupported_type` type filter — 明示的な非 HTML（PDF 無効時の PDF 等）。content-type が
+ *   セットされた上で typeFilter にマッチしないケース。content-type 欠落は `bot_blocked` 側に振り分ける
  * - `content_too_large` `contentLengthLimit` 超過 (10 MiB デフォルト)
  * - `ssrf_blocked` プライベート IP 拒否（IP パース失敗で投げられる `Invalid IP` も含む）
  * - `network_error` DNS 失敗 / 接続拒否 (`ENOTFOUND` 等)
@@ -159,6 +160,11 @@ export function categorizeError(
 	//    statusCode を先に見ると `bot_blocked` / `origin_error` と誤判定してしまう。意味重視で先にメッセージ判定する。
 	if (errorMessage != null) {
 		if (/Private IP rejected|Invalid IP/i.test(errorMessage)) return 'ssrf_blocked';
+		// `Rejected by type filter undefined` (= content-type ヘッダが欠落) は IP block 系の
+		// malformed response の典型 (Amazon が Vultr Tokyo IP に対して 200 + 空 content-type を返す等)。
+		// 真の非 HTML (`Rejected by type filter application/pdf`) と区別して `bot_blocked` に振り分け、
+		// proxy fallback (phase12.1) で救援できる経路に乗せる (phase12.1 followup)。
+		if (/Rejected by type filter undefined/i.test(errorMessage)) return 'bot_blocked';
 		if (/Rejected by type filter/i.test(errorMessage)) return 'unsupported_type';
 		if (/maxSize exceeded/i.test(errorMessage)) return 'content_too_large';
 		if (/timeout|timed out|aborted/i.test(errorMessage)) return 'timeout';

@@ -7,7 +7,7 @@
  *
  * 発火条件:
  * - 1 回目 + UA fallback の両方が失敗
- * - エラーカテゴリが `categories` (デフォルト `['origin_error']`) に含まれる
+ * - エラーカテゴリが `categories` (デフォルト `['origin_error', 'bot_blocked']`) に含まれる
  * - target hostname が `domains` allowlist にマッチ (suffix-match)
  *
  * Worker への HMAC 認証は `${target_url}\n${ts}` に対する SHA-256 HMAC。
@@ -46,7 +46,12 @@ export interface ProxyFallbackConfig {
 	timeoutMs: number;
 }
 
-export const DEFAULT_PROXY_CATEGORIES: SummalyErrorCategory[] = ['origin_error'];
+// IP レピュテーション層の遮断は **複数のシグニチャ** で来うる:
+// - `origin_error` 5xx (Amazon が Vultr に対して 500 を返す古典パターン)
+// - `bot_blocked` 200 + content-type 欠落 (Amazon が malformed response で弾く新パターン、phase12.1 followup)
+// - `connection_dropped` TCP は通すが HTTP 応答前で切断 (将来的に proxy で救えるケース)
+// 既定では origin_error と bot_blocked の両方をカバー。connection_dropped は UA fallback (phase11.9) の射程と被るため除外
+export const DEFAULT_PROXY_CATEGORIES: SummalyErrorCategory[] = ['origin_error', 'bot_blocked'];
 export const DEFAULT_PROXY_TIMEOUT_MS = 30000;
 
 /**

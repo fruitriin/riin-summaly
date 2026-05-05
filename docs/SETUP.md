@@ -248,7 +248,7 @@ timeoutMs = 30000
 | `enabled` | Proxy フォールバックを有効化 | `false` |
 | `url` | Worker のエンドポイント URL | （指定必須） |
 | `secret` | HMAC 共有シークレット。env `SUMMALY_PROXY_SECRET` が優先 | （指定必須、env 経由可） |
-| `categories` | リトライ発火対象のエラーカテゴリ | `["origin_error"]` |
+| `categories` | リトライ発火対象のエラーカテゴリ。`bot_blocked` には Amazon の `200 + content-type 欠落` (= `Rejected by type filter undefined`) も含まれる | `["origin_error", "bot_blocked"]` |
 | `domains` | Proxy 対象ドメイン (suffix-match)。空配列禁止 | （指定必須） |
 | `timeoutMs` | Proxy リクエストのタイムアウト | `30000` |
 

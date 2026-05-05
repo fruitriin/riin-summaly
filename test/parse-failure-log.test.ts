@@ -182,6 +182,12 @@ describe('categorizeError (phase11.2)', () => {
 		expect(categorizeError('Rejected by type filter application/pdf')).toBe('unsupported_type');
 	});
 
+	test('Rejected by type filter undefined (content-type 欠落) → bot_blocked (phase12.1 followup)', () => {
+		// Amazon が Vultr Tokyo IP に対して 200 + 空 content-type を返すケース。
+		// 真の非 HTML と区別して proxy fallback の発火対象 (bot_blocked) に振り分ける。
+		expect(categorizeError('Rejected by type filter undefined')).toBe('bot_blocked');
+	});
+
 	test('maxSize exceeded メッセージ → content_too_large', () => {
 		expect(categorizeError('maxSize exceeded (15728640 > 10485760) on response')).toBe('content_too_large');
 	});

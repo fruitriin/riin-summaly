@@ -47,7 +47,9 @@ enabled = false
 # enabled = false                              # デフォルト false (要明示オプトイン)
 # url = "https://summaly-proxy.<your>.workers.dev"
 # secret = "..."                               # 推奨: env SUMMALY_PROXY_SECRET 経由
-# categories = ["origin_error"]                # どのカテゴリで proxy を発火するか
+# categories = ["origin_error", "bot_blocked"] # どのカテゴリで proxy を発火するか (デフォルト)
+                                                # `bot_blocked` には Amazon が 200 + content-type 欠落で
+                                                # 弾くケース (`Rejected by type filter undefined`) も含まれる
 # domains = ["amazon.co.jp", "amazon.com"]     # suffix-match。空配列禁止 (allowlist 必須)
 # timeoutMs = 30000                            # proxy リクエストのタイムアウト
 #
