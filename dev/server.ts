@@ -32,10 +32,27 @@ const builtinPluginNames = builtinPlugins
 
 process.env.SUMMALY_ALLOW_PRIVATE_IP = 'true';
 
+// Proxy fallback (phase12.1)。env が両方セットされていれば dev UI の checkbox から有効化できる。
+// SUMMALY_PROXY_URL = "https://summaly-proxy.<your>.workers.dev"
+// SUMMALY_PROXY_SECRET = wrangler secret put SHARED_SECRET と同値
+const proxyEnv = {
+	url: process.env.SUMMALY_PROXY_URL ?? '',
+	secret: process.env.SUMMALY_PROXY_SECRET ?? '',
+};
+const proxyAvailable = proxyEnv.url !== '' && proxyEnv.secret !== '';
+
 const _filename = fileURLToPath(import.meta.url);
 const _dirname = dirname(_filename);
 
 const app = Fastify({ logger: true });
+
+if (proxyAvailable) {
+	app.log.info({ url: proxyEnv.url }, 'proxy fallback available (use ?proxy=1 to enable per-request)');
+} else {
+	app.log.info(
+		'proxy fallback unavailable (set SUMMALY_PROXY_URL + SUMMALY_PROXY_SECRET env vars to enable)',
+	);
+}
 
 interface SummalyQuery {
 	url?: string;
@@ -43,6 +60,8 @@ interface SummalyQuery {
 	useRange?: string;
 	enablePdf?: string;
 	allowedPlugins?: string;
+	/** "1" にすると proxy fallback を有効化（env で URL/secret 設定済みのときのみ有効） */
+	proxy?: string;
 }
 
 // 直接 summaly() を叩くハンドラ。register options ではなく request 単位で options を組み立てるので
@@ -67,6 +86,22 @@ app.get<{ Querystring: SummalyQuery }>('/api/summaly', async (req, reply) => {
 	if (req.query.allowedPlugins) {
 		opts.allowedPlugins = req.query.allowedPlugins.split(',').map(s => s.trim()).filter(Boolean);
 	}
+	// Proxy fallback (phase12.1)。env で URL/secret が設定されていて、かつ ?proxy=1 のときに有効化。
+	// dev では Amazon class IP block の救援を手元で再現できるように UI から ON/OFF を切り替えたい。
+	if (req.query.proxy === '1' && proxyAvailable) {
+		opts.proxyFallback = {
+			enabled: true,
+			url: proxyEnv.url,
+			secret: proxyEnv.secret,
+			categories: ['origin_error'],
+			domains: [
+				'amazon.com', 'amazon.co.jp', 'amazon.co.uk', 'amazon.de', 'amazon.fr',
+				'amazon.it', 'amazon.es', 'amazon.ca', 'amazon.com.au', 'amazon.com.br',
+				'amazon.com.mx', 'amazon.in',
+			],
+			timeoutMs: 30000,
+		};
+	}
 
 	try {
 		const result: SummalyResult = await summaly(url, opts);
@@ -83,6 +118,19 @@ app.get('/api/sample-urls', async () => ({
 	groups: sampleGroups,
 	plugins: builtinPluginNames,
 }));
+
+// dev UI が起動時に呼ぶ。env の有無で UI のチェックボックス表示を切り替える。
+// secret 自体は **絶対に返さない**（UI の info 表示用に proxyAvailable と URL の host だけ）。
+app.get('/api/dev-config', async () => {
+	let proxyHost: string | null = null;
+	if (proxyAvailable) {
+		try { proxyHost = new URL(proxyEnv.url).host; } catch { proxyHost = '(invalid url)'; }
+	}
+	return {
+		proxyAvailable,
+		proxyHost,
+	};
+});
 
 // バージョン情報エンドポイント。本番 (Fastify プラグイン経由) と同じ shape を返す。
 app.get('/v', async (_req, reply) => {

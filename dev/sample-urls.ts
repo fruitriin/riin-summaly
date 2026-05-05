@@ -17,6 +17,8 @@ export type SampleUrl = {
 		enablePdf?: boolean;
 		useRange?: boolean;
 		allowedPlugins?: string[];
+		/** phase12.1 — proxy fallback を有効化したいサンプル (Amazon class IP block) */
+		proxy?: boolean;
 	};
 };
 
@@ -58,6 +60,18 @@ export const sampleGroups: SampleGroup[] = [
 		urls: [
 			{ label: 'Amazon JP', url: 'https://www.amazon.co.jp/dp/4297127830' },
 			{ label: 'amzn.asia 短縮', url: 'https://amzn.asia/d/00K7piwG', note: 'HEAD 失敗時 GET fallback (phase9.1) で展開される' },
+		],
+	},
+	{
+		name: 'amazon (proxy fallback / phase12.1)',
+		description: 'Vultr Tokyo IP からは 500 が返るため CF Workers proxy 経由で救援する。proxy fallback checkbox は env (SUMMALY_PROXY_URL + SUMMALY_PROXY_SECRET) が両方セットされていれば自動表示',
+		urls: [
+			{
+				label: 'Amazon JP (proxy 経由 — IP block 救援)',
+				url: 'https://www.amazon.co.jp/dp/B0C4LRBFX6',
+				note: 'クリックで proxy fallback を自動 ON。env が無いと checkbox は非表示',
+				presets: { proxy: true },
+			},
 		],
 	},
 	{

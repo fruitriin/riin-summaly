@@ -17,6 +17,9 @@ const urlInput = $('#url-input');
 const langInput = $('#lang-input');
 const useRangeInput = $('#useRange');
 const enablePdfInput = $('#enablePdf');
+const proxyInput = $('#proxy');
+const proxyRow = $('#proxy-row');
+const proxyHint = $('#proxy-hint');
 const allowedPluginsContainer = $('#allowed-plugins');
 const sampleGroupsContainer = $('#sample-groups');
 const errorBox = $('#error');
@@ -38,6 +41,20 @@ async function loadSamples() {
 		renderSampleGroups(data.groups);
 	} catch (e) {
 		console.error('Failed to load samples', e);
+	}
+}
+
+// dev サーバ起動時の env 状態を取得し、proxy fallback の checkbox 表示を切り替える (phase12.1)。
+async function loadDevConfig() {
+	try {
+		const res = await fetch('/api/dev-config');
+		const data = await res.json();
+		if (data.proxyAvailable) {
+			proxyRow.hidden = false;
+			proxyHint.textContent = `proxy: ${data.proxyHost}`;
+		}
+	} catch (e) {
+		console.error('Failed to load dev config', e);
 	}
 }
 
@@ -105,6 +122,7 @@ function applyPresets(presets) {
 	if (!presets) return;
 	if (presets.enablePdf != null) enablePdfInput.checked = presets.enablePdf;
 	if (presets.useRange != null) useRangeInput.checked = presets.useRange;
+	if (presets.proxy != null && !proxyRow.hidden) proxyInput.checked = presets.proxy;
 	if (presets.allowedPlugins) {
 		const allowed = new Set(presets.allowedPlugins);
 		$$('#allowed-plugins input').forEach((cb) => { cb.checked = allowed.has(cb.value); });
@@ -143,6 +161,8 @@ async function runFetch(url) {
 	// useRange / enablePdf / allowedPlugins もリクエスト単位で切り替えられる。
 	if (useRangeInput.checked) params.set('useRange', '1');
 	if (enablePdfInput.checked) params.set('enablePdf', '1');
+	// proxy fallback (phase12.1) — checkbox は env が両方セットされているときだけ表示される
+	if (proxyInput.checked) params.set('proxy', '1');
 	const allowed = $$('#allowed-plugins input:checked').map(cb => cb.value);
 	if (allowed.length > 0) params.set('allowedPlugins', allowed.join(','));
 
@@ -404,3 +424,4 @@ function hideError() {
 // --- 起動 -------------------------------------------------------------------
 
 loadSamples();
+loadDevConfig();
