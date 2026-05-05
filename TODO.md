@@ -12,12 +12,17 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | 優先度 | Phase | 計画ファイル | サイズ | 状態 |
 |---|---|---|:---:|---|
 | 中 | 11.1 | [docs/plans/phase11.1-deps-update.md](docs/plans/phase11.1-deps-update.md) — 依存更新（patch/minor 安全帯 + major 個別検証） | S〜M | 未着手 |
+| 中 | 11.2 | [docs/plans/phase11.2-error-category.md](docs/plans/phase11.2-error-category.md) — エラーレスポンスを `category` フィールドでカテゴリ化（[riin-summaly#2](https://github.com/fruitriin/riin-summaly/issues/2)） | S | 未着手 |
 
 ### 外部リポ連携（summaly スコープ外）
 
 | 項目 | 概要 | 状態 |
 |---|---|---|
-| Misskey fork: UrlPreview の `lang` を localStorage 生値ベースに変更 | `frontend-shared/js/config.ts` の `?? 'en-US'` ハードコードで未設定ユーザーが `lang=en-US` を summaly に送り続ける問題の根本対策。詳細: [docs/plans/external-misskey-fork-urlpreview-lang.md](docs/plans/external-misskey-fork-urlpreview-lang.md) | 計画のみ（Misskey fork 側で実施） |
+| Misskey fork: UrlPreview の `lang` を localStorage 生値ベースに変更 | `frontend-shared/js/config.ts` の `?? 'en-US'` ハードコードで未設定ユーザーが `lang=en-US` を summaly に送り続ける問題の根本対策 | 計画のみ（Misskey fork 側で実施） |
+| Misskey fork: summaly の `error.category` を受け取って分岐表示 | phase11.2 が完了したら受け側を実装。「プレビューできませんでした」を timeout / bot block / 404 等に細分化 | 計画のみ（phase11.2 完了後に着手） |
+| Misskey fork: Amazon プレビュー失敗の切り分け（[riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1)） | summaly 単体では取れる URL (`amzn.asia/d/07Bh8rNE`) が Misskey 上で失敗する原因を Misskey クライアント・サーバのどこで弾いているか特定 | 調査タスク（Misskey fork 側） |
+
+> 上記 3 件すべての詳細は [docs/plans/external-misskey-fork-urlpreview-lang.md](docs/plans/external-misskey-fork-urlpreview-lang.md) に集約。
 
 ### 並列実行マップ
 

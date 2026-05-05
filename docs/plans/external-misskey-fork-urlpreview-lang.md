@@ -1,9 +1,24 @@
-# External — Misskey fork: UrlPreview の `lang` を localStorage 生値ベースに変更
+# External — Misskey fork: UrlPreview 連携改善（lang / エラー細分化 / Amazon 切り分け）
 
 > 状態: **計画のみ / summaly のスコープ外**（Misskey fork 側で対応）
 > 種別: クロスリポ連携 / 観測指標改善
-> サイズ: **S**
-> 関連: [phase10.1 パース失敗ログ](phase10.1-parse-failure-log.md)（アクセスログ調査の発端）、本リポ README の compare 表
+> サイズ: **S 〜 M**
+> 関連: [phase10.1 パース失敗ログ](phase10.1-parse-failure-log.md)（アクセスログ調査の発端）、[phase11.2 エラーカテゴリ](phase11.2-error-category.md)（API 拡張側）、本リポ README の compare 表
+> 関連 issue: [riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) / [riin-summaly#2](https://github.com/fruitriin/riin-summaly/issues/2)
+
+## サマリ
+
+Misskey fork 側で対応すべきタスクのトラッキング:
+
+| 項目 | 関連 | 概要 |
+|:--|:--|:--|
+| 1. UrlPreview の `lang` を localStorage 生値ベースに | — | en-US ハードコード回避（後述） |
+| 2. summaly の `error.category` を受け取って分岐表示 | [phase11.2](phase11.2-error-category.md) | 「プレビューできませんでした」を「タイムアウト」「bot block」等に細分化 |
+| 3. Amazon プレビュー失敗の切り分け | [riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) | summaly 側で取れる URL が Misskey で「プレビューできませんでした」表示になる原因を確認 |
+
+---
+
+## 1. UrlPreview の `lang` を localStorage 生値ベースに変更
 
 ## 目的・背景
 
@@ -69,9 +84,65 @@ window.fetch(`/url?url=${encodeURIComponent(url)}${qs}`)
 
 将来「Misskey 以外のクライアント（他の Fediverse 実装等）からの呼び出しで同種の問題が再発したら」TOML `[summaly] defaultLang` を別 Plan として検討する。本リポではそのときに別 phase を起こす。
 
-## 参考
+## 参考（lang 関連）
 
 - [misskey-dev/misskey: frontend-shared/js/config.ts](https://github.com/misskey-dev/misskey/blob/develop/packages/frontend-shared/js/config.ts)（en-US ハードコード元凶）
 - [misskey-dev/misskey: frontend-shared/js/intl-const.ts](https://github.com/misskey-dev/misskey/blob/develop/packages/frontend-shared/js/intl-const.ts)（versatileLang 経路）
 - [misskey-dev/misskey: MkUrlPreview.vue](https://github.com/misskey-dev/misskey/blob/develop/packages/frontend/src/components/MkUrlPreview.vue)（実際の fetch コール）
 - [misskey-dev/misskey: UrlPreviewService.ts](https://github.com/misskey-dev/misskey/blob/develop/packages/backend/src/server/web/UrlPreviewService.ts)（サーバ側フォールバック）
+
+---
+
+## 2. summaly の `error.category` を受け取って分岐表示
+
+> 関連 issue: [riin-summaly#2](https://github.com/fruitriin/riin-summaly/issues/2)
+> 連携先: 本リポの [phase11.2](phase11.2-error-category.md)（summaly 側 API 拡張）
+
+### 目的
+
+phase11.2 で summaly が `{ error: { category, message, name, statusCode? } }` を返すようになるが、Misskey 側がそれを表示に使わなければユーザー体験は変わらない。Misskey fork で受け取って分岐表示する。
+
+### 実装ステップ（Misskey fork 側）
+
+- [ ] `UrlPreviewService.ts` の catch ブロックで summaly レスポンスの `error.category` を受け取り、`URL_PREVIEW_TIMEOUT` / `URL_PREVIEW_BOT_BLOCKED` / `URL_PREVIEW_NOT_FOUND` 等のサブコードを `ApiError` の `id` に乗せる
+- [ ] `MkUrlPreview.vue` でカテゴリ別メッセージを `i18n.ts` から取得して出し分け（`failedToPreviewUrl` だけだったのを `failedToPreviewUrl_timeout` / `_botBlocked` / `_notFound` 等に分岐）
+- [ ] フォールバック: 未知の `category` または旧 summaly（`category` を返さない）に対しては従来の `failedToPreviewUrl` を維持
+
+### 完了条件
+
+- 自分のインスタンスで bot block サイト / 404 / タイムアウトの URL を貼ったとき、それぞれ別メッセージが出る
+
+---
+
+## 3. Amazon プレビュー失敗の切り分け（riin-summaly#1）
+
+> 関連 issue: [riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1)
+
+### 状況
+
+- 例 URL `https://amzn.asia/d/07Bh8rNE` は **summaly 単体では成功**（phase9.1 の HEAD→GET fallback で `www.amazon.co.jp/dp/...` に解決され、amazon プラグインが ATH-102USB のタイトル/description を取得）
+- それでも **Misskey 上で「プレビューできませんでした」** が出る → 原因は Misskey 側の何か
+
+### 切り分け候補
+
+| 候補 | 確認方法 |
+|:--|:--|
+| Misskey クライアントの `lang=en-US` で Amazon が違うレスポンスを返している | dev サーバで `?lang=en-US` を付けて再現確認 |
+| Misskey の `wrap()` (mediaProxy) が Amazon の `m.media-amazon.com` 画像を弾いている | Misskey ログ + ネットワークタブで mediaProxy のレスポンスを見る |
+| Misskey の `summary.url` が `http://` / `https://` で始まらない判定で弾いている | `UrlPreviewService.ts` の該当チェック箇所のログを足す |
+| 単に **summaly のリクエストが Misskey の `urlPreviewTimeout` (デフォルト 10s?) より長い**（amzn.asia は GET fallback で 4 秒以上かかる） | Misskey の preview timeout 設定値を上げて再現するか確認 |
+
+### 実装ステップ（Misskey fork 側）
+
+- [ ] dev サーバで `?lang=en-US` 経由のレスポンスを取得し、summaly レベルで成功するか確認
+- [ ] 自分の Misskey インスタンスで `https://amzn.asia/d/07Bh8rNE` をノートに貼ってネットワークタブを観察
+- [ ] `UrlPreviewService.ts` の各チェックポイントに console.log を追加して **どこで失敗しているか**を特定
+- [ ] timeout 系なら `urlPreviewTimeout` を 30 秒に伸ばす運用設定で改善するか
+- [ ] 結果を [riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) にコメントで残す
+
+### summaly 側で何かすべきか
+
+切り分けの結果次第:
+- timeout 系 → summaly 側で amazon プラグインの取得を高速化する別 phase
+- mediaProxy 系 → summaly 側は変更なし、Misskey 側の対応のみ
+- `lang=en-US` で挙動が変わる系 → external Plan の **1.** (lang 修正) で同時解決
