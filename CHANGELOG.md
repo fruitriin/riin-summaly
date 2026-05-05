@@ -1,5 +1,11 @@
 (unreleased)
 ------------------
+* **バージョン確認エンドポイント** `GET /v` を追加:
+  * 返却 JSON: `{ version, commit, message }`（package.json のバージョン + git の HEAD コミット short hash + コミットメッセージの 1 行目）
+  * `Cache-Control: no-store` でキャッシュ無効化（再起動毎に値が変わるため）
+  * ビルド時 (`tsdown` / `vitest`) の `define` で baked、tsx 経由 (`bin/summaly-server.ts` / `pnpm dev`) では `setup-version.ts` で globalThis に注入
+  * `.git` が無い環境では git 情報は `'unknown'` フォールバックで build を止めない
+  * 用途: 「いま動いているデプロイは何のコミットか」を運用者が即確認できる（特に bug fix 後のロールアウト確認）
 * **バグ修正**: Fastify モードで `amazon.co.jp/dp/<ASIN>` 等のリダイレクトする URL がプレビュー失敗していた問題を修正 (phase11.3, [riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1)):
   * `summaly()` の `followRedirects: false` フラグが scrape 本体 (`scpaping()` 内の got リクエスト) の `followRedirect` に伝播しており、HTTP リダイレクト中間レスポンス (content-type 無し) が typeFilter で reject されて `Rejected by type filter undefined` で死んでいた
   * `followRedirects` の責務を **summaly() の初期 HEAD 解決限定** に再定義し、scpaping レイヤには伝播させないように修正

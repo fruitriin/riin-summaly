@@ -556,5 +556,17 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		});
 	}
 
+	// バージョン確認エンドポイント。デプロイされている summaly のコミットハッシュと
+	// コミットメッセージを返す。「いま動いているのは何のバージョン?」を確認する用途。
+	// 機微な情報は含まず、Cache-Control: no-store でキャッシュ無効化（再起動毎に値が変わるため）。
+	fastify.get('/v', async (_req, reply) => {
+		reply.header('Cache-Control', 'no-store');
+		return {
+			version: _VERSION_,
+			commit: _GIT_COMMIT_,
+			message: _GIT_MESSAGE_,
+		};
+	});
+
 	done();
 }

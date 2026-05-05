@@ -2130,6 +2130,29 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('GET /v バージョン情報エンドポイント', () => {
+		test('version / commit / message フィールドが返る + Cache-Control: no-store', async () => {
+			const versionApp = fastify();
+			await versionApp.register(summalyPlugin, {});
+			await versionApp.listen({ port: port + 1 });
+
+			try {
+				const r = await versionApp.inject({ method: 'GET', url: '/v' });
+				expect(r.statusCode).toBe(200);
+				expect(r.headers['cache-control']).toBe('no-store');
+				const body = JSON.parse(r.body) as { version: string; commit: string; message: string };
+				expect(typeof body.version).toBe('string');
+				expect(body.version.length).toBeGreaterThan(0);
+				expect(typeof body.commit).toBe('string');
+				expect(body.commit.length).toBeGreaterThan(0);
+				expect(typeof body.message).toBe('string');
+				expect(body.message.length).toBeGreaterThan(0);
+			} finally {
+				await versionApp.close();
+			}
+		});
+	});
+
 	describe('scpaping のリダイレクト follow (phase11.3)', () => {
 		test('Fastify モード相当 (followRedirects: false) でも scpaping は 301 を follow する', async () => {
 			let pageHits = 0;

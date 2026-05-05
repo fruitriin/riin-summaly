@@ -84,6 +84,16 @@ app.get('/api/sample-urls', async () => ({
 	plugins: builtinPluginNames,
 }));
 
+// バージョン情報エンドポイント。本番 (Fastify プラグイン経由) と同じ shape を返す。
+app.get('/v', async (_req, reply) => {
+	reply.header('Cache-Control', 'no-store');
+	return {
+		version: _VERSION_,
+		commit: _GIT_COMMIT_,
+		message: _GIT_MESSAGE_,
+	};
+});
+
 await app.register(fastifyStatic, {
 	root: resolve(_dirname, 'public'),
 	prefix: '/',

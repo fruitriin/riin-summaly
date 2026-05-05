@@ -13,6 +13,7 @@ summaly を Misskey 等のフロントエンドから利用するために、**�
 - [Fastify モード固有のオプション](#fastify-モード固有のオプション)
 - [キャッシュ戦略](#キャッシュ戦略)
 - [パース失敗ドメインのログ蓄積 (phase10.1)](#パース失敗ドメインのログ蓄積-phase101)
+- [バージョン確認エンドポイント `GET /v`](#バージョン確認エンドポイント-get-v)
 - [PDF 対応](#pdf-対応)
 - [プラグインの絞り込み](#プラグインの絞り込み)
 - [HTTP エージェント / プロキシ / IP family](#http-エージェント--プロキシ--ip-family)
@@ -248,6 +249,33 @@ parseFailureLogJsonlMaxBytes = 10485760   # 10 MiB（デフォルト）
 ```
 
 `copytruncate` を使うと summaly プロセスを再起動せずローテートできますが、in-memory のサイズキャッシュとファイル実体に齟齬が出るため、ローテート後は `summaly serve` を再起動するのが確実です。
+
+バージョン確認エンドポイント `GET /v`
+----------------------------------------------------------------
+
+`GET /v` で「いま動いているデプロイのバージョン情報」を返します。設定不要・常時 mount。
+
+```bash
+$ curl https://summaly.example.com/v
+{
+  "version": "5.3.0",
+  "commit": "c68296b",
+  "message": "fix: Fastify モードで scpaping のリダイレクト follow が無効化されていたバグを修正 (phase11.3)"
+}
+```
+
+| フィールド | 説明 |
+|:--|:--|
+| `version` | `package.json` の `version` |
+| `commit` | git HEAD の short hash（`git rev-parse --short HEAD`）。`.git` が無いと `unknown` |
+| `message` | git HEAD のコミットメッセージ 1 行目（`git log -1 --pretty=%s`）。`.git` が無いと `unknown` |
+
+レスポンスは `Cache-Control: no-store`。値はビルド時 (`tsdown` / `vitest`) または起動時 (`tsx bin/summaly-server.ts`) の git 情報で確定するため、再起動するまで動的には変わりません。
+
+**用途**:
+- bug fix 後のロールアウト確認（「`amzn.asia` の HEAD→GET fallback はもう入ったか?」）
+- 監視ツール (uptime check 等) でサーバ生存確認 + バージョン記録
+- 開発時に「dev サーバが古いままじゃないか」のサニティチェック
 
 PDF 対応
 ----------------------------------------------------------------
