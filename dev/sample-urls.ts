@@ -68,6 +68,14 @@ export const sampleGroups: SampleGroup[] = [
 		],
 	},
 	{
+		name: 'twitter (X)',
+		description: 'cdn.syndication.twimg.com から JSON 取得 + 公式 widget の iframe を player に展開（仕様変更で壊れうる）',
+		urls: [
+			{ label: '@jack 最初のツイート', url: 'https://twitter.com/jack/status/20' },
+			{ label: 'X ホスト名でも OK', url: 'https://x.com/jack/status/20' },
+		],
+	},
+	{
 		name: 'branchio-deeplinks',
 		description: '$web_only=true で実 Web ページに飛ばす',
 		urls: [

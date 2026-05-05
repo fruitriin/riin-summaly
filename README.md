@@ -60,6 +60,7 @@ pnpm serve config.toml               # = tsx bin/summaly-server.ts config.toml
 | `branchio-deeplinks` | `*.app.link` / `spotify.link` | `$web_only=true` を付けて Web 版にリダイレクトさせ汎用パスへ |
 | `youtube` | `(www\|m).youtube.com/{watch,v,playlist,shorts}` / `youtu.be` | oEmbed エンドポイント直叩きで 1 リクエスト |
 | `spotify` | `open.spotify.com` | oEmbed エンドポイント直叩き |
+| `twitter` | `(twitter\|x).com/<user>/status/<id>` | `cdn.syndication.twimg.com` から JSON 取得 + `platform.twitter.com/embed/Tweet.html` を player に展開。**X 側仕様変更で壊れうるため要メンテ** |
 | `dlsite` | `www.dlsite.com` | `/announce/` ↔ `/work/` の 404 リトライ + パス分類で sensitive 判定 |
 | `iwara` | `(www\|ecchi).iwara.tv` | description / thumbnail を DOM から補完、`ecchi.` ホストで sensitive |
 | `komiflo` | `komiflo.com/comics/<id>` | thumbnail フォールバック時に `api.komiflo.com` から取得 + sensitive |

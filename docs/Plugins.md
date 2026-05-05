@@ -15,6 +15,7 @@ summaly のプラグインシステムと、組み込み 10 プラグインの�
   - [branchio-deeplinks](#branchio-deeplinks)
   - [youtube](#youtube)
   - [spotify](#spotify)
+  - [twitter (X)](#twitter-x)
   - [dlsite](#dlsite)
   - [iwara](#iwara)
   - [komiflo](#komiflo)
@@ -129,6 +130,26 @@ interface SummalyPlugin {
 | 抽出フィールド | `title` / `thumbnail` / `provider_name` (→ `sitename`) を oEmbed から、`player.allow` は固定の `PLAYER_ALLOW_OEMBED` |
 | 固定値 | `icon: 'https://open.spotify.com/favicon.ico'`、`description: null` |
 | ヘルパ export | `buildSummaryFromOEmbed(oEmbed: unknown): Summary \| null` |
+
+### twitter (X)
+
+実装: [src/plugins/twitter.ts](../src/plugins/twitter.ts)
+
+> ⚠ **メンテナンス要注意プラグイン**: X 内部 CDN (`cdn.syndication.twimg.com`、公開 API ではない) と公式 widget の token 算出ロジックを逆算して利用しているため、**X 側仕様変更で予告なく壊れる**。動作不要なら `allowedPlugins` から `twitter` を除外してください。元実装は mei23 fork ([worktrees/mei-summaly/src/plugins/twitter.ts](../worktrees/mei-summaly/src/plugins/twitter.ts))。
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `(twitter\|x).com/<user>/status/<id>` のみ（プロフィール / リスト等は対象外） |
+| 取得方法 | `https://cdn.syndication.twimg.com/tweet-result?id=<id>&token=<token>&lang=en` を `getJson` で取得（referer に `https://platform.twitter.com/embed/index.html` を指定して anti-abuse 通過率を上げる） |
+| token 算出 | `(Number(id) / 1e15) * Math.PI` を 36 進数化し `0` と `.` を除去（公式 widget の minified JS を逆算した黒魔術） |
+| description | `text` から `entities.media[0].indices[0]` で本文末尾の t.co 短縮 URL を切り落とす |
+| thumbnail | `video.poster` → `photos[0].url` → `user.profile_image_url_https`（`_normal.` を除去してオリジナル）の優先順位 |
+| medias | `photos[*].url` を全て返す（複数画像ツイートの全画像表示用） |
+| player | `https://platform.twitter.com/embed/Tweet.html?id=<id>` の公式 widget iframe を返す。`width: 550 / height: 600` 固定（CDN レスポンスは寸法を返さないため）、`allow` は `PLAYER_ALLOW_OEMBED` |
+| sitename | 固定値 `'X'` |
+| sensitive | `j.possibly_sensitive ?? false` |
+| 固定値 | `icon: 'https://abs.twimg.com/favicons/twitter.3.ico'` |
+| ヘルパ export | `buildSummary(id, json): Summary \| null`、`calcToken(idStr): string` |
 
 ### dlsite
 

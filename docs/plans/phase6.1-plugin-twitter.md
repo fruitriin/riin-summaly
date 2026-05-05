@@ -1,6 +1,6 @@
-# Phase 6.1 — twitter プラグイン取り込み（保留）
+# Phase 6.1 — twitter (X) プラグイン取り込み
 
-> 状態: **保留（運用判断待ち）**
+> 状態: **完了 (2026-05-05)**
 > 種別: 機能拡張 / プラグイン移植
 > サイズ: **S**
 > 依存: [phase2.1](phase2.1-plugin-infrastructure.md)、[phase2.2](phase2.2-mei23-non-plugin.md)（`medias[]`）、[phase3.1](phase3.1-plugin-oembed.md)、[phase3.2](phase3.2-plugin-dom.md)（プラグインパターン確立後）
@@ -83,24 +83,18 @@ function calcToken(id: string): string {
 
 着手判断が下りた場合の手順:
 
-- [ ] **Step 0 — 採用判断**
-  - メンテナーが「壊れた時に修正する責任を負う」ことを承諾
-  - X / Twitter 側の規約変更がないか直近で確認
-- [ ] **Step 1 — twitter プラグイン**
-  - [src/plugins/twitter.ts](src/plugins/twitter.ts) を新設、`name = 'twitter'`
-  - `test(url)`: `(twitter|x).com/<user>/status/<id>` のみ
-  - token 算出ロジック実装（コメントで仕様変更リスクを強調）
-  - `cdn.syndication.twimg.com/tweet-result?id=<id>&token=<token>` を `getJson` で取得（[phase2.1](phase2.1-plugin-infrastructure.md) のヘルパ）
-  - description / thumbnail / title / sitename / sensitive / `medias[]` を mei23 互換でセット
-  - player は `{ url: null, width: null, height: null, allow: [] }`
-- [ ] **Step 2 — テスト**
-  - フィクスチャ: `cdn.syndication.twimg.com` のレスポンス JSON をモック
-  - 単一画像 / 複数画像 / 動画 / sensitive ツイートの各ケース
-- [ ] **Step 3 — README / CHANGELOG 更新**
-  - 「対応形式（組み込みプラグイン）」表に twitter を追加
-  - **メンテナンス上の注意（仕様変更で壊れうる）を明記**
-- [ ] **Step 4 — `allowedPlugins` でデフォルト disable 提案**
-  - リスクを承知しないユーザーが意図せず使ってしまわないよう、README で「twitter プラグインは `allowedPlugins` で明示的に有効化することを推奨」を強調
+- [x] **Step 0 — 採用判断** — オーナー承認 (2026-05-05、「壊れたら都度メンテのつもりで取り込みたい」)
+- [x] **Step 1 — twitter プラグイン** — `name = 'twitter'`、mei23 token 算出 + cdn.syndication 経由
+- [x] **Step 2 — テスト** — `buildSummary` フィクスチャ 8 件（test/match、calcToken、テキスト/複数画像/動画/sensitive/不正 JSON/user.name 欠如）
+- [x] **Step 3 — README / Plugins.md / CHANGELOG 更新** — メンテナンス警告強調
+- [x] **Step 4 — デフォルト有効、`allowedPlugins` 除外で disable 可能と CHANGELOG / README で案内**
+
+## 実装結果メモ
+
+- **player iframe を追加（Plan 当初の方針からの変更）**: mei23 オリジナルは `player.url = null` だったが、オーナー要望で「player 展開できたほうが便利」のため `https://platform.twitter.com/embed/Tweet.html?id=<id>` を返す形に拡張。X 公式 widget の Tweet 埋め込み iframe で、`width: 550 / height: 600` 固定（CDN が寸法を返さないため）
+- **`buildSummary(id, json)` を export**: ネットワーク I/O 抜きにフィクスチャテストできる構造（spotify / youtube プラグインと同じパターン）
+- **Misskey (Akamai 等とは違って) X 公式 CDN は `SummalyBot` UA で通る**: dev サーバで `https://twitter.com/jack/status/20` を取得し `description: "just setting up my twttr"` まで取れることを実機確認
+- **「壊れたら都度メンテ」の方針**: README / Plugins.md / CHANGELOG / プラグインソースの全レイヤーで「X 仕様変更で壊れる」「除外したいなら `allowedPlugins`」を明記。プラグインのコメントでは「mei23 fork が壊れたら同 fork の更新も参照する」を含めて将来の修正者にヒントを残した
 
 ---
 

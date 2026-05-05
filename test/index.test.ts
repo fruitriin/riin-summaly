@@ -1168,6 +1168,105 @@ describe('local tests', () => {
 					expect(buildSummaryFromOEmbed({ html: '' })).toBeNull();
 				});
 			});
+
+			describe('twitter (X) プラグイン (phase6.1)', () => {
+				test('test() は (twitter|x).com/<user>/status/<id> にマッチする', async () => {
+					const { test: matchTest } = await import('@/plugins/twitter.js');
+					expect(matchTest(new URL('https://twitter.com/jack/status/20'))).toBe(true);
+					expect(matchTest(new URL('https://x.com/jack/status/20'))).toBe(true);
+					expect(matchTest(new URL('https://x.com/jack/status/1234567890123456789'))).toBe(true);
+
+					expect(matchTest(new URL('https://x.com/jack'))).toBe(false);
+					expect(matchTest(new URL('https://mobile.twitter.com/jack/status/20'))).toBe(false);
+					expect(matchTest(new URL('https://x.com/i/lists/123'))).toBe(false);
+					expect(matchTest(new URL('https://example.com/x.com/jack/status/20'))).toBe(false);
+				});
+
+				test('calcToken は決定的で 0 と . を含まない', async () => {
+					const { calcToken } = await import('@/plugins/twitter.js');
+					const t1 = calcToken('1234567890123456789');
+					const t2 = calcToken('1234567890123456789');
+					expect(t1).toBe(t2);
+					expect(t1).not.toMatch(/[0.]/);
+					expect(t1.length).toBeGreaterThan(0);
+				});
+
+				test('buildSummary はテキストツイートから description / player iframe を組み立てる', async () => {
+					const { buildSummary } = await import('@/plugins/twitter.js');
+					const fixture = {
+						text: 'just setting up my twttr',
+						user: { name: 'jack', profile_image_url_https: 'https://pbs.twimg.com/profile_images/123/abc_normal.jpg' },
+					};
+					const summary = buildSummary('20', fixture);
+					expect(summary).not.toBeNull();
+					expect(summary!.title).toBe('jack on X');
+					expect(summary!.icon).toBe('https://abs.twimg.com/favicons/twitter.3.ico');
+					expect(summary!.description).toBe('just setting up my twttr');
+					expect(summary!.sitename).toBe('X');
+					// `_normal.` を除いたオリジナル profile 画像が thumbnail に
+					expect(summary!.thumbnail).toBe('https://pbs.twimg.com/profile_images/123/abc.jpg');
+					// player は X 公式 widget の iframe URL
+					expect(summary!.player.url).toBe('https://platform.twitter.com/embed/Tweet.html?id=20');
+					expect(summary!.player.width).toBe(550);
+					expect(summary!.player.height).toBe(600);
+					expect(summary!.player.allow).toContain('fullscreen');
+				});
+
+				test('複数画像ツイートは medias[] に全画像 + thumbnail に先頭', async () => {
+					const { buildSummary } = await import('@/plugins/twitter.js');
+					const fixture = {
+						text: 'photo dump https://t.co/abc',
+						user: { name: 'photog' },
+						photos: [
+							{ url: 'https://pbs.twimg.com/media/img1.jpg' },
+							{ url: 'https://pbs.twimg.com/media/img2.jpg' },
+							{ url: 'https://pbs.twimg.com/media/img3.jpg' },
+						],
+						entities: { media: [{ indices: [11, 34] }] },
+					};
+					const summary = buildSummary('100', fixture);
+					expect(summary!.medias).toEqual([
+						'https://pbs.twimg.com/media/img1.jpg',
+						'https://pbs.twimg.com/media/img2.jpg',
+						'https://pbs.twimg.com/media/img3.jpg',
+					]);
+					expect(summary!.thumbnail).toBe('https://pbs.twimg.com/media/img1.jpg');
+					// entities.media[0].indices[0] = 11 で本文末尾の `https://t.co/abc` が切り落とされる
+					expect(summary!.description).toBe('photo dump');
+				});
+
+				test('動画ツイートは video.poster を thumbnail に優先', async () => {
+					const { buildSummary } = await import('@/plugins/twitter.js');
+					const fixture = {
+						text: 'video',
+						user: { name: 'videog', profile_image_url_https: 'https://pbs.twimg.com/profile_images/x/y_normal.jpg' },
+						video: { poster: 'https://pbs.twimg.com/ext_tw_video_thumb/1/pu/img/abc.jpg' },
+						photos: [{ url: 'https://should.not.use/img.jpg' }],
+					};
+					const summary = buildSummary('200', fixture);
+					expect(summary!.thumbnail).toBe('https://pbs.twimg.com/ext_tw_video_thumb/1/pu/img/abc.jpg');
+				});
+
+				test('possibly_sensitive を sensitive にマップ', async () => {
+					const { buildSummary } = await import('@/plugins/twitter.js');
+					expect(buildSummary('1', { text: 'a', user: { name: 'u' }, possibly_sensitive: true })!.sensitive).toBe(true);
+					expect(buildSummary('1', { text: 'a', user: { name: 'u' }, possibly_sensitive: false })!.sensitive).toBe(false);
+					expect(buildSummary('1', { text: 'a', user: { name: 'u' } })!.sensitive).toBe(false);
+				});
+
+				test('json が null / object でない場合は null を返す（壊れた CDN レスポンス）', async () => {
+					const { buildSummary } = await import('@/plugins/twitter.js');
+					expect(buildSummary('1', null)).toBeNull();
+					expect(buildSummary('1', 'not-an-object')).toBeNull();
+					expect(buildSummary('1', 42)).toBeNull();
+				});
+
+				test('user.name が無いと title は "X" にフォールバック', async () => {
+					const { buildSummary } = await import('@/plugins/twitter.js');
+					const summary = buildSummary('1', { text: 'orphan tweet' });
+					expect(summary!.title).toBe('X');
+				});
+			});
 		});
 	});
 

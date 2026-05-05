@@ -4,6 +4,7 @@ import * as wikipedia from './wikipedia.js';
 import * as branchIoDeeplinks from './branchio-deeplinks.js';
 import * as youtube from './youtube.js';
 import * as spotify from './spotify.js';
+import * as twitter from './twitter.js';
 import * as dlsite from './dlsite.js';
 import * as iwara from './iwara.js';
 import * as komiflo from './komiflo.js';
@@ -17,6 +18,7 @@ export const plugins: SummalyPlugin[] = [
 	branchIoDeeplinks,
 	youtube,
 	spotify,
+	twitter,
 	dlsite,
 	iwara,
 	komiflo,
