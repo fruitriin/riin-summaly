@@ -4,21 +4,21 @@ import { scpaping } from '@/utils/got.js';
 
 export const name = 'amazon';
 
+/**
+ * Amazon ホスト名の正規表現。`amazon.co.jp` (bare) と `www.amazon.co.jp` の両方をマッチさせる。
+ *
+ * Amazon は両形式を運用しており、ユーザーが SNS で共有する URL には `www.` が付かないことも多い。
+ * phase12.1 followup #3 までは `www.amazon.co.jp` 限定の `===` 比較だったため、bare 形式の URL が
+ * general パスに流れて URL 正規化 (`normalizeAmazonUrl`) を経由せず、長い ref query 付きで
+ * proxy fallback まで届いていなかった。
+ *
+ * `^(?:www\\.)?amazon\\.<TLD>$` の anchored 形にすることで `aws.amazon.com` 等の AWS サブドメインを
+ * 誤マッチさせない（plugin の責務は商品ページ専用）。
+ */
+const AMAZON_HOST = /^(?:www\.)?amazon\.(?:com|co\.jp|ca|com\.br|com\.mx|co\.uk|de|fr|it|es|nl|cn|in|au)$/;
+
 export function test(url: URL): boolean {
-	return url.hostname === 'www.amazon.com' ||
-	url.hostname === 'www.amazon.co.jp' ||
-	url.hostname === 'www.amazon.ca' ||
-	url.hostname === 'www.amazon.com.br' ||
-	url.hostname === 'www.amazon.com.mx' ||
-	url.hostname === 'www.amazon.co.uk' ||
-	url.hostname === 'www.amazon.de' ||
-	url.hostname === 'www.amazon.fr' ||
-	url.hostname === 'www.amazon.it' ||
-	url.hostname === 'www.amazon.es' ||
-	url.hostname === 'www.amazon.nl' ||
-	url.hostname === 'www.amazon.cn' ||
-	url.hostname === 'www.amazon.in' ||
-	url.hostname === 'www.amazon.au';
+	return AMAZON_HOST.test(url.hostname);
 }
 
 /**
@@ -51,6 +51,12 @@ export function normalizeAmazonUrl(url: URL): URL {
 	const asin = (dpMatch ?? gpMatch)?.[1];
 	if (asin == null) return url;
 	const normalized = new URL(url.href);
+	// hostname も `www.` 付きの canonical 形に揃える（phase12.1 followup #3）。
+	// bare `amazon.co.jp` を Amazon が 301 で `www.` 付きにリダイレクトする挙動を summaly 側で
+	// 先回りして潰すことで、proxy fallback 経路でも余分なリダイレクトを避ける。
+	if (!normalized.hostname.startsWith('www.')) {
+		normalized.hostname = 'www.' + normalized.hostname;
+	}
 	// path を `/dp/<asin>` 固定、query / fragment を全部捨てる。
 	// ASIN は仕様上大文字のみだが defensive に `toUpperCase()` で正規化する。
 	normalized.pathname = `/dp/${asin.toUpperCase()}`;

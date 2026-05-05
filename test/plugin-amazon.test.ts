@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from 'vitest';
-import { normalizeAmazonUrl } from '@/plugins/amazon.js';
+import { normalizeAmazonUrl, test as amazonTest } from '@/plugins/amazon.js';
 
 describe('normalizeAmazonUrl', () => {
 	test('短い /dp/<asin> はそのまま', () => {
@@ -66,5 +66,43 @@ describe('normalizeAmazonUrl', () => {
 		const before = original.href;
 		normalizeAmazonUrl(original);
 		expect(original.href).toBe(before);
+	});
+
+	test('bare hostname (www. なし) は www. 付きに正規化 (phase12.1 followup #3)', () => {
+		const out = normalizeAmazonUrl(new URL('https://amazon.co.jp/dp/B0GFN8129G/ref=sspa_dk_detail_5'));
+		expect(out.href).toBe('https://www.amazon.co.jp/dp/B0GFN8129G');
+	});
+
+	test('bare hostname + SEO slug + query の組み合わせも canonical に', () => {
+		const out = normalizeAmazonUrl(new URL('https://amazon.com/foo/dp/B0C4LRBFX6/?ref_=foo'));
+		expect(out.href).toBe('https://www.amazon.com/dp/B0C4LRBFX6');
+	});
+});
+
+describe('amazon.test() (host matching, phase12.1 followup #3)', () => {
+	test('www.amazon.co.jp はマッチ', () => {
+		expect(amazonTest(new URL('https://www.amazon.co.jp/dp/B0C4LRBFX6'))).toBe(true);
+	});
+
+	test('bare amazon.co.jp もマッチ (followup #3)', () => {
+		expect(amazonTest(new URL('https://amazon.co.jp/dp/B0GFN8129G/ref=sspa_dk_detail_5'))).toBe(true);
+	});
+
+	test('全 TLD で bare / www の両方をマッチ', () => {
+		const tlds = ['com', 'co.jp', 'ca', 'com.br', 'com.mx', 'co.uk', 'de', 'fr', 'it', 'es', 'nl', 'cn', 'in', 'au'];
+		for (const tld of tlds) {
+			expect(amazonTest(new URL(`https://amazon.${tld}/dp/X`))).toBe(true);
+			expect(amazonTest(new URL(`https://www.amazon.${tld}/dp/X`))).toBe(true);
+		}
+	});
+
+	test('aws.amazon.com 等の AWS サブドメインはマッチしない', () => {
+		expect(amazonTest(new URL('https://aws.amazon.com/foo'))).toBe(false);
+		expect(amazonTest(new URL('https://s3.amazonaws.com/bucket'))).toBe(false);
+		expect(amazonTest(new URL('https://amazon.com.evil.example/dp/X'))).toBe(false);
+	});
+
+	test('未知の TLD はマッチしない', () => {
+		expect(amazonTest(new URL('https://amazon.xyz/dp/X'))).toBe(false);
 	});
 });
