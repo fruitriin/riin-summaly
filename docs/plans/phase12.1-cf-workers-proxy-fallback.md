@@ -1,6 +1,7 @@
 # Phase 12.1 — Cloudflare Workers proxy フォールバック（Amazon class IP block 救援）
 
-> 状態: **Step 1.1〜1.2 完了（実機検証 Step 1.3 待ち、GO/NO-GO 判定でフェーズ継続/撤退決定）** (2026-05-05)
+> 状態: **Step 3〜7 完了 (2026-05-05) — Step 5 (pino fallback フィールド) と Step 4.3 (E2E 手動) は未着手、本番デプロイ後にオーナー確認**
+> 実証データ: `https://www.amazon.co.jp/dp/B0C4LRBFX6` を CF Workers 経由で取得 → **HTTP 200 / 2.6 MB / 1.8 秒**（フル商品ページ、bot check ページではない）。Vultr 直叩きの 500 と比較してクリアな勝利
 > 種別: 機能改善 / IP レピュテーション層への対処
 > サイズ: **M〜L**
 > 依存: phase11.9（`getResponseWithFallback` を 3 段に拡張、または並列に追加）、phase8.1（TOML 設定）、phase4.1（LRU キャッシュ）
@@ -176,7 +177,11 @@ Step 1 の実験で **Amazon が CF Workers 経由でも 500 を返す**なら�
 - [x] **1.2 手元 curl で疎通確認** — 署名ヘルパ実装、検証は Step 1.3 と一体化
   - HMAC 署名を生成する Node スクリプト (`tools/cf-proxy-worker/sign.mjs`) — Node std `crypto.createHmac` で SHA-256 (Worker 側 Web Crypto API と相互運用)
   - `node sign.mjs <target_url> <worker_base_url>` で **コピペ実行可能な curl コマンド** を生成する形にした
-- [ ] **1.3 ★Amazon 動作確認★** (本フェーズの GO/NO-GO ポイント) — **オーナー実機検証待ち**
+- [x] **1.3 ★Amazon 動作確認★** (本フェーズの GO/NO-GO ポイント) — **2026-05-05 GO 確定**
+  - 実証コマンド: `curl -H "x-summaly-token: <token>" "https://summaly.riinsworkspace.workers.dev/?url=https%3A%2F%2Fwww.amazon.co.jp%2Fdp%2FB0C4LRBFX6"`
+  - 結果: `HTTP 200 / 2,609,877 bytes / 1.81 秒` ← フル商品ページ
+  - **比較**: Vultr 直叩き (`SummalyBot/5.3.0`) は同 URL で **HTTP 500** で完全失敗していた。CF Workers 経由なら通る = IP レピュテーション差を proxy で乗り越えられることが実証された
+  - 注: 実験用の **簡易トークン認証版 (`worker.js`、現状未コミット)** で実証。本実装フェーズでは `src/index.ts` の HMAC 認証版にデプロイ差し替える
   - `https://www.amazon.co.jp/dp/B0C4LRBFX6` を Worker 経由で取りに行く
   - **200 + HTML が返れば**: Step 2 以降に進む
   - **500 / 503 / Amazon の bot ページが返れば**: 本フェーズ撤退、knowhow に「CF Workers でも Amazon は通らない」を追記して Plan は完了状態に（実装フェーズなしで closure）
@@ -209,31 +214,31 @@ Step 1 の実験で **Amazon が CF Workers 経由でも 500 を返す**なら�
 
 ### Step 3 — summaly 側組み込み
 
-- [ ] **3.1 `proxy-fallback.ts` 新設**
+- [x] **3.1 `proxy-fallback.ts` 新設**
   - [src/utils/proxy-fallback.ts](../../src/utils/proxy-fallback.ts) を新規作成
   - `getResponseWithProxyFallback()` 関数
   - HMAC 署名生成 (`crypto.createHmac` Node std)
   - `viaProxyWorker()` で Worker に投げて `Got.Response<string>` 形式で返す
-- [ ] **3.2 `scpaping()` の組み込み**
+- [x] **3.2 `scpaping()` の組み込み**
   - [src/utils/got.ts](../../src/utils/got.ts) の `scpaping()` を `getResponseWithProxyFallback` 経由に変更
   - phase11.9 の `getResponseWithFallback` の **後段** として配置
-- [ ] **3.3 `SummalyOptions` API 拡張**
+- [x] **3.3 `SummalyOptions` API 拡張**
   - [src/index.ts](../../src/index.ts) の `SummalyOptions` に `proxyFallback?: ProxyConfig` を追加
   - 関数経路でも proxy fallback を使える形にする (オプトイン)
-- [ ] **3.4 Fastify モード config 統合**
+- [x] **3.4 Fastify モード config 統合**
   - [bin/config-loader.ts](../../bin/config-loader.ts) に `[scraping.proxy]` セクションのパース追加
   - 環境変数 `SUMMALY_PROXY_SECRET` の優先読み込み
   - `config.example.toml` と `docs/deploy-examples/summaly-config.example.toml` 両方に proxy セクションのコメントアウト例を追加（CLAUDE.md ステップ 4.5）
 
 ### Step 4 — テスト
 
-- [ ] **4.1 ユニットテスト** (`test/proxy-fallback.test.ts`)
+- [x] **4.1 ユニットテスト** (`test/proxy-fallback.test.ts`)
   - 通常リクエスト成功時 → proxy 呼ばれない
   - phase11.9 fallback でリトライ成功 → proxy 呼ばれない
   - 両方失敗 + category 一致 + ドメイン一致 → proxy 呼ばれる
   - 両方失敗 + category 一致 + ドメイン **不一致** → proxy 呼ばれない、元のエラーが throw
   - HMAC 署名が正しい (mock worker 側で検証)
-- [ ] **4.2 統合テスト**
+- [x] **4.2 統合テスト**
   - mock proxy worker (`http.createServer` で簡易実装) を立てて、Vultr→mock proxy→mock origin の経路をテスト
 - [ ] **4.3 E2E (手動)**
   - 本番デプロイ後、`amazon.co.jp` URL を summaly に投げて 200 が返ることを確認
@@ -247,18 +252,18 @@ Step 1 の実験で **Amazon が CF Workers 経由でも 500 を返す**なら�
 
 ### Step 6 — ドキュメント
 
-- [ ] **6.1** `docs/SETUP.md` に「outbound proxy セクション」追加
+- [x] **6.1** `docs/SETUP.md` に「outbound proxy セクション」追加
   - CF Workers のデプロイ手順 (`tools/cf-proxy-worker/README.md` への参照)
   - `[scraping.proxy]` の運用説明
   - HMAC シークレットの管理方法 (env vars 推奨)
   - Free プランの 100k req/day 上限と監視方法
-- [ ] **6.2** `docs/Library.md` に `proxyFallback` オプション追記
-- [ ] **6.3** `CHANGELOG.md` unreleased に
+- [x] **6.2** `docs/Library.md` に `proxyFallback` オプション追記
+- [x] **6.3** `CHANGELOG.md` unreleased に
   - `feat: outbound proxy フォールバック (Cloudflare Workers) を追加。Amazon class の IP block を救援する用途 ([scraping.proxy] でオプトイン)`
 
 ### Step 7 — knowhow 記録
 
-- [ ] **7.1** `docs/knowhow/cf-workers-outbound-proxy.md` 新設
+- [x] **7.1** `docs/knowhow/cf-workers-outbound-proxy.md` 新設
   - Worker のミニマル実装パターン (HMAC + allowlist + fetch 透過)
   - Web Crypto API での HMAC-SHA256 (Node std crypto と相互運用)
   - Free プランで実用ラインに乗る判断材料 (req 数・CPU 時間・帯域の目安)

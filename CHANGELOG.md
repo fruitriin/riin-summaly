@@ -1,5 +1,14 @@
 (unreleased)
 ------------------
+* **feat**: Outbound proxy フォールバック (Cloudflare Workers) を追加 (phase12.1):
+  * Vultr Tokyo IP からの amazon.co.jp が IP レピュテーション層で 500 を返す問題を救援
+  * 3 段リトライ: ① デフォルト UA → ② UA fallback (phase11.9) → ③ **Worker proxy 経由** (新規)
+  * `[scraping.proxy]` TOML セクションでオプトイン制御。`secret` は環境変数 `SUMMALY_PROXY_SECRET` 経由を推奨
+  * 発火条件: `categories` に含まれるエラーカテゴリ + `domains` allowlist (suffix-match) 一致のみ
+  * Worker は `tools/cf-proxy-worker/` にデプロイ。HMAC-SHA256 + タイムスタンプ ±5 分窓 + URL allowlist + HTTPS 限定 + 受信 Body cap (5 MiB) + 透過プロキシ
+  * **実証データ**: `https://www.amazon.co.jp/dp/B0C4LRBFX6` を CF Workers 経由で取得 → HTTP 200 / 2.6 MB / 1.81 秒（Vultr 直叩きの 500 と比較してクリアな勝利）
+  * Worker は CF Free プラン (100,000 req/day, 10ms CPU/req) で動作。超過しても 429 が返るだけで金額課金は発生しない
+  * セキュリティ防衛 8 層 (HTTPS only / HMAC / タイムスタンプ窓 / Worker 側 allowlist / summaly 側 allowlist / 受信 cap / 定数時間比較 / 403 で詳細を返さない)
 * **feat**: 迂回候補ログ（ブロック失敗の別系統 JSONL）を追加 (phase11.6):
   * `parseFailureLogBlockedJsonlPath` / `parseFailureLogBlockedJsonlMaxBytes` を追加。`isFilteredFailure` 対象（4xx/5xx, timeout, SSRF block, type filter, network, connection_dropped）の失敗を別ファイルに集約
   * 既存 `parseFailureLogJsonlPath`（プラグイン候補）には引き続き thin + 非フィルタ throw のみ書かれ、シグナル純度を維持

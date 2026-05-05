@@ -144,10 +144,13 @@ export async function scpaping(
 	const args = getGotOptions(url, opts);
 
 	const fallback = buildFallbackConfig(opts);
-	const response = await getResponseWithFallback({
+	// 動的 import で循環参照を避ける（proxy-fallback.ts は got.ts の getResponseWithFallback を import している）。
+	// 初回ロード以降は Node.js のモジュールキャッシュにより同期的に解決されるため hot path のコストはほぼゼロ。
+	const { getResponseWithProxyFallback } = await import('@/utils/proxy-fallback.js');
+	const response = await getResponseWithProxyFallback({
 		...args,
 		method: 'GET',
-	}, fallback);
+	}, fallback, opts?.proxyFallback);
 
 	// PDF レスポンスは別パスで処理する。
 	// enablePdf が真のときのみ typeFilter で application/pdf を許可しているため、

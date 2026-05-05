@@ -58,6 +58,14 @@
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
 
+## phase12.1 Step 3〜7 (summaly 側組み込み) 知見
+
+- **2026-05-05 phase12.1 Step 3-7 セッション**: レビュー agent が指摘した **C-1 (amazon プラグインの opts 受け渡し漏れ)** が phase12.1 の主目的そのものを破壊する痛い穴だった。`amazon.ts` の `summarize(url: URL)` シグネチャに `opts` が無く、`scrapingOptions` の `proxyFallback` が無視される構造。**目的のサイトで動作確認するテスト**（Plan の Step 4.3 E2E）が無いとこの種のバグは検出困難。今回は手動 E2E がまだなのでレビュー agent が机上で発見してくれた
+- **2026-05-05 phase12.1 Step 3-7 セッション**: レビュー agent が **C-2 (`got` の `throwHttpErrors: true` デフォルト)** を指摘。proxy が 4xx/5xx を返したとき `Got.HTTPError` が throw されて、自前で書いた `if (statusCode >= 400)` のチェックは dead code だった。**「実装が動くテストを書いた → でも実は別経路で同じ結果が出ているだけ」** のパターンで、テストが「正しい理由で通っている」かを意識しないと見逃す
+- **2026-05-05 phase12.1 Step 3-7 セッション**: 動的 import で循環参照を回避するパターン: `await import('@/utils/proxy-fallback.js')` を `scpaping()` 内で 1 回呼ぶ。Node.js のモジュールキャッシュにより初回ロード後はほぼ同期解決でコスト無視できる。**循環参照の解消には型レベル分割か動的 import の 2 択**で、後者の方が type 簡潔
+- **2026-05-05 phase12.1 Step 3-7 セッション**: Worker レスポンスを `Got.Response<string>` に整形する透過プロキシパターンで、`scpaping` が見るのは `rawBody` (encoding 検出) / `headers.content-type` / `statusCode` / `url` のみ。型を `as unknown as Got.Response<string>` で擬装するのは debt だが、ライブラリ書き換えコスト対比で許容範囲。**「見える属性を最低限揃える擬装」はライブラリ統合の常套手段**
+- **2026-05-05 phase12.1 Step 3-7 セッション**: シークレット未設定時に **起動失敗ではなく warning + 機能無効化** する設計。「config.toml をうっかり public にコミットしても安全」という運用ニーズを satisfy。レビュー agent も「設定したのに動かないと気付きにくい」というトレードオフを指摘したが、設計判断として明記して採用。**「default-on で危険」と「default-off で安全」のバランスは運用モデル次第**
+
 ## phase12.1 (CF Workers proxy 実験フェーズ) 知見
 
 - **2026-05-05 phase12.1 セッション**: 「**実機検証が必要なフェーズ**」を AI 自律実行する場合の良いパターン: **Step 1.1 (Worker スケルトン) + Step 1.2 (署名ヘルパ) + Step 1.3 (実験手順書) までを実装し、Step 1.3 (実機 GO/NO-GO 判定) はオーナーに引き渡す**。Cloudflare アカウントの紐付き・実 IP からの実 Amazon アクセスが必要な工程は AI には決定できないため、ここで止めるのが正しい。Plan の Step 2 以降は GO 判定が出てから着手

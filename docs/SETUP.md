@@ -13,6 +13,7 @@ summaly を Misskey 等のフロントエンドから利用するために、**�
 - [Fastify モード固有のオプション](#fastify-モード固有のオプション)
 - [キャッシュ戦略](#キャッシュ戦略)
 - [Bot block フォールバック UA リトライ (phase11.9)](#bot-block-フォールバック-ua-リトライ-phase119)
+- [Outbound proxy フォールバック (phase12.1)](#outbound-proxy-フォールバック-phase121)
 - [パース失敗ドメインのログ蓄積 (phase10.1)](#パース失敗ドメインのログ蓄積-phase101)
 - [バージョン確認エンドポイント `GET /v`](#バージョン確認エンドポイント-get-v)
 - [エラーレスポンスのカテゴリ (phase11.2)](#エラーレスポンスのカテゴリ-phase112)
@@ -210,6 +211,94 @@ sudo journalctl -u summaly -o cat | jq -c 'select(.err.category == "bot_blocked"
 ```
 
 リトライで救えた分はログに出ません（成功扱いのため）。救援統計を取りたい場合は phase11.6（迂回候補ログ）で別 JSONL に書き出す設計を予定しています。
+
+Outbound proxy フォールバック (phase12.1)
+----------------------------------------------------------------
+
+UA fallback (phase11.9) でも救えない **IP レピュテーション層の遮断** （Vultr Tokyo IP からの amazon.co.jp 等で UA に関わらず 500 が返る問題、[knowhow/outbound-ip-reputation.md](../docs/knowhow/outbound-ip-reputation.md)）に対し、Cloudflare Workers Free を outbound proxy として経由してリトライする救援機構です。
+
+### 実証データ
+
+- 対象: `https://www.amazon.co.jp/dp/B0C4LRBFX6` (Vultr 直叩きで 500)
+- CF Workers 経由: **HTTP 200 / 2.6 MB / 1.81 秒** ← フル商品ページ取得成功
+- 確認日: 2026-05-05 (Step 1.3 GO 判定)
+
+### 3 段リトライ構成
+
+```
+1. デフォルト UA で getResponse()
+2. 失敗 + UA レイヤで救えるカテゴリ → fallback UA で再試行 (phase11.9)
+3. それでも 5xx (origin_error) で失敗 + ドメインが proxy allowlist 一致 → CF Worker proxy 経由
+```
+
+### 設定 (`config.toml`)
+
+```toml
+[scraping.proxy]
+enabled = true
+url = "https://summaly-proxy.<your>.workers.dev"
+# secret は環境変数 SUMMALY_PROXY_SECRET 経由が推奨 (TOML 直書きを避ける)
+categories = ["origin_error"]
+domains = ["amazon.co.jp", "amazon.com"]
+timeoutMs = 30000
+```
+
+| 設定キー | 説明 | デフォルト |
+|:--|:--|:--|
+| `enabled` | Proxy フォールバックを有効化 | `false` |
+| `url` | Worker のエンドポイント URL | （指定必須） |
+| `secret` | HMAC 共有シークレット。env `SUMMALY_PROXY_SECRET` が優先 | （指定必須、env 経由可） |
+| `categories` | リトライ発火対象のエラーカテゴリ | `["origin_error"]` |
+| `domains` | Proxy 対象ドメイン (suffix-match)。空配列禁止 | （指定必須） |
+| `timeoutMs` | Proxy リクエストのタイムアウト | `30000` |
+
+### Worker のデプロイ
+
+`tools/cf-proxy-worker/` 配下に Cloudflare Workers 用のソースが入っています。デプロイ手順は [tools/cf-proxy-worker/README.md](../tools/cf-proxy-worker/README.md) 参照。
+
+```bash
+cd tools/cf-proxy-worker
+npm install
+npx wrangler login                          # 初回のみ
+SECRET=$(openssl rand -hex 32)
+echo "$SECRET" | npx wrangler secret put SHARED_SECRET
+npx wrangler deploy
+```
+
+summaly 側にも同じシークレットを渡す:
+
+```bash
+export SUMMALY_PROXY_SECRET="<上で生成した SECRET>"
+pnpm serve config.toml
+```
+
+### コスト・上限
+
+- **Free プラン**: 100,000 req/day。Amazon 失敗の頻度（1 日数十〜数百件と推定）から見て十分
+- **CPU 時間**: Free プランは 10ms CPU/req。subrequest 待ち時間は CPU 時間にカウントされない
+- **超過時の挙動**: 429 が返るだけ。**金額課金は発生しない**（Paid プランへの自動切替は無い設計）
+
+### セキュリティ
+
+オープンプロキシ化を防ぐため、以下を多層で適用:
+
+1. **HTTPS 限定** — Worker 側で `target.protocol !== 'https:'` は 403
+2. **HMAC-SHA256 + 共有シークレット** — `target_url\ntimestamp` を署名 (Node std crypto と Worker Web Crypto API で相互運用)
+3. **タイムスタンプ窓 ±5 分** — replay 攻撃の有効期間を 5 分に限定
+4. **ドメイン allowlist (Worker 側)** — `wrangler.toml` の `ALLOWED_DOMAINS` env var
+5. **ドメイン allowlist (summaly 側)** — `[scraping.proxy].domains` で独立に持つ。両方で許可されないと通らない
+6. **受信ボディ上限** — Worker 側 5 MiB、summaly 側 `contentLengthLimit`
+7. **定数時間比較** — HMAC 検証でタイミング攻撃を防ぐ
+8. **redirect 後の allowlist 再検証** — Worker が `redirect: 'follow'` した最終 URL を再度 allowlist 照合
+
+### 観測
+
+`req.log` の pino 出力で proxy 救援の成否を見れます (phase11.8 の機構を流用、`error.category === "origin_error"` のリクエストを追跡):
+
+```bash
+# proxy で救援できなかった amazon を抽出 (origin_error が残ってる = proxy も失敗 or 設定無効)
+sudo journalctl -u summaly -o cat | jq -c 'select(.err.category == "origin_error")'
+```
 
 パース失敗ドメインのログ蓄積 (phase10.1)
 ----------------------------------------------------------------

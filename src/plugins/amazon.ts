@@ -1,5 +1,6 @@
-import { scpaping } from '@/utils/got.js';
+import type { GeneralScrapingOptions } from '@/general.js';
 import summary from '@/summary.js';
+import { scpaping } from '@/utils/got.js';
 
 export const name = 'amazon';
 
@@ -20,8 +21,10 @@ export function test(url: URL): boolean {
 	url.hostname === 'www.amazon.au';
 }
 
-export async function summarize(url: URL): Promise<summary> {
-	const res = await scpaping(url.href);
+export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<summary> {
+	// `opts` を伝播することで proxy fallback (phase12.1) と UA fallback (phase11.9) が
+	// Amazon プラグイン経由でも機能する。proxy fallback の主用途が Amazon なので **必須**。
+	const res = await scpaping(url.href, opts);
 	const $ = res.$;
 
 	const title = $('#title').text();

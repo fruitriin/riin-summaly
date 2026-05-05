@@ -117,7 +117,11 @@ function parseScrapingSection(rawScraping: Toml, out: SummalyOptions): void {
 	if (!isObject(rawScraping)) {
 		throw new TypeError('config: `[scraping]` must be a table');
 	}
-	const fallback = rawScraping.fallback;
+	parseScrapingFallbackSection(rawScraping.fallback, out);
+	parseProxySection(rawScraping.proxy, out);
+}
+
+function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void {
 	if (fallback === undefined) return;
 	if (!isObject(fallback)) {
 		throw new TypeError('config: `[scraping.fallback]` must be a table');
@@ -150,6 +154,83 @@ function parseScrapingSection(rawScraping: Toml, out: SummalyOptions): void {
 		}
 		out.fallbackRetryCategories = fallback.categories as SummalyOptions['fallbackRetryCategories'];
 	}
+}
+
+/**
+ * `[scraping.proxy]` セクションを処理し、`SummalyOptions.proxyFallback` にマップする (phase12.1)。
+ *
+ * シークレットの解決順:
+ * 1. `process.env.SUMMALY_PROXY_SECRET`
+ * 2. `config.toml` の `[scraping.proxy].secret`
+ * 3. どちらも無ければ `enabled = false` 扱いで warning を stderr に出して return（起動失敗にはしない）
+ */
+function parseProxySection(rawProxy: Toml, out: SummalyOptions): void {
+	if (rawProxy === undefined) return;
+	if (!isObject(rawProxy)) {
+		throw new TypeError('config: `[scraping.proxy]` must be a table');
+	}
+	let enabled = false;
+	if (rawProxy.enabled !== undefined) {
+		expectType(rawProxy.enabled, 'boolean', 'scraping.proxy.enabled');
+		enabled = rawProxy.enabled as boolean;
+	}
+	if (!enabled) return;
+	if (rawProxy.url === undefined) {
+		throw new RangeError('config: `scraping.proxy.url` is required when scraping.proxy.enabled = true');
+	}
+	expectType(rawProxy.url, 'string', 'scraping.proxy.url');
+	const url = (rawProxy.url as string).trim();
+	if (url === '' || !/^https?:\/\//.test(url)) {
+		throw new RangeError('config: `scraping.proxy.url` must be a valid http(s) URL');
+	}
+	let configSecret: string | undefined;
+	if (rawProxy.secret !== undefined) {
+		expectType(rawProxy.secret, 'string', 'scraping.proxy.secret');
+		configSecret = rawProxy.secret as string;
+	}
+	const envSecret = process.env.SUMMALY_PROXY_SECRET;
+	const secret = (envSecret != null && envSecret !== '') ? envSecret : (configSecret ?? '');
+	if (secret === '') {
+		// シークレット未設定なら起動失敗にせず warning + 無効化（運用者が config.toml を晒し投稿しても安全）
+		process.stderr.write(
+			'[summaly][scraping.proxy] enabled = true だが secret が未設定 (env SUMMALY_PROXY_SECRET も無い)。' +
+			'proxy フォールバックは無効化されました\n',
+		);
+		return;
+	}
+	let categories: string[] = ['origin_error'];
+	if (rawProxy.categories !== undefined) {
+		expectStringArray(rawProxy.categories, 'scraping.proxy.categories');
+		for (const c of rawProxy.categories) {
+			if (!VALID_ERROR_CATEGORIES.has(c)) {
+				throw new RangeError(`config: \`scraping.proxy.categories\` contains unknown category "${c}"`);
+			}
+		}
+		categories = rawProxy.categories;
+	}
+	if (rawProxy.domains === undefined) {
+		throw new RangeError('config: `scraping.proxy.domains` is required when scraping.proxy.enabled = true');
+	}
+	expectStringArray(rawProxy.domains, 'scraping.proxy.domains');
+	const domains = rawProxy.domains;
+	if (domains.length === 0) {
+		throw new RangeError('config: `scraping.proxy.domains` must not be empty (proxy は明示的な allowlist が必須)');
+	}
+	let timeoutMs = 30000;
+	if (rawProxy.timeoutMs !== undefined) {
+		expectType(rawProxy.timeoutMs, 'number', 'scraping.proxy.timeoutMs');
+		expectPositiveInteger(rawProxy.timeoutMs as number, 'scraping.proxy.timeoutMs');
+		timeoutMs = rawProxy.timeoutMs as number;
+	}
+	out.proxyFallback = {
+		enabled: true,
+		url,
+		secret,
+		// VALID_ERROR_CATEGORIES でメンバー検証済みなので SummalyErrorCategory[] に narrow できる
+		categories: categories as NonNullable<SummalyOptions['fallbackRetryCategories']>,
+		domains,
+		timeoutMs,
+	};
 }
 
 function parseServerSection(raw: Toml): ServerOptions {

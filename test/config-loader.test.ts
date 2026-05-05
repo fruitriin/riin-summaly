@@ -3,7 +3,7 @@
  * TOML 文字列を直接渡せる `parseTomlConfigString` で I/O 抜きに検証する。
  */
 
-import { describe, expect, test } from 'vitest';
+import { describe, expect, test, beforeEach, afterEach } from 'vitest';
 import { parseTomlConfigString } from '../bin/config-loader.js';
 
 describe('parseTomlConfigString', () => {
@@ -349,6 +349,148 @@ describe('parseTomlConfigString', () => {
 				[scraping.fallback]
 				categories = ["bot_blocked", "typo_category"]
 			`)).toThrow(/scraping\.fallback\.categories.*unknown category.*typo_category/);
+		});
+	});
+
+	describe('[scraping.proxy] (phase12.1)', () => {
+		const originalEnv = process.env.SUMMALY_PROXY_SECRET;
+		beforeEach(() => { delete process.env.SUMMALY_PROXY_SECRET; });
+		afterEach(() => {
+			if (originalEnv != null) process.env.SUMMALY_PROXY_SECRET = originalEnv;
+			else delete process.env.SUMMALY_PROXY_SECRET;
+		});
+
+		test('enabled = false (default) はマップしない', () => {
+			const cfg = parseTomlConfigString(`
+				[summaly]
+				responseTimeout = 5000
+			`);
+			expect(cfg.summaly.proxyFallback).toBeUndefined();
+		});
+
+		test('enabled = true + secret + 必須項目を指定すると ProxyFallbackConfig を組み立てる', () => {
+			const cfg = parseTomlConfigString(`
+				[scraping.proxy]
+				enabled = true
+				url = "https://summaly-proxy.example.workers.dev"
+				secret = "test-secret"
+				categories = ["origin_error", "bot_blocked"]
+				domains = ["amazon.co.jp", "amazon.com"]
+				timeoutMs = 25000
+			`);
+			expect(cfg.summaly.proxyFallback).toEqual({
+				enabled: true,
+				url: 'https://summaly-proxy.example.workers.dev',
+				secret: 'test-secret',
+				categories: ['origin_error', 'bot_blocked'],
+				domains: ['amazon.co.jp', 'amazon.com'],
+				timeoutMs: 25000,
+			});
+		});
+
+		test('env SUMMALY_PROXY_SECRET が config.secret より優先', () => {
+			process.env.SUMMALY_PROXY_SECRET = 'env-secret';
+			const cfg = parseTomlConfigString(`
+				[scraping.proxy]
+				enabled = true
+				url = "https://x.workers.dev"
+				secret = "config-secret"
+				domains = ["amazon.co.jp"]
+			`);
+			expect(cfg.summaly.proxyFallback?.secret).toBe('env-secret');
+		});
+
+		test('secret 未設定 (env も config も) なら警告で disable', () => {
+			// stderr.write をモック化して captured
+			const stderrWrites: string[] = [];
+			const origWrite = process.stderr.write.bind(process.stderr);
+			(process.stderr as { write: typeof process.stderr.write }).write = (chunk: string | Uint8Array): boolean => {
+				stderrWrites.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+				return true;
+			};
+			try {
+				const cfg = parseTomlConfigString(`
+					[scraping.proxy]
+					enabled = true
+					url = "https://x.workers.dev"
+					domains = ["amazon.co.jp"]
+				`);
+				expect(cfg.summaly.proxyFallback).toBeUndefined();
+				expect(stderrWrites.some(s => s.includes('secret が未設定'))).toBe(true);
+			} finally {
+				(process.stderr as { write: typeof process.stderr.write }).write = origWrite;
+			}
+		});
+
+		test('url 未設定なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.proxy]
+				enabled = true
+				secret = "x"
+				domains = ["amazon.co.jp"]
+			`)).toThrow(/scraping\.proxy\.url.*required/);
+		});
+
+		test('url が http(s) で始まらないと RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.proxy]
+				enabled = true
+				url = "ftp://example.com"
+				secret = "x"
+				domains = ["amazon.co.jp"]
+			`)).toThrow(/scraping\.proxy\.url.*valid http/);
+		});
+
+		test('domains 未設定なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.proxy]
+				enabled = true
+				url = "https://x.workers.dev"
+				secret = "x"
+			`)).toThrow(/scraping\.proxy\.domains.*required/);
+		});
+
+		test('domains 空配列なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.proxy]
+				enabled = true
+				url = "https://x.workers.dev"
+				secret = "x"
+				domains = []
+			`)).toThrow(/scraping\.proxy\.domains.*must not be empty/);
+		});
+
+		test('categories に typo は RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.proxy]
+				enabled = true
+				url = "https://x.workers.dev"
+				secret = "x"
+				domains = ["amazon.co.jp"]
+				categories = ["origin_error", "typo_cat"]
+			`)).toThrow(/scraping\.proxy\.categories.*unknown category.*typo_cat/);
+		});
+
+		test('categories のデフォルトは ["origin_error"]', () => {
+			const cfg = parseTomlConfigString(`
+				[scraping.proxy]
+				enabled = true
+				url = "https://x.workers.dev"
+				secret = "x"
+				domains = ["amazon.co.jp"]
+			`);
+			expect(cfg.summaly.proxyFallback?.categories).toEqual(['origin_error']);
+		});
+
+		test('timeoutMs のデフォルトは 30000', () => {
+			const cfg = parseTomlConfigString(`
+				[scraping.proxy]
+				enabled = true
+				url = "https://x.workers.dev"
+				secret = "x"
+				domains = ["amazon.co.jp"]
+			`);
+			expect(cfg.summaly.proxyFallback?.timeoutMs).toBe(30000);
 		});
 	});
 });

@@ -222,6 +222,17 @@ export type SummalyOptions = {
 	 * デフォルト: `['bot_blocked', 'connection_dropped']`。
 	 */
 	fallbackRetryCategories?: SummalyErrorCategory[];
+
+	/**
+	 * Outbound proxy フォールバック設定 (phase12.1)。
+	 *
+	 * UA fallback でも救えなかった IP レピュテーション層の遮断
+	 * （Vultr Tokyo IP からの amazon.co.jp 等）に対し、Cloudflare Workers にデプロイした
+	 * 薄い proxy 経由でリトライする。`enabled === false` または `secret === ''` ならリトライ無効。
+	 *
+	 * 詳細は `tools/cf-proxy-worker/README.md` 参照。
+	 */
+	proxyFallback?: import('@/utils/proxy-fallback.js').ProxyFallbackConfig;
 };
 
 const DEFAULT_CACHE_MAX_AGE = 604800;
@@ -410,6 +421,7 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		enablePdf: opts.enablePdf,
 		fallbackUserAgent: opts.fallbackUserAgent,
 		fallbackRetryCategories: opts.fallbackRetryCategories,
+		proxyFallback: opts.proxyFallback,
 	};
 
 	// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition

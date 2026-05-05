@@ -161,6 +161,13 @@ export type GeneralScrapingOptions = {
 	 * フォールバック UA リトライを発火するエラーカテゴリ。デフォルト: `['bot_blocked', 'connection_dropped']`。
 	 */
 	fallbackRetryCategories?: import('@/utils/parse-failure-log.js').SummalyErrorCategory[];
+
+	/**
+	 * Outbound proxy フォールバック設定 (phase12.1)。`getResponseWithFallback` で救えなかった
+	 * IP レピュテーション層の遮断（amazon.co.jp 等）を Cloudflare Workers 経由でリトライする。
+	 * `undefined` または `enabled === false` ならリトライ無効（既存挙動互換）。
+	 */
+	proxyFallback?: import('@/utils/proxy-fallback.js').ProxyFallbackConfig;
 };
 
 export async function general(_url: URL | string, opts?: GeneralScrapingOptions): Promise<Summary | null> {
@@ -182,6 +189,7 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 		enablePdf: opts?.enablePdf,
 		fallbackUserAgent: opts?.fallbackUserAgent,
 		fallbackRetryCategories: opts?.fallbackRetryCategories,
+		proxyFallback: opts?.proxyFallback,
 	});
 
 	if (res.pdf != null) {

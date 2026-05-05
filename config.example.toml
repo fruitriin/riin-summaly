@@ -37,6 +37,22 @@ inFlightDedup = true                  # 同一 URL の並列リクエストを 1
 # キーをコメントアウト or 削除すると env を見るフォールバックが効く。
 enabled = false
 
+[scraping.proxy]
+# Cloudflare Workers Free にデプロイした outbound proxy 経由のフォールバック (phase12.1)。
+# Vultr Tokyo IP からの amazon.co.jp 等が IP レピュテーション層で 500 になる問題への救援。
+# UA fallback (`[scraping.fallback]`) でも救えない `origin_error` カテゴリで発火する。
+#
+# **シークレット管理**: `secret` を TOML に直書きせず、環境変数 `SUMMALY_PROXY_SECRET` を使うこと推奨。
+# env が設定されていれば config の `secret` より優先される。
+# enabled = false                              # デフォルト false (要明示オプトイン)
+# url = "https://summaly-proxy.<your>.workers.dev"
+# secret = "..."                               # 推奨: env SUMMALY_PROXY_SECRET 経由
+# categories = ["origin_error"]                # どのカテゴリで proxy を発火するか
+# domains = ["amazon.co.jp", "amazon.com"]     # suffix-match。空配列禁止 (allowlist 必須)
+# timeoutMs = 30000                            # proxy リクエストのタイムアウト
+#
+# Worker 側のデプロイ手順は tools/cf-proxy-worker/README.md 参照。
+
 [scraping.fallback]
 # Bot block 検出時に別 UA で 1 回リトライする (phase11.9)。
 # `SummalyBot` 文字列を WAF が弾くサイト (`playing-games.com` 等) を救援する用途。
