@@ -54,3 +54,28 @@ allowed = ["amazon", "bluesky"]
 - 旧 `--options` JSON は **対応しない**（コメント書きたい・セクション分割したいニーズに応えるため）
 
 systemd / nginx 設定例は本ディレクトリの `summaly.service.example` / `summaly.nginx.conf.example` を参照。
+
+## 推奨追加設定
+
+riin-summaly 独自の運用機能を活用するなら以下を有効化することを推奨:
+
+```toml
+[summaly.cache]
+inMemory = true             # Misskey の Got/node-fetch は Cache-Control を解釈しないため事実上必須
+inFlightDedup = true        # ストリーミング由来の thundering herd を 1 本化（デフォルト true）
+
+[diagnostics]
+parseFailureLog = true      # プラグイン化候補のドメイン発見器
+parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
+parseFailureLogEndpoint = true   # 公開時は nginx で必ずアクセス制限すること
+```
+
+`/__diagnostics/parse-failures` を有効化する場合の nginx 設定例:
+
+```nginx
+location /__diagnostics/ {
+    allow 127.0.0.1;
+    deny all;
+    proxy_pass http://summaly_backend;
+}
+```

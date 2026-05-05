@@ -43,15 +43,40 @@ console.log(summary);
 }
 ```
 
-`summaly(url, opts?)` の `opts` はすべて optional。基本オプションは下表参照。
+複数画像を返すサイト（twitter プラグイン等）の出力例:
 
-opts (`SummalyOptions`) — ライブラリ利用時の主要オプション
+```json
+{
+  "title": "photog on X",
+  "thumbnail": "https://pbs.twimg.com/media/img1.jpg",
+  "medias": [
+    "https://pbs.twimg.com/media/img1.jpg",
+    "https://pbs.twimg.com/media/img2.jpg",
+    "https://pbs.twimg.com/media/img3.jpg"
+  ],
+  "player": {
+    "url": "https://platform.twitter.com/embed/Tweet.html?id=...",
+    "width": 550,
+    "height": 600,
+    "allow": ["autoplay", "clipboard-write", "encrypted-media", "picture-in-picture", "web-share", "fullscreen"]
+  },
+  "sitename": "X",
+  "sensitive": false,
+  "url": "https://x.com/photog/status/..."
+}
+```
+
+`summaly(url, opts?)` の `opts` はすべて optional。
+
+opts (`SummalyOptions`) — ライブラリ利用時に効くオプション
 ----------------------------------------------------------------
+
+下表のオプションは `summaly()` 関数を直接呼ぶときに参照されます。Fastify プラグインモード専用のオプション（`inMemoryCache` / `inFlightDedup` / `cacheMaxAge` / `parseFailureLog` 等）は `summaly()` に渡しても無視されます — 後述の「Fastify モード専用オプション」を参照。
 
 | プロパティ | 型 | 説明 | デフォルト |
 |:--|:--|:--|:--|
 | **lang** | *string* | リクエストの `Accept-Language` | `null` |
-| **followRedirects** | *boolean* | リダイレクトを追跡するか | `true` |
+| **followRedirects** | *boolean* | リダイレクトを追跡するか（`KNOWN_SHORT_HOSTS` のホストは false でも HEAD/GET 解決される） | `true` |
 | **plugins** | *SummalyPlugin[]* | カスタムプラグイン（組み込みより後ろに連結。詳細は [Plugins.md](Plugins.md)） | `null` |
 | **userAgent** | *string* | リクエストの `User-Agent` | `SummalyBot/[version]` |
 | **responseTimeout** | *number* | フェーズ単位のタイムアウト（DNS解決・接続・レスポンス各々）ミリ秒 | `20000` |
@@ -60,8 +85,27 @@ opts (`SummalyOptions`) — ライブラリ利用時の主要オプション
 | **contentLengthRequired** | *boolean* | true なら content-length 未返却サーバをエラー扱い | `false` |
 | **agent** | *Got.Agents* | カスタム HTTP エージェント（プロキシ用途。設定するとプライベート IP 拒否は無効化される） | `null` |
 | **allowedPlugins** | *string[]* | 利用許可するプラグイン名の配列。`undefined` で全有効、`[]` で組み込み全 disable | `undefined` |
+| **useRange** | *boolean* | `Range: bytes=0-N-1` で先頭領域のみ取得して帯域節約（サーバ未対応時は通常 GET と同等にフォールバック） | `false` |
+| **enablePdf** | *boolean* | PDF レスポンスのタイトル取得を有効化（5 層のハング対策付き）。`false` を明示すると環境変数 `SUMMALY_ENABLE_PDF=true` を上書きする | `undefined` |
 
-Fastify モード固有のオプション（`cacheMaxAge` / `inMemoryCache` / `enablePdf` / `useRange` 等）は [SETUP.md](SETUP.md) に集約しています。
+### 環境変数
+
+| 変数 | 効果 |
+|:--|:--|
+| `SUMMALY_ALLOW_PRIVATE_IP=true` | プライベート IP 宛のリクエストを許可（テスト用） |
+| `SUMMALY_FAMILY=4` / `=6` | IP family を強制 |
+| `SUMMALY_ENABLE_PDF=true` | `enablePdf` 未指定時のフォールバック |
+
+### Fastify モード専用オプション
+
+下記オプションは `fastify.register(Summaly, opts)` 経由でのみ意味を持ちます。`summaly()` 関数に渡しても何もしません。詳細は [SETUP.md](SETUP.md) 参照。
+
+| プロパティ | 説明 |
+|:--|:--|
+| `cacheMaxAge` / `cacheErrorMaxAge` | レスポンスの `Cache-Control` ヘッダ |
+| `inMemoryCache` / `inMemoryCacheMaxEntries` | プロセス内 LRU キャッシュ |
+| `inFlightDedup` | 同一 URL の並列リクエストを 1 本化 |
+| `parseFailureLog` / `parseFailureLogMaxGroups` / `parseFailureLogSamplesPerGroup` / `parseFailureLogEndpoint` / `parseFailureLogJsonlPath` / `parseFailureLogJsonlMaxBytes` | パース失敗ドメインのログ集約 + JSONL 永続化 |
 
 戻り値
 ----------------------------------------------------------------
@@ -106,7 +150,28 @@ Fastify プラグインとして
 
 ```javascript
 import Summaly from 'summaly';
-fastify.register(Summaly, opts);
+await fastify.register(Summaly, {
+  // 上記 SummalyOptions に加えて Fastify モード専用オプションを指定可能
+  inMemoryCache: true,
+  inFlightDedup: true,
+  cacheMaxAge: 604800,
+});
 ```
 
-スタンドアロン HTTP サーバとして起動・運用する詳細は **[SETUP.md](SETUP.md)** を参照。
+スタンドアロン HTTP サーバとして起動・運用する詳細（TOML 設定 / nginx + systemd / パース失敗ログ等）は **[SETUP.md](SETUP.md)** を参照。
+
+カスタムエージェント / プロキシ
+----------------------------------------------------------------
+
+`setAgent()` で global agent を差し込めます（プロキシ経由で外向き通信したい場合）:
+
+```javascript
+import { setAgent } from 'summaly';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+
+setAgent({
+  https: new HttpsProxyAgent('http://proxy.example.com:8080'),
+});
+```
+
+**`setAgent` を呼ぶと SSRF 対策のプライベート IP ガードが解除されます**（プロキシ前段で別途制御する想定）。`opts.agent` も同じ挙動です。

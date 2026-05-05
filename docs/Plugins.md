@@ -1,7 +1,7 @@
 Plugins.md — プラグイン詳細
 ================================================================
 
-summaly のプラグインシステムと、組み込み 10 プラグインの仕様、カスタムプラグインの書き方をまとめます。
+summaly のプラグインシステムと、組み込み 11 プラグインの仕様、カスタムプラグインの書き方をまとめます。
 
 目次
 ----------------------------------------------------------------
@@ -48,7 +48,10 @@ interface SummalyPlugin {
 
 `summaly(url, opts)` の処理順:
 
-1. `opts.followRedirects` が true、または URL のホストが `KNOWN_SHORT_HOSTS`（`youtu.be` 等）に含まれるなら HEAD リクエストでリダイレクトを解決
+1. `opts.followRedirects` が true、または URL のホストが `KNOWN_SHORT_HOSTS`（`youtu.be` / `amzn.asia` / `amzn.to` / `a.co` / `t.co` / `bit.ly` 等）に含まれるなら **`resolveRedirect()`** でリダイレクトを解決:
+   - まず HEAD を試す（軽量、body を受信しない）
+   - HEAD が失敗した場合は GET に fallback (`Range: bytes=0-0` で body 受信を最小化)。`amzn.asia` のように HEAD に 404 を返すが GET には 301 を返すサーバ向け (phase9.1)
+   - どちらも失敗した場合は元の URL のまま続行
 2. プラグイン配列を順に走査して `test(url)` が `true` を返す **最初の** プラグインを採用
 3. プラグイン配列の構築順:
    1. 組み込みプラグイン（`allowedPlugins` が指定されていれば `name` で絞り込み）
@@ -72,6 +75,7 @@ interface SummalyPlugin {
 | 抽出フィールド | `title` ← `#title`、`description` ← `#productDescription` または `meta[name=description]`、`thumbnail` ← `#landingImage[src]`、`player` ← `meta[property=twitter:player]` 系 |
 | 固定値 | `sitename: 'Amazon'`、`icon: 'https://www.amazon.com/favicon.ico'` |
 | 備考 | `general` を経由しない独自実装 |
+| 短縮 URL | `amzn.asia` / `amzn.to` / `a.co` は `KNOWN_SHORT_HOSTS` に含まれるため Fastify モードでも `resolveRedirect()` で `www.amazon.{com,co.jp,...}` に解決される（HEAD→GET fallback 経由、phase9.1） |
 
 ### bluesky
 
@@ -221,6 +225,8 @@ const myPlugin: SummalyPlugin = {
       player: { url: null, width: null, height: null, allow: [] },
       activityPub: null,
       fediverseCreator: null,
+      // 複数画像を返したい場合は medias を追加（利用側は medias 優先、無ければ thumbnail）
+      // medias: ['https://.../img1.jpg', 'https://.../img2.jpg'],
     };
   },
 };
@@ -255,7 +261,7 @@ const summary = await summaly('https://mysite.example.com/article/123', {
 | `parseGeneral(url, scpapingResult)` | [src/general.ts](../src/general.ts) | OG / Twitter Card / oEmbed の汎用抽出ロジック |
 | `general(url, opts)` | [src/general.ts](../src/general.ts) | `scpaping → parseGeneral` のショートカット |
 | `BROWSER_UA` | [src/utils/user-agents.ts](../src/utils/user-agents.ts) | サイト固有プラグインで Chrome UA を上書きしたいとき |
-| `KNOWN_SHORT_HOSTS` | [src/utils/short-urls.ts](../src/utils/short-urls.ts) | Fastify モード（`followRedirects: false`）でも HEAD 解決する公式短縮 URL ホストの Set |
+| `KNOWN_SHORT_HOSTS` | [src/utils/short-urls.ts](../src/utils/short-urls.ts) | Fastify モード（`followRedirects: false`）でも `resolveRedirect()` で HEAD/GET 解決する公式短縮 URL ホストの Set |
 | `PLAYER_ALLOW_OEMBED` | [src/utils/player-allow.ts](../src/utils/player-allow.ts) | oEmbed 系プラグインで共通利用する iframe `allow` の readonly safelist |
 | `PDF_ICON_DATA_URL` | [src/utils/pdf-icon.ts](../src/utils/pdf-icon.ts) | PDF レスポンス用デフォルトアイコン (data URI) |
 | `withTimeout(promise, ms)` | [src/utils/got.ts](../src/utils/got.ts) | Promise を timeout 付きで race（`finally` で `setTimeout` を必ず clear） |

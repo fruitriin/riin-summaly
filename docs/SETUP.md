@@ -12,6 +12,7 @@ summaly を Misskey 等のフロントエンドから利用するために、**�
 - [最小起動](#最小起動)
 - [Fastify モード固有のオプション](#fastify-モード固有のオプション)
 - [キャッシュ戦略](#キャッシュ戦略)
+- [パース失敗ドメインのログ蓄積 (phase10.1)](#パース失敗ドメインのログ蓄積-phase101)
 - [PDF 対応](#pdf-対応)
 - [プラグインの絞り込み](#プラグインの絞り込み)
 - [HTTP エージェント / プロキシ / IP family](#http-エージェント--プロキシ--ip-family)
@@ -34,7 +35,7 @@ summaly を Misskey 等のフロントエンドから利用するために、**�
 ----------------------------------------------------------------
 
 ```bash
-git clone https://github.com/misskey-dev/summaly.git
+git clone https://github.com/fruitriin/summaly.git
 cd summaly
 pnpm install --frozen-lockfile
 pnpm build
@@ -342,8 +343,9 @@ setAgent({ https: new HttpsProxyAgent('http://proxy:8080') });
 [docs/deploy-examples/](deploy-examples/) に以下のサンプルがあります（**動作保証なし、参考用**。OS / ディストリ / 配置構成に応じた読み替えが必要）:
 
 - [summaly.nginx.conf.example](deploy-examples/summaly.nginx.conf.example) — nginx reverse proxy 設定
-- [summaly.service.example](deploy-examples/summaly.service.example) — systemd unit
-- [summaly-config.example.json](deploy-examples/summaly-config.example.json) — Fastify プラグイン設定 JSON
+- [summaly.service.example](deploy-examples/summaly.service.example) — systemd unit（TOML 設定 + `bin/summaly-server.ts`）
+- [summaly-config.example.toml](deploy-examples/summaly-config.example.toml) — **推奨**: TOML 設定例
+- [summaly-config.example.json](deploy-examples/summaly-config.example.json) — DEPRECATED: 旧 fastify-cli `--options` 用 JSON。リリース 1 サイクル後に削除予定
 
 ### nginx + summaly 推奨構成
 
@@ -373,6 +375,16 @@ server {
         add_header X-Cache-Status $upstream_cache_status;
 
         proxy_read_timeout 65s;
+    }
+
+    # /__diagnostics/parse-failures を有効化する場合は外部公開しないこと
+    # (過去の preview 試行 URL が誰でも見える状態になりプライバシー漏洩につながる)
+    location /__diagnostics/ {
+        allow 127.0.0.1;
+        deny all;
+        proxy_pass http://summaly_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
     }
 }
 ```
