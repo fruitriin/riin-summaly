@@ -195,15 +195,36 @@ curl 結果のパターンから **5 タイプ**に分類:
 - **対処 B (allowlist が無い場合)**: JS 実行エンジン (Puppeteer / Playwright) が必要だが summaly のスコープ外。**対処保留**として Misskey 側で薄い preview を許容
 - 関連 knowhow: [src/plugins/nintendo-store.ts](../../src/plugins/nintendo-store.ts) — `facebookexternalhit` UA 固定の実装例
 
-### H. HTTP/2 stream INTERNAL_ERROR / TLS layer 切断 (proxy で試す価値あり)
+### H. HTTP/2 stream INTERNAL_ERROR / TLS layer 切断 (curl_cffi で救援可、phase12.5 で対処済み)
 
-- 兆候: `curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR` でローカルから即座に切断 (`status=000 size=0 time<0.1s`)、本番 (Vultr) からは `category: timeout` (`Timeout awaiting 'socket' for 20000ms`)。UA / SNS bot UA すべてで弾かれる
-- **対処**: phase12.4 で **専用プラグイン + proxy categories 拡張** パターンを採用。`(www.)?yodobashi.com` で実装:
+- 兆候: `curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR` でローカルから即座に切断 (`status=000 size=0 time<0.1s`)、本番 (Vultr) からは `category: timeout` (`Timeout awaiting 'socket' for 20000ms`)。UA / SNS bot UA すべてで弾かれる + **CF Workers proxy fetch も同じ TLS フィンガープリントで弾かれる** (proxy 経由でも救えない)
+- **判断**: `curl_cffi` (libcurl-impersonate) で Chrome / Firefox / Safari の TLS フィンガープリント (JA3) を**完全再現**することだけが正解経路
+- **対処**: phase12.5 で **`tools/curl-cffi-fetcher/` 経由 + 専用プラグイン**パターンを採用。`(www.)?yodobashi.com` で実装:
   - test() で対象ホストにマッチ
-  - summarize() で `proxyFallback.categories` を `['origin_error', 'bot_blocked', 'timeout', 'connection_dropped']` に **拡張**（デフォルトでは `timeout` は proxy 発火対象外）
-  - Worker `wrangler.toml` の `ALLOWED_DOMAINS` と summaly `[scraping.proxy].domains` 両側に対象ホストを追加 + Worker `wrangler deploy`
-- **判断条件**: 対象サイトが OGP を整備していて (= share させたい意思あり)、CF Workers の egress IP / TLS フィンガープリントで通る可能性があれば実装する価値あり。Worker でも 502 で弾かれるなら諦める（保留 + Misskey 側で薄い preview 許容）
-- 関連 knowhow: [src/plugins/yodobashi.ts](../../src/plugins/yodobashi.ts) — proxy categories 拡張パターンの実装例
+  - summarize() で `proxyFallback: undefined` (proxy 段は構造的に効かないので明示スキップ) + `forceCurlCffiFallback: true` (1〜3段目すべてスキップして curl_cffi 直行) を渡す
+  - プラグインに `export const skipRedirectResolution = true` を宣言 (resolveRedirect HEAD probe も yodobashi で 20 秒空回りするため切る)
+  - `[scraping.curl_cffi]` を有効化 + `domains` allowlist に対象ホスト追加
+  - production server に `uv` インストール + `tools/curl-cffi-fetcher/` で `uv sync`
+- **判断条件**: 対象サイトが OGP を整備していて (= share させたい意思あり、static HTML に OGP が入っている)、curl_cffi (chrome120 impersonate) で 200 + OGP が取れれば実装する価値あり
+- 関連 knowhow: [curl-cffi-tls-impersonation.md](../../docs/knowhow/curl-cffi-tls-impersonation.md)、[src/plugins/yodobashi.ts](../../src/plugins/yodobashi.ts) — 3 重スキップ実装例
+
+### I. SPA で OGP が JS 実行後の DOM にだけ入るサイト (救援不可、保留)
+
+- **兆候**:
+  - curl_cffi 等で取得すると `200 + 小さな (~10〜30 KB) SPA shell HTML` が返る (`<title>` はサイト共通の汎用タイトル、og/twitter meta 全く無し)
+  - **ブラウザで開くと OGP meta が入っている** (= JavaScript で `<head>` に動的挿入)
+  - `<meta name="occ-backend-base-url" ...>` (SAP Commerce Cloud) や React/Vue の SPA shell の特徴 (`<div id="root">` など) が見える
+  - 公式 JSON API (`/occ/v2/...` 等) は 403 Access Denied
+- **意味**: サーバが返す静的 HTML には OGP が無いため、**Twitter / Facebook / Slack 等の bot は誰一人として展開できない**。サイト側の実装ミス (react-helmet 等で `<head>` を書き換えるだけで prerender 設定が無い)、または share 対応する気がない
+- **切り分け方法**:
+  ```bash
+  # サーバ HTML の OGP 確認 (JS 未実行)
+  uv run fetch <URL> | python3 -c "import json,sys,re; d=json.load(sys.stdin); print(len(re.findall(r'<meta[^>]+og:', d['body'])), 'og: tags')"
+  # 0 件かつブラウザで開くと OGP が見える → fail mode I 確定
+  ```
+- **対処**: **summaly のスコープ外**。Playwright/Puppeteer 等の実ブラウザレンダリング基盤が必要だが summaly では採用しない判断 (メモリ・レイテンシ・コスト全部割に合わない)。Misskey 側で **URL のみのフォールバック表示** を許容
+- **実例 (2026-05-06)**: `nitori-net.jp` (SAP Commerce Cloud SPA、JS で OGP 注入、`/occ/v2/` API は Akamai で 403)
+- **次の手**: サイトに「prerender 入れて」と要望するか諦めるか。本来 OGP プレビュー対応は **サーバ側の責務**
 
 ## Phase 4: 修正レイヤの選定
 

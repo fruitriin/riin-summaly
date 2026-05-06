@@ -58,6 +58,13 @@
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
 
+## phase12.5 followup (本番チューニング + fail mode 拡張) 知見
+
+- **2026-05-06 phase12.5 followup チューニングセッション**: 本番 21 秒の根本原因切り分けで「**段階的フォールバックは累積コストが見えにくい**」教訓。1 段ずつ消費時間を測らないと、どの段がボトルネックか判別できなかった。phase12.1 で proxy fallback、phase12.5 で curl_cffi を入れた結果「無駄な前段が 2 つ重なる」状況になっていた。本来「サイト特性が確定したらプラグイン側で経路を skip」する設計を最初から組み込むべきだったが、汎用基盤を先に作り「特性確定後にプラグインで上書き」する流れも実用上は機能した。後付け OK だが「**段階的フォールバックは確実に発火する段だけ残す**」原則は記録に値する → `docs/knowhow/curl-cffi-tls-impersonation.md` に「3 重スキップパターン」として反映済
+- **2026-05-06 phase12.5 followup チューニングセッション**: ユーザー (オーナー) が **`time curl` の単純計測** で「(a) 爆速、(b) 20.93秒」というシンプルな比較を提示してくれたことで切り分けが一気に進んだ。pino の段ごとログを増やして測るより、**外側から黒箱比較する** ほうが情報密度が高い。skill `/url-preview-check` に「比較計測の最小コマンド」を増やす価値あり (現状の skill は対症療法 fail mode 別の対処に寄っている)
+- **2026-05-06 fail mode I 発見セッション**: nitori-net.jp で「**ブラウザでは見えるのにサーバ HTML には OGP が無い**」パターンを fail mode I として確定。SAP Commerce Cloud SPA + react-helmet 等での JS 動的 OGP 注入は **誰一人として展開できない実装** (全 SNS bot は JS 実行しない)。サイト側の実装ミスとして整理し、summaly では救援不可と判断 → `docs/knowhow/spa-dynamic-ogp-unfixable.md` に切り分けチェックリスト + サイト側に要望すべき正攻法を記録。**「ブラウザで見えるからといって取れるとは限らない」** は今後の URL preview 案件の前提知識として再利用可
+- **2026-05-06 journalctl + jq 落とし穴セッション**: skill 改善で再発しがちな 2 落とし穴 (① journalctl `-o cat` でも環境によりプレフィックスが残る、② `select(.x | contains(...))` が null フィールドで parse error) を skill `/url-preview-check` の独立セクションとして抽出。skill は「fail mode 別の対処」だけでなく「ツール固有の落とし穴」も組み込むほうが反復作業の質が上がる
+
 ## phase12.5 (curl_cffi Node IPC 統合) 知見
 
 - **2026-05-06 phase12.5 Step 2 セッション**: `child_process.spawn` 経由の Promise を作るとき、`error` と `exit` の両方が発火するケース (signal 終了等) で resolve/reject が二重に呼ばれる潜在バグを review agent が **W-3** で指摘した。`let settled = false; const settle = fn => { if (settled) return; settled = true; clearTimeout(...); fn(); }` のガードパターンで対処。Node の event-driven IPC では「単一発火を保証する手段」が言語に組み込まれていないため、この種のガードは spawn ベースのブリッジで必須。`docs/knowhow/curl-cffi-tls-impersonation.md` の「spawn-per-request の防衛パターン」セクションに記録
