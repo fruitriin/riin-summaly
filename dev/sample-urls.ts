@@ -35,6 +35,7 @@ export const sampleGroups: SampleGroup[] = [
 		urls: [
 			{ label: 'YouTube watch', url: 'https://www.youtube.com/watch?v=NMIEAhH_fTU' },
 			{ label: 'YouTube shorts', url: 'https://www.youtube.com/shorts/aqz-KE-bpKQ' },
+			{ label: 'YouTube live', url: 'https://www.youtube.com/live/YVjfasn756M', note: 'phase12.2 で `/live/<id>` も oEmbed 経路に乗るようになった' },
 			{ label: 'youtu.be 短縮', url: 'https://youtu.be/NMIEAhH_fTU', note: 'KNOWN_SHORT_HOSTS の dispatcher 検証' },
 		],
 	},

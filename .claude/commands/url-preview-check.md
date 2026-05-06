@@ -169,6 +169,18 @@ curl 結果のパターンから **5 タイプ**に分類:
 - 対処: HTML スクレイプを諦めて公式 API 直叩き (npm の `registry.npmjs.org` パターン)
 - 関連 knowhow: [plugin-infrastructure-patterns.md](../../docs/knowhow/plugin-infrastructure-patterns.md) の「Cloudflare 配下サイトの公式 JSON API 直叩きパターン」
 
+### G. Akamai Bot Manager の JS challenge (対処困難)
+
+- 兆候: 元 URL から `*-wr.example.com/?c=ncl&...&kupver=akamai-5.0.1&t=<元URL>` のような challenge ページに redirect。HTML には `<title>` も og 系も全部空。`store-jp.nintendo.com` で実証 (2026-05-06)
+- 対処: **JS 実行エンジンが必要** (Puppeteer / Playwright) で、CF Workers でも proxy でも突破不可
+- 判断: summaly のスコープ外として **対処保留**。Misskey 側で当該サイトのカードは表示しない / 薄い preview を許容する選択
+
+### H. HTTP/2 stream INTERNAL_ERROR (対処困難)
+
+- 兆候: `curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR` でローカル / 本番ともに即座に切断 (`status=000 size=0 time<0.1s`)。`yodobashi.com` で実証 (2026-05-06)。`category` は `timeout` (got 側で `socket` 待ちタイムアウトに化ける)
+- 対処: TLS / HTTP/2 ハンドシェイク段階で server 側が能動的に切る bot 対策。UA を変えても、IP を変えても切断される。**proxy 経由でも同じ TLS スタックなので救えない**
+- 判断: 対処保留。CF Workers の TLS fingerprint が違えば通る可能性あるが、未実証
+
 ## Phase 4: 修正レイヤの選定
 
 問題 layer ごとに修正先が変わる:

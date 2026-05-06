@@ -1127,12 +1127,15 @@ describe('local tests', () => {
 				expect(t('https://youtube.com/watch?v=abc')).toBe(true);
 				expect(t('https://www.youtube.com/playlist?list=PLxxx')).toBe(true);
 				expect(t('https://www.youtube.com/shorts/abc')).toBe(true);
+				expect(t('https://www.youtube.com/live/YVjfasn756M')).toBe(true);  // phase12.2: ライブ配信 URL も oEmbed で取れる
+				expect(t('https://m.youtube.com/live/abc')).toBe(true);
 				expect(t('https://youtu.be/abc')).toBe(true);
 
 				// マッチしないべき URL
 				expect(t('https://example.com/watch?v=abc')).toBe(false);
 				expect(t('https://www.youtube.com/about')).toBe(false);
 				expect(t('https://www.youtube.com/')).toBe(false);
+				expect(t('https://www.youtube.com/lives')).toBe(false);  // /live で始まるが境界違い
 			});
 
 			test('spotify プラグインが open.spotify.com にマッチする', () => {

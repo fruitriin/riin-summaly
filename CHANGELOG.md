@@ -1,5 +1,6 @@
 (unreleased)
 ------------------
+* **fix**: youtube プラグインがライブ配信 URL (`/live/<id>`) にマッチしない問題を修正 (phase12.2)。`PATH_PATTERNS` に `/live/` を追加して oEmbed エンドポイント経由で取得できるようにした。実例: `youtube.com/live/YVjfasn756M` でタイトル / サムネ / iframe player が取れる
 * **feat**: Outbound proxy フォールバック (Cloudflare Workers) を追加 (phase12.1):
   * Vultr Tokyo IP からの amazon.co.jp が IP レピュテーション層で 500 を返す問題を救援
   * 3 段リトライ: ① デフォルト UA → ② UA fallback (phase11.9) → ③ **Worker proxy 経由** (新規)
