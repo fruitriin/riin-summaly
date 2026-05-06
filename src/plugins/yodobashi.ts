@@ -45,12 +45,16 @@ export function test(url: URL): boolean {
 export const skipRedirectResolution = true;
 
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
-	// proxy fallback 段は yodobashi では構造的に救えない (CF Worker fetch の TLS フィンガープリントも
-	// 固定なので yodobashi 側で弾かれる)。本番実測で ~15-20 秒の純損失だったため強制スキップする。
-	// curl_cffi fallback は opts そのままで透過 (デフォルトカテゴリで TLS 切断をカバー済み)。
+	// **1段目 (default UA) も yodobashi では socket timeout 20 秒で空回り**するため、
+	// `forceCurlCffiFallback: true` で 1〜3段目をすべてスキップして curl_cffi 直行する
+	// (phase12.5 followup #3)。proxy 段スキップ + skipRedirectResolution と合わせて、
+	// 「yodobashi に対する無駄な got リクエスト」を完全にゼロにする。
+	//
+	// curl_cffi が未設定の環境では scpaping が通常段階に fallthrough する (互換性維持)。
 	const res = await scpaping(url.href, {
 		...opts,
 		proxyFallback: undefined,
+		forceCurlCffiFallback: true,
 	});
 	return await parseGeneral(url, res);
 }

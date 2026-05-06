@@ -254,7 +254,7 @@ interface SummalyPlugin {
 | 項目 | 内容 |
 |:--|:--|
 | マッチ | `(?:www\.)?yodobashi\.com` (anchored) |
-| 取得方法 | `scpaping()` → `parseGeneral()`。**proxy fallback 段を強制スキップ** (`proxyFallback: undefined`) して curl_cffi に直行する設計 + **`skipRedirectResolution = true`** で `summaly()` 冒頭の HEAD/GET probe もスキップ |
+| 取得方法 | `scpaping()` → `parseGeneral()`。**3 重スキップで yodobashi に対する無駄リクエストをゼロ化**: ① `skipRedirectResolution = true` で `summaly()` 冒頭の HEAD/GET probe スキップ、② `forceCurlCffiFallback: true` で 1〜3段目 (default UA / fallback UA / proxy) スキップ、③ `proxyFallback: undefined` 強制 |
 | 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準) |
 | 背景 | yodobashi は **TLS / HTTP/2 レイヤで bot を能動切断**する。Vultr Tokyo IP は `category: "timeout"`、ローカル MacOS は `HTTP/2 stream INTERNAL_ERROR` (即時 RST、time<0.05s) で SummalyBot / ブラウザ UA / 各種 SNS bot UA すべて弾かれる (skill `/url-preview-check` の Phase 3 fail mode H)。HEAD probe も同じく TLS 切断で空回りするため、URL が終端確定 (短縮 URL でない) であることを利用して `skipRedirectResolution = true` で probe 自体をスキップする (本番実証 21 秒 → 数秒に短縮、phase12.5 followup #2) |
 | なぜ proxy をスキップするか | **CF Workers fetch も TLS フィンガープリント固定**なので yodobashi 側で構造的に弾かれる。本番実証で proxy 段が ~15-20 秒空回りしてから 502 を返すのが純損失だった (phase12.4 → phase12.5 で確認)。curl_cffi (libcurl-impersonate) で Chrome の TLS フィンガープリント (JA3) を偽装することだけが正解 |

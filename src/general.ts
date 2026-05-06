@@ -179,6 +179,24 @@ export type GeneralScrapingOptions = {
 	 * `cd tools/curl-cffi-fetcher && uv sync` で依存解決しておく必要がある。
 	 */
 	curlCffiFallback?: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig;
+
+	/**
+	 * **1段目 〜 3段目をスキップして curl_cffi を最初に試す** (phase12.5 followup #3)。
+	 *
+	 * yodobashi のように **TLS layer で確実に bot 切断するサイト** では、1段目 (default UA) の
+	 * `got` リクエストが `socket timeout` (デフォルト 20 秒) で空回りする純損失がある。
+	 * `forceCurlCffiFallback: true` を渡すとこの空回りをゼロにし、最初から curl_cffi を呼ぶ。
+	 *
+	 * 発火条件:
+	 * - `curlCffiFallback?.enabled === true` (curl_cffi 自体が有効)
+	 * - `domains` allowlist + `https:` プロトコルが通る
+	 *
+	 * 上記を満たさない場合は通常の段階的フォールバックに戻る (curl_cffi が利用不可な環境への保険)。
+	 *
+	 * プラグイン側で確実に curl_cffi が正解 (= 通常 got 経路は構造的に弾かれる) と判明している
+	 * サイトのみ宣言する想定。yodobashi がその typical 例。
+	 */
+	forceCurlCffiFallback?: boolean;
 };
 
 export async function general(_url: URL | string, opts?: GeneralScrapingOptions): Promise<Summary | null> {
@@ -202,6 +220,7 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 		fallbackRetryCategories: opts?.fallbackRetryCategories,
 		proxyFallback: opts?.proxyFallback,
 		curlCffiFallback: opts?.curlCffiFallback,
+		forceCurlCffiFallback: opts?.forceCurlCffiFallback,
 	});
 
 	if (res.pdf != null) {

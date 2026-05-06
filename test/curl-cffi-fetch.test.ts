@@ -227,3 +227,56 @@ describe('getResponseWithCurlCffiFallback gating', () => {
 		}
 	});
 });
+
+describe('scpaping forceCurlCffiFallback (phase12.5 followup #3)', () => {
+	test('forceCurlCffiFallback: true + curl_cffi 有効 + allowlist 一致なら 1段目をスキップして直接 curl_cffi を呼ぶ', async () => {
+		writeMockCli(`#!/usr/bin/env node
+console.log(JSON.stringify({
+	status: 200,
+	final_url: process.argv[3] ?? '',
+	content_type: 'text/html;charset=UTF-8',
+	headers: { 'content-type': 'text/html;charset=UTF-8' },
+	body: '<html><head><title>Force Curl Cffi Direct</title></head><body>x</body></html>',
+}));
+`);
+		// scpaping を直接呼ぶには @/utils/got.js を import する
+		const { scpaping } = await import('@/utils/got.js');
+		const cfg = makeConfig();
+		// non-existent ドメインを使うことで「もし通常段階に流れたら DNS エラーで即 fail」する条件を作る。
+		// curl_cffi 直行が動けば mock CLI が成功を返すのでテスト通過。
+		const result = await scpaping('https://example.com/test-force-curl-cffi', {
+			curlCffiFallback: cfg,
+			forceCurlCffiFallback: true,
+		});
+		expect(result.response.statusCode).toBe(200);
+		expect(result.body).toContain('<title>Force Curl Cffi Direct</title>');
+		// cheerio パースもされていること
+		expect(result.$('title').text()).toBe('Force Curl Cffi Direct');
+	});
+
+	test('forceCurlCffiFallback: true でも curl_cffi が無効なら通常段階に fallthrough', async () => {
+		writeMockCli('#!/usr/bin/env node\nthrow new Error("should not be invoked")\n');
+		const { scpaping } = await import('@/utils/got.js');
+		const cfg = makeConfig({ enabled: false });
+		// curl_cffi 無効 → 通常段階で実 HTTP に流れる → .invalid で DNS fail
+		await expect(
+			scpaping('https://nonexistent-host.invalid/page', {
+				curlCffiFallback: cfg,
+				forceCurlCffiFallback: true,
+			}),
+		).rejects.toThrow();
+	});
+
+	test('forceCurlCffiFallback: true でも domain allowlist 不一致なら通常段階に fallthrough', async () => {
+		writeMockCli('#!/usr/bin/env node\nthrow new Error("should not be invoked")\n');
+		const { scpaping } = await import('@/utils/got.js');
+		const cfg = makeConfig({ domains: ['only-allowed.com'] });
+		// allowlist 不一致 → 通常段階に fallthrough → .invalid で DNS fail
+		await expect(
+			scpaping('https://nonexistent-host.invalid/page', {
+				curlCffiFallback: cfg,
+				forceCurlCffiFallback: true,
+			}),
+		).rejects.toThrow();
+	});
+});

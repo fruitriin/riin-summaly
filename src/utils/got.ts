@@ -148,11 +148,42 @@ export async function scpaping(
 	// getResponseWithFallback を import している）。
 	// 初回ロード以降は Node.js のモジュールキャッシュにより同期的に解決されるため hot path のコストはほぼゼロ。
 	// 段階構造: ① default UA → ② fallback UA (phase11.9) → ③ proxy worker (phase12.1) → ④ curl_cffi (phase12.5)
-	const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
-	const response = await getResponseWithCurlCffiFallback({
-		...args,
-		method: 'GET',
-	}, fallback, opts?.proxyFallback, opts?.curlCffiFallback);
+	const curlCffiCfg = opts?.curlCffiFallback;
+	const proxyCfg = opts?.proxyFallback;
+	let response: Got.Response<string>;
+	if (
+		opts?.forceCurlCffiFallback === true
+		&& curlCffiCfg != null
+		&& curlCffiCfg.enabled
+	) {
+		// **1〜3段目をスキップして curl_cffi 直行 (phase12.5 followup #3)**:
+		// yodobashi のように TLS layer で確実に弾かれるサイトでは 1段目 socket timeout (20秒)
+		// が純損失なので、最初から curl_cffi を呼ぶ。allowlist / https: の二重防御は維持する
+		// (forceCurlCffiFallback を許可するプラグインが test() で URL を絞っている前提だが
+		// defense-in-depth で domains / protocol を再検証)。
+		const targetUrl = new URL(args.url);
+		const { matchesDomain } = await import('@/utils/proxy-fallback.js');
+		if (
+			targetUrl.protocol === 'https:'
+			&& matchesDomain(targetUrl.hostname, curlCffiCfg.domains)
+		) {
+			const { viaCurlCffi } = await import('@/utils/curl-cffi-fetch.js');
+			response = await viaCurlCffi({ ...args, method: 'GET' }, curlCffiCfg);
+		} else {
+			// allowlist / protocol を満たさない (= プラグインの想定外) → 通常段階に fallthrough
+			const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
+			response = await getResponseWithCurlCffiFallback({
+				...args,
+				method: 'GET',
+			}, fallback, proxyCfg, curlCffiCfg);
+		}
+	} else {
+		const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
+		response = await getResponseWithCurlCffiFallback({
+			...args,
+			method: 'GET',
+		}, fallback, proxyCfg, curlCffiCfg);
+	}
 
 	// PDF レスポンスは別パスで処理する。
 	// enablePdf が真のときのみ typeFilter で application/pdf を許可しているため、
