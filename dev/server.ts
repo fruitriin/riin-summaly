@@ -108,10 +108,12 @@ app.get<{ Querystring: SummalyQuery }>('/api/summaly', async (req, reply) => {
 			// Amazon は IP レピュテーション層で 500 (origin_error) もしくは 200 + content-type 欠落
 		// (bot_blocked、phase12.1 followup) で弾くケースが両方ある
 		categories: ['origin_error', 'bot_blocked'],
+			// Amazon TLD + 短縮 URL (amzn.asia / amzn.to / a.co)。Worker 側 ALLOWED_DOMAINS と同期させる。
 			domains: [
 				'amazon.com', 'amazon.co.jp', 'amazon.co.uk', 'amazon.de', 'amazon.fr',
 				'amazon.it', 'amazon.es', 'amazon.ca', 'amazon.com.au', 'amazon.com.br',
 				'amazon.com.mx', 'amazon.in',
+				'amzn.asia', 'amzn.to', 'a.co',
 			],
 			timeoutMs: 30000,
 		};

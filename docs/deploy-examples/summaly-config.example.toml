@@ -35,7 +35,10 @@ categories = ["bot_blocked", "connection_dropped"]
 # enabled = true
 # url = "https://summaly-proxy.<your>.workers.dev"
 # categories = ["origin_error"]
-# domains = ["amazon.co.jp", "amazon.com"]
+# domains = [                                  # Worker 側 ALLOWED_DOMAINS と同期させる
+#   "amazon.co.jp", "amazon.com",               # Amazon 商品ページ
+#   "amzn.asia", "amzn.to", "a.co",             # Amazon 短縮 URL (resolveRedirect 失敗時の fallback)
+# ]
 # timeoutMs = 30000
 
 [diagnostics]

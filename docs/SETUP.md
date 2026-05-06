@@ -238,10 +238,15 @@ UA fallback (phase11.9) でも救えない **IP レピュテーション層の�
 enabled = true
 url = "https://summaly-proxy.<your>.workers.dev"
 # secret は環境変数 SUMMALY_PROXY_SECRET 経由が推奨 (TOML 直書きを避ける)
-categories = ["origin_error"]
-domains = ["amazon.co.jp", "amazon.com"]
+categories = ["origin_error", "bot_blocked"]
+domains = [
+  "amazon.co.jp", "amazon.com",       # Amazon 商品ページ
+  "amzn.asia", "amzn.to", "a.co",     # Amazon 短縮 URL (resolveRedirect 失敗時の fallback)
+]
 timeoutMs = 30000
 ```
+
+> ⚠️ **`domains` は Worker 側 `wrangler.toml` の `ALLOWED_DOMAINS` と同期して更新すること**。Worker 側でも独立に持っているので、片方だけ追加すると proxy 発火と実際の Worker 側許可で食い違って混乱する。
 
 | 設定キー | 説明 | デフォルト |
 |:--|:--|:--|

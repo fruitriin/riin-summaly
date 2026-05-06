@@ -50,7 +50,10 @@ enabled = false
 # categories = ["origin_error", "bot_blocked"] # どのカテゴリで proxy を発火するか (デフォルト)
                                                 # `bot_blocked` には Amazon が 200 + content-type 欠落で
                                                 # 弾くケース (`Rejected by type filter undefined`) も含まれる
-# domains = ["amazon.co.jp", "amazon.com"]     # suffix-match。空配列禁止 (allowlist 必須)
+# domains = [                                  # suffix-match。空配列禁止 (allowlist 必須)
+#   "amazon.co.jp", "amazon.com",               # Amazon 商品ページ (TLD ごとに列挙)
+#   "amzn.asia", "amzn.to", "a.co",             # Amazon 短縮 URL (resolveRedirect が失敗したときの fallback)
+# ]                                             # ※ Worker 側 wrangler.toml の ALLOWED_DOMAINS と同期させること
 # timeoutMs = 30000                            # proxy リクエストのタイムアウト
 #
 # Worker 側のデプロイ手順は tools/cf-proxy-worker/README.md 参照。
