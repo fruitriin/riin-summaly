@@ -219,10 +219,92 @@ Step 1.3 で実機検証して **NO-GO ならコード捨てる**設計。phase1
 node tools/cf-proxy-worker/sign.mjs "https://www.amazon.co.jp/dp/B0C4LRBFX6" "$WORKER_URL" | bash | head -c 2000
 ```
 
+## phase12.1 followup で得た運用上の落とし穴
+
+GO 判定 + Step 1〜7 完了後、**本番ログを観察しながら 4 回の followup を経て** ようやく実用稼働。設計時には予見できなかった現実問題と対処パターンを記録する。
+
+### #1: `Rejected by type filter undefined` は隠れた bot block
+
+**症状**: 本番ログに `category: "unsupported_type"` で `errorMessage: "Rejected by type filter undefined"` が出る。proxy fallback は `categories: ["origin_error"]` だけをデフォルト発火対象にしていたため救援されない。
+
+**原因**: Amazon が Vultr Tokyo IP に対して **`200 OK + content-type ヘッダ欠落`** という malformed response を返す bot block 形態を持つ。`getResponse` の typeFilter 検証が undefined content-type で reject → "Rejected by type filter undefined" → categorize が `unsupported_type` に分類。
+
+**対処**:
+- `categorizeError` で `Rejected by type filter undefined` だけを `bot_blocked` に振り分ける（明示的な非 HTML PDF などは引き続き `unsupported_type`）
+- proxy fallback の default categories を `['origin_error', 'bot_blocked']` に拡張
+
+**教訓**: **「200 + 異常ヘッダ」は bot block の隠れた形態として頻繁に使われる**。HTTP ステータスコードだけ見ていると見逃すので、エラーメッセージに含まれる malformed signal も category 判定に組み込む。
+
+### #2: 本番ログの stack trace が問題箇所を秒で特定する
+
+**症状**: ある Amazon URL だけ proxy 経由でも 500 が返る。
+
+**ログの黄金行**:
+```
+StatusError: 500 Internal Server Error
+    at viaProxyWorker (/root/summaly/src/utils/proxy-fallback.ts:165:9)
+    at scpaping (/root/summaly/src/utils/got.ts:150:19)
+    at general (/root/summaly/src/general.ts:181:14)   ← これ重要
+```
+
+`general` フレームが見えた瞬間「**amazon プラグインを通っていない**」が確定。`amazon.test()` の `===` 比較で `www.amazon.co.jp` 限定だったため、bare `amazon.co.jp` が general パスに流れていたバグが見えた。
+
+**教訓**: pino でエラー stack を出すなら `err.stack` 全文を残す。「どの関数経由で来たか」が原因切り分けの 90% を占める。phase11.8 で `err` を手動シリアライズしているが、`stack` は必ず含める設計を維持。
+
+### #3: 認証スキームミスマッチを段階的に切り分けるデバッグ手順
+
+**症状**: 本番 summaly が proxy 経由で 403 / 500 を受け取るが、curl 直叩きでは Worker は 200 を返す。
+
+**根本原因**: 本番 Worker が **HMAC-based** から **token-based** にスキーマ変更されていて、summaly 側 (HMAC を送る) と非互換だった。さらに secret も不一致のケースがあった。
+
+**段階的切り分け手順** (`tools/cf-proxy-worker/test-auth-stages.sh` で自動化):
+
+| Stage | コメントアウトを外す範囲 | 期待動作 |
+|---|---|---|
+| 1 | 全 auth コメントアウト | ヘッダ無し GET → 200 (透過プロキシのみ) |
+| 2 | param 必須チェック | sig/ts ヘッダ無しは 403 / ダミー値で 200 |
+| 3 | timestamp 窓チェック | 古い ts は 403 / 現在時刻なら 200 |
+| 4 | HMAC 完全検証 | 正しい sig (sign.mjs) で 200 / 不正は 403 |
+
+各 Stage で「どの認証層で壊れたか」をピンポイント特定できる。**段階的に絞り込めば 4 段階で必ず原因にたどり着く**。
+
+### #4: allowlist は **両側同期義務** を明文化する
+
+Worker `wrangler.toml` の `ALLOWED_DOMAINS` と summaly `[scraping.proxy].domains` は独立に管理される。**片方だけ更新すると proxy 発火と Worker 側許可が乖離して混乱**する。
+
+phase12.1 followup #4 で `amzn.asia` を summaly 側 domains に追加したとき、Worker 側にも同期する必要があった。手順を docs に明記:
+
+```bash
+# 1. Worker 側
+vim tools/cf-proxy-worker/wrangler.toml   # ALLOWED_DOMAINS に追加
+cd tools/cf-proxy-worker && npx wrangler deploy
+
+# 2. summaly 側
+vim /etc/summaly/config.toml              # [scraping.proxy].domains に同じ値
+sudo systemctl restart summaly
+```
+
+将来的には Worker から `/api/config-check` 等で allowlist を取得して summaly が自動同期する設計余地はあるが、現状は **目視 + コメント** での同期義務管理。
+
+### #5: 本番テスト URL は **複数バリエーション** で踏み込み調査する
+
+phase12.1 GO 判定 (Step 1.3) で `dp/B0C4LRBFX6` 1 件で GO したが、**実は `dp/<asin>?long_query` や `amzn.asia/d/xxx` (短縮 URL) は別挙動**だった。
+
+教訓: 「Amazon が proxy 経由で取れる」を実証する curl テストは:
+- 短い canonical URL (`/dp/<asin>`)
+- 長い query 付き (`/dp/<asin>?_encoding=...&ref_=...`)
+- SEO slug 付き (`/<日本語slug>/dp/<asin>/`)
+- bare hostname (`amazon.co.jp/...` without www)
+- 短縮 URL (`amzn.asia/d/<id>`)
+
+**4〜5 パターン全部叩いて動作確認**するのが正しい GO 判定。1 パターンだけだと本番で穴が残る。
+
 ## 関連
 
 - [outbound-ip-reputation.md](outbound-ip-reputation.md) — 背景となる Vultr/Amazon 問題の実証データ
 - [bot-block-ua-retry.md](bot-block-ua-retry.md) — phase11.9 (UA レイヤ救援) の知見
+- [amazon-url-normalization.md](amazon-url-normalization.md) — Amazon URL の canonical 化と短縮 URL 対応 (phase12.1 followup の Amazon 特化編)
 - [docs/plans/phase12.1-cf-workers-proxy-fallback.md](../plans/phase12.1-cf-workers-proxy-fallback.md) — Plan
 - [tools/cf-proxy-worker/README.md](../../tools/cf-proxy-worker/README.md) — Worker デプロイ手順
+- [tools/cf-proxy-worker/test-auth-stages.sh](../../tools/cf-proxy-worker/test-auth-stages.sh) — 認証段階的復活デバッグ
 - [src/utils/proxy-fallback.ts](../../src/utils/proxy-fallback.ts) — summaly 側組み込み
