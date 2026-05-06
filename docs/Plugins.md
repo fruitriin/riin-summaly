@@ -71,12 +71,14 @@ interface SummalyPlugin {
 
 | 項目 | 内容 |
 |:--|:--|
-| マッチ | `www.amazon.{com, co.jp, ca, com.br, com.mx, co.uk, de, fr, it, es, nl, cn, in, au}` |
-| 取得方法 | `scpaping()` で HTML を取得し、DOM から直接抽出 |
-| 抽出フィールド | `title` ← `#title`、`description` ← `#productDescription` または `meta[name=description]`、`thumbnail` ← `#landingImage[src]`、`player` ← `meta[property=twitter:player]` 系 |
+| マッチ | `(?:www\.)?amazon\.{com, co.jp, ca, com.br, com.mx, co.uk, de, fr, it, es, nl, cn, in, au}` (bare / www 両形式、phase12.1 followup #3) + `amzn.asia` / `amzn.to` / `a.co` (短縮、phase12.1 followup #4) |
+| 取得方法 | `scpaping()` で HTML を取得し、DOM + OG meta tag から抽出 |
+| 抽出フィールド | `title` ← `#title` または `meta[property=og:title]`、`description` ← `#productDescription` / `og:description` / `meta[name=description]`、`thumbnail` ← `#landingImage[src]` または `og:image`、`player` ← `meta[property=twitter:player]` 系 |
 | 固定値 | `sitename: 'Amazon'`、`icon: 'https://www.amazon.com/favicon.ico'` |
-| 備考 | `general` を経由しない独自実装 |
-| 短縮 URL | `amzn.asia` / `amzn.to` / `a.co` は `KNOWN_SHORT_HOSTS` に含まれるため Fastify モードでも `resolveRedirect()` で `www.amazon.{com,co.jp,...}` に解決される（HEAD→GET fallback 経由、phase9.1） |
+| 備考 | `general` を経由しない独自実装。**proxy fallback 対応** (phase12.1) で Vultr Tokyo IP block を救援 |
+| **URL 正規化** (phase12.1 followup) | `normalizeAmazonUrl()` で `/<slug>/dp/<asin>/?ref_=...` を `https://www.amazon.<TLD>/dp/<ASIN>` の canonical 形に揃える。query / fragment / SEO slug を全部削り、bare hostname → `www.` 付きに統一。長 query が CF Workers proxy 経由でも 500 を返すケースへの対処 |
+| **短縮 URL の 2 段取得** (phase12.1 followup #4) | `amzn.asia/d/<id>` は path から ASIN を抽出できないため、一度 `scpaping()` → `response.url` から ASIN 抽出 → canonical 形で再 `scpaping()`。Vultr 直叩きでは Amazon が 200 + 軽量 preview HTML (`og:image=previewdoh.png`) を返すケースがあるため、final URL から ASIN が取れない場合は preview HTML をそのままパースして fallback |
+| **詳細** | [docs/knowhow/amazon-url-normalization.md](knowhow/amazon-url-normalization.md) — Amazon プラグイン特有の URL ハンドリング知見 |
 
 ### bluesky
 

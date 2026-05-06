@@ -1,11 +1,13 @@
 # summaly outbound proxy worker (phase12.1)
 
-> 状態: **実験フェーズ (Step 1.3 GO/NO-GO 待ち)**
-> 用途: Vultr Tokyo の outbound IP では amazon.co.jp が UA 関係なく 500 を返す問題（[knowhow/outbound-ip-reputation.md](../../docs/knowhow/outbound-ip-reputation.md)）を、Cloudflare Workers Free 経由のアウトバウンド proxy で救援する実験。
+> 状態: **本番稼働中** (2026-05-06 GO 確定 + followup #1〜#4 で本番救援動作確認済み)
+> 用途: Vultr Tokyo の outbound IP では amazon.co.jp が UA 関係なく 500 を返す問題（[knowhow/outbound-ip-reputation.md](../../docs/knowhow/outbound-ip-reputation.md)）を、Cloudflare Workers Free 経由のアウトバウンド proxy で救援。
 
-## なぜ実験フェーズか
+## 本フェーズの位置づけ
 
-[Plan](../../docs/plans/phase12.1-cf-workers-proxy-fallback.md) の Step 1.3 が **GO/NO-GO 判定** ポイント。CF Workers の egress IP（AS13335 等）からも Amazon が 500 を返すなら本フェーズは撤退する設計。実機検証が必要なため、ここまでのスケルトン実装後はオーナー（Cloudflare アカウント保持者）が手動デプロイ + curl 検証する必要がある。
+phase12.1 [Plan](../../docs/plans/phase12.1-cf-workers-proxy-fallback.md) は **完了**。本 Worker は本番運用中で、`amzn.asia` 短縮 URL / 長 query 付き / bare hostname など全 URL バリエーションで Amazon 商品ページ取得が通る状態。
+
+新規導入時の手順 (デプロイ + 認証セットアップ + 動作確認) は下記の各セクションを参照。
 
 ## 構成
 
@@ -97,15 +99,9 @@ git rm -r tools/cf-proxy-worker/
 # docs/plans/phase12.1-cf-workers-proxy-fallback.md に「撤退判定: <日付>」を明記
 ```
 
-### GO 時の次ステップ
+### GO 後の進捗 (履歴)
 
-[Plan](../../docs/plans/phase12.1-cf-workers-proxy-fallback.md) の Step 2 以降を進める:
-- Step 2: Worker のセキュリティ強化（既にミニマル実装済み、補強する余地）
-- Step 3: summaly 側の `proxy-fallback.ts` 実装
-- Step 4: 統合テスト
-- Step 5: pino ログ拡張
-- Step 6: docs 更新
-- Step 7: knowhow 記録
+phase12.1 GO 確定 (2026-05-05) 後、Step 2〜7 + followup #1〜#4 まですべて完了済み。詳細は [Plan](../../docs/plans/phase12.1-cf-workers-proxy-fallback.md) 参照。残るのは Step 5 (pino `proxyAttempted`/`proxySucceeded` フィールド) のみで、これは phase11.6 deferral と合流予定。
 
 ## 動作確認 (`wrangler dev` ローカル実行)
 
@@ -165,5 +161,7 @@ npx wrangler tail
 ## 関連
 
 - [docs/plans/phase12.1-cf-workers-proxy-fallback.md](../../docs/plans/phase12.1-cf-workers-proxy-fallback.md) — Plan
+- [docs/knowhow/cf-workers-outbound-proxy.md](../../docs/knowhow/cf-workers-outbound-proxy.md) — Worker 設計と運用知見 (followup #1〜#5)
+- [docs/knowhow/amazon-url-normalization.md](../../docs/knowhow/amazon-url-normalization.md) — Amazon URL 正規化と短縮 URL 対応
 - [docs/knowhow/outbound-ip-reputation.md](../../docs/knowhow/outbound-ip-reputation.md) — 背景となる Vultr/Amazon 問題の実証データ
 - [docs/knowhow/bot-block-ua-retry.md](../../docs/knowhow/bot-block-ua-retry.md) — phase11.9 (UA レイヤ救援) の知見

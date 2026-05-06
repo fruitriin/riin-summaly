@@ -109,7 +109,7 @@ allowed = ["amazon", "bluesky", "wikipedia", "branchio-deeplinks", "youtube", "s
 
 | プラグイン | 対象 | 概要 |
 |:--|:--|:--|
-| `amazon` | `www.amazon.{com, co.jp, ...}` | DOM から商品タイトル・画像を直接取得。`amzn.asia` / `amzn.to` / `a.co` 短縮も HEAD→GET fallback で展開 |
+| `amazon` | `(?:www\.)?amazon.{com, co.jp, ...}` + `amzn.asia` / `amzn.to` / `a.co` 短縮 | DOM (`#title` 等) と OG meta から抽出。短縮 URL は 2 段取得 (final URL から ASIN 抽出 → canonical 再取得)。proxy fallback (phase12.1) で Vultr Tokyo IP block を救援 |
 | `bluesky` | `bsky.app` | HEAD が 404 になるため GET のみで取得 |
 | `wikipedia` | `*.wikipedia.org` | MediaWiki API から intro テキスト取得 |
 | `branchio-deeplinks` | `*.app.link` / `spotify.link` | `$web_only=true` を付けて Web 版にリダイレクトさせ汎用パスへ |

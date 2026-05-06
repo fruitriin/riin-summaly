@@ -313,8 +313,9 @@ pnpm dev
 `req.log` の pino 出力で proxy 救援の成否を見れます (phase11.8 の機構を流用、`error.category === "origin_error"` のリクエストを追跡):
 
 ```bash
-# proxy で救援できなかった amazon を抽出 (origin_error が残ってる = proxy も失敗 or 設定無効)
-sudo journalctl -u summaly -o cat | jq -c 'select(.err.category == "origin_error")'
+# proxy で救援できなかったケースを抽出 (proxy も失敗 or 設定無効)
+# followup #1 で bot_blocked も proxy 発火対象になったので両方見る
+sudo journalctl -u summaly -o cat | jq -c 'select(.err.category == "origin_error" or .err.category == "bot_blocked")'
 ```
 
 パース失敗ドメインのログ蓄積 (phase10.1)

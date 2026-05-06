@@ -1,7 +1,20 @@
 # Phase 12.1 — Cloudflare Workers proxy フォールバック（Amazon class IP block 救援）
 
-> 状態: **Step 1〜4 / 6 / 7 完了 + dev サーバ統合 (2026-05-05)。Step 4.3 E2E オーナー検証成功 (`SHARED_SECRET=*** node sign.mjs amazon.co.jp/dp/B0C4LRBFX6` で透過プロキシ動作確認)。Step 5 (pino fallback フィールド) のみ phase11.6 deferral と合流予定**
-> 実証データ: `https://www.amazon.co.jp/dp/B0C4LRBFX6` を CF Workers 経由で取得 → **HTTP 200 / 2.6 MB / 1.8 秒**（フル商品ページ、bot check ページではない）。Vultr 直叩きの 500 と比較してクリアな勝利
+> 状態: **完了 (2026-05-06) — followup #1〜#4 まで本番動作確認済み**
+>
+> Step 5 (pino `proxyAttempted/Succeeded` フィールド) のみ phase11.6 deferral と合流予定。
+>
+> **本番実証** (2026-05-06):
+> - `dp/B0C4LRBFX6` (canonical) → 200 / 2.6 MB / 1.8 秒
+> - `dp/B0FRSGC73Z?_encoding=...&ref_=...` (長 query) → 200 (followup #2 の URL 正規化で救援)
+> - `amazon.co.jp/dp/B0GFN8129G/ref=...` (bare hostname) → 200 (followup #3 の test() 拡張で救援)
+> - `amzn.asia/d/0faScmAn` (短縮 URL) → 200 + 商品ページの正しいタイトル/サムネ (followup #4 の 2 段取得で救援)
+>
+> ### followup 履歴
+> - **#1** (2026-05-06): `Rejected by type filter undefined` を `bot_blocked` に再分類 + proxy categories デフォルト拡張
+> - **#2** (2026-05-06): `normalizeAmazonUrl` で `/dp/<ASIN>` canonical 化 (long query が CF Workers 経由でも 500 を返すため)
+> - **#3** (2026-05-06): bare hostname (`amazon.co.jp`) を `test()` でマッチ + `www.` 付きに正規化
+> - **#4** (2026-05-06): `amzn.asia` 等の短縮 URL を `test()` に追加 + 2 段取得 (final URL から ASIN 抽出 → canonical 再 scpaping)
 > 種別: 機能改善 / IP レピュテーション層への対処
 > サイズ: **M〜L**
 > 依存: phase11.9（`getResponseWithFallback` を 3 段に拡張、または並列に追加）、phase8.1（TOML 設定）、phase4.1（LRU キャッシュ）
@@ -115,12 +128,18 @@ url = "https://summaly-proxy.<your>.workers.dev"
 # SUMMALY_PROXY_SECRET 環境変数からも読める (config.toml に書きたくない場合)
 # secret = "..."
 
-# どのカテゴリで proxy フォールバックを発火するか
-categories = ["origin_error"]
+# どのカテゴリで proxy フォールバックを発火するか (followup #1 で bot_blocked も追加)
+categories = ["origin_error", "bot_blocked"]
 
-# Proxy 経由で叩くドメイン allowlist (glob 風: amazon.* で全 TLD マッチ)
-# ここに無いドメインは proxy フォールバック対象外
-domains = ["amazon.*"]
+# Proxy 経由で叩くドメイン allowlist。**suffix-match** (`amazon.co.jp` を書くと `*.amazon.co.jp` も通す)。
+# 完全な glob `amazon.*` はサポートしないため TLD ごとに列挙する。
+# Amazon 短縮 URL も含める (followup #4)。
+domains = [
+  "amazon.com", "amazon.co.jp", "amazon.co.uk", "amazon.de", "amazon.fr",
+  "amazon.it", "amazon.es", "amazon.ca", "amazon.com.au", "amazon.com.br",
+  "amazon.com.mx", "amazon.in",
+  "amzn.asia", "amzn.to", "a.co",
+]
 
 # Proxy リクエストのタイムアウト (ミリ秒)
 # 通常の operationTimeout より短くする (proxy 経由なので余分なホップがある)
