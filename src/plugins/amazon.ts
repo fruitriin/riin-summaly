@@ -121,9 +121,18 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
  * `#landingImage` で抽出。`amzn.asia` の軽量 preview HTML だと商品ページの DOM 要素が無いため、
  * OG meta tags (`og:title` / `og:image` / `og:description`) を fallback で見て「Amazon」「Amazon ロゴ」
  * 程度の薄い情報でも返す。
+ *
+ * **Prime Video / その他の専用ページ対応 (followup #5)**: `/gp/video/detail/<asin>` のような
+ * Prime Video URL は商品ページ風 HTML を返すが `#title` が空 (JS で動的に埋まる)、og:title も空のため
+ * `<title>` HTML タグを最終 fallback として見る。`<title>` には「機動戦士ガンダム 水星の魔女
+ * シーズン1を観る | Prime Video」のような可読タイトルが入っている。
  */
 function parseAmazonHtml($: import('cheerio').CheerioAPI): summary {
-	const title = $('#title').text() || $('meta[property="og:title"]').attr('content') || '';
+	const title = $('#title').text().trim()
+		|| $('meta[property="og:title"]').attr('content')
+		|| $('meta[name="twitter:title"]').attr('content')
+		|| $('title').text().trim()
+		|| '';
 
 	const description =
 		$('#productDescription').text() ||

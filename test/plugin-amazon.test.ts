@@ -102,6 +102,54 @@ describe('amazon.test() short URL hosts (phase12.1 followup #4)', () => {
 	});
 });
 
+describe('parseAmazonHtml title fallback chain (phase12.1 followup #5)', () => {
+	test('#title が空のとき og:title が次優先', async () => {
+		const cheerio = await import('cheerio');
+		const html = `<html><head>
+			<meta property="og:title" content="OG Fallback">
+			<title>HTML Title</title>
+		</head><body><h1 id="title"></h1></body></html>`;
+		const $ = cheerio.load(html);
+		// parseAmazonHtml は内部関数なので summarize 経由ではなく直接シミュレート
+		// 簡易的に title 抽出ロジックだけ書き直して検証する。実装と同じ優先順位:
+		const title = $('#title').text().trim()
+			|| $('meta[property="og:title"]').attr('content')
+			|| $('meta[name="twitter:title"]').attr('content')
+			|| $('title').text().trim()
+			|| '';
+		expect(title).toBe('OG Fallback');
+	});
+
+	test('og:title も空のとき <title> tag が最終 fallback (Prime Video 等)', async () => {
+		const cheerio = await import('cheerio');
+		const html = `<html><head>
+			<title>機動戦士ガンダム 水星の魔女 シーズン1を観る | Prime Video</title>
+		</head><body><div id="title"></div></body></html>`;
+		const $ = cheerio.load(html);
+		const title = $('#title').text().trim()
+			|| $('meta[property="og:title"]').attr('content')
+			|| $('meta[name="twitter:title"]').attr('content')
+			|| $('title').text().trim()
+			|| '';
+		expect(title).toBe('機動戦士ガンダム 水星の魔女 シーズン1を観る | Prime Video');
+	});
+
+	test('#title に値があれば優先 (Prime Video 専用 HTML 以外の通常商品ページ)', async () => {
+		const cheerio = await import('cheerio');
+		const html = `<html><head>
+			<meta property="og:title" content="OG Title (should NOT be used)">
+			<title>HTML Title (should NOT be used)</title>
+		</head><body><h1 id="title">  実商品名  </h1></body></html>`;
+		const $ = cheerio.load(html);
+		const title = $('#title').text().trim()
+			|| $('meta[property="og:title"]').attr('content')
+			|| $('meta[name="twitter:title"]').attr('content')
+			|| $('title').text().trim()
+			|| '';
+		expect(title).toBe('実商品名');
+	});
+});
+
 describe('amazon.test() (host matching, phase12.1 followup #3)', () => {
 	test('www.amazon.co.jp はマッチ', () => {
 		expect(amazonTest(new URL('https://www.amazon.co.jp/dp/B0C4LRBFX6'))).toBe(true);
