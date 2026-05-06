@@ -23,6 +23,33 @@ phase11.4 / 11.6 / 11.7 / 11.9 / 12.1 で確立した「動かない URL の切�
    ログ        curl 各種        5 種類            5 layer         + テスト       4-5 URL バリエーション
 ```
 
+## テスト用エンドポイント
+
+開発時・本番動作確認時に使う summaly サーバ:
+
+| 環境 | URL pattern | 用途 |
+|---|---|---|
+| **ローカル dev** | `http://127.0.0.1:3000/api/summaly?url=<encoded>&proxy=1` | `pnpm dev` で起動。proxy fallback の手元再現は `&proxy=1` 追加 (env で `SUMMALY_PROXY_URL` + `SUMMALY_PROXY_SECRET` 設定済みのとき) |
+| **本番 (riin-summaly fork)** | `https://summaly.riinswork.space/?url=<encoded>` | デプロイ済み Vultr Tokyo インスタンス。`&t=<任意>` を付けると nginx の前段キャッシュを bypass できる (運用上の cache buster) |
+| **CF Workers proxy 直叩き** | `https://summaly-proxy.riinsworkspace.workers.dev/?url=<encoded>` | HMAC または token 認証のヘッダが必要。Worker そのものの動作確認用 (詳細は [tools/cf-proxy-worker/README.md](../../tools/cf-proxy-worker/README.md)) |
+
+呼び出し例:
+
+```bash
+# URL を encode してから本番に叩く
+URL='https://www.amazon.co.jp/gp/video/detail/B0BX1TYH98/'
+ENC=$(node -e "console.log(encodeURIComponent('$URL'))")
+
+# 本番 (cache buster 付き)
+curl -sS "https://summaly.riinswork.space/?t=$(date +%s)&url=${ENC}" | jq
+
+# ローカル dev (proxy 機能 ON)
+curl -sS "http://127.0.0.1:3000/api/summaly?url=${ENC}&proxy=1" | jq
+
+# 本番ログを並行で観察 (別ターミナル)
+ssh summaly 'sudo journalctl -u summaly -o cat -f' | jq -c 'select(.msg == "summaly error")'
+```
+
 ## Phase 1: 症状特定 (本番ログから)
 
 本番が稼働中なら **まず pino ログを確認**（phase11.8 で出力するようにしている）:
@@ -201,7 +228,16 @@ dev サーバの sample-urls からワンクリックで JSON / カードプレ�
 | bare hostname (www. なし) | `https://amazon.co.jp/dp/B0XXXXXXXX` |
 | 短縮 URL | `https://amzn.asia/d/<id>` |
 
-各バリエーションで `https://summaly.riinswork.space/?url=<encoded>` を叩き、JSON が正しく返ることを確認。
+各バリエーションで本番サーバ (`https://summaly.riinswork.space/?url=<encoded>`) を叩き、JSON が正しく返ることを確認。`?t=<任意>` を加えると nginx 前段キャッシュを bypass できる。
+
+実例 (Prime Video URL の動作確認、followup #5 の対象):
+
+```bash
+URL='https://www.amazon.co.jp/gp/video/detail/B0BX1TYH98/ref=atv_hm_hom_c_DG1e775c_4_2'
+ENC=$(node -e "console.log(encodeURIComponent('$URL'))")
+curl -sS "https://summaly.riinswork.space/?t=$(date +%s)&url=${ENC}" | jq .
+# 期待: title が「機動戦士ガンダム 水星の魔女 シーズン1を観る | Prime Video」になること
+```
 
 ### 失敗時の本番ログ確認
 
