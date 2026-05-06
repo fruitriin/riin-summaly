@@ -47,7 +47,12 @@ curl -sS "https://summaly.riinswork.space/?t=$(date +%s)&url=${ENC}" | jq
 curl -sS "http://127.0.0.1:3000/api/summaly?url=${ENC}&proxy=1" | jq
 
 # 本番ログを並行で観察 (別ターミナル)
-ssh summaly 'sudo journalctl -u summaly -o cat -f' | jq -c 'select(.msg == "summaly error")'
+# 注: journalctl は環境によって `-o cat` でも `5月 06 21:45 host proc[123]:` プレフィックスが
+# 残ることがある + jq の `select(.x | ...)` は null フィールドで parse error になるため、
+# `grep ^{` で JSON 行だけ抽出 + `// ""` で null safe 化が安全
+ssh summaly 'sudo journalctl -u summaly -o cat -f' \
+  | grep --line-buffered -E '^\{' \
+  | jq -c 'select(.msg == "summaly error")'
 ```
 
 ## Phase 1: 症状特定 (本番ログから)
@@ -56,8 +61,16 @@ ssh summaly 'sudo journalctl -u summaly -o cat -f' | jq -c 'select(.msg == "summ
 
 ```bash
 # error / warn だけ抽出（amazon を含む URL に絞る例）
+# `grep ^{` で JSON 行だけ抽出 (環境により `5月 06 21:45 host proc[123]:` プレフィックスが残る場合あり)。
+# `// ""` で null safe 化 (incoming request ログ等で `.url` が無い行を select すると jq が parse error になる)。
 sudo journalctl -u summaly -o cat --since "30 min ago" \
-  | jq -c 'select(.url | contains("amazon"))'
+  | grep -E '^\{' \
+  | jq -c 'select((.url // "") | contains("amazon")) | select((.req.url // "") | contains("amazon"))'
+
+# req.url 経由 (Fastify 「incoming request」ログ) のみ見たい場合
+sudo journalctl -u summaly -o cat --since "30 min ago" \
+  | grep -E '^\{' \
+  | jq -c 'select(.req != null) | select(.req.url | contains("amazon"))'
 ```
 
 注目するフィールド:
@@ -266,6 +279,7 @@ curl -sS "https://summaly.riinswork.space/?t=$(date +%s)&url=${ENC}" | jq .
 
 ```bash
 sudo journalctl -u summaly -o cat -f \
+  | grep --line-buffered -E '^\{' \
   | jq -c 'select(.msg == "summaly error")'
 ```
 
@@ -295,6 +309,26 @@ bash .claude/tests/run-all.sh
 | ユーザー向け機能 | CHANGELOG (unreleased) |
 | dev サーバ | dev/sample-urls.ts |
 | 設計判断 | docs/knowhow/ + docs/knowhow/INDEX.md |
+
+## journalctl + jq の落とし穴 (再発しがち)
+
+```bash
+# ❌ 失敗パターン 1: parse error (環境によりプレフィックスが残る)
+sudo journalctl -u summaly -o cat | jq -c '...'
+# → jq: parse error: Invalid numeric literal at line 1, column 9
+# → "5月 06 21:45 host proc[123]: {...}" の "5" が数値として解釈される
+
+# ❌ 失敗パターン 2: null containment (incoming request 等の部分ログで select が落ちる)
+... | jq -c 'select(.req.url | contains("amazon"))'
+# → jq: error: null (null) and string ("amazon") cannot have their containment checked
+
+# ✅ 正解: grep ^{ で JSON 行だけ抽出 + null safe 化
+sudo journalctl -u summaly -o cat \
+  | grep -E '^\{' \
+  | jq -c 'select((.req.url // "") | contains("amazon"))'
+```
+
+`select((.foo // "") | contains("..."))` で **「キーが無い行も `""` 扱い → contains は false → select 外す」** という null safe ナビゲーションが定石。
 
 ## 関連 knowhow
 
