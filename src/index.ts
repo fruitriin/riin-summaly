@@ -406,8 +406,23 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 	// Fastify モード（followRedirects: false）でも、サービス公式の短縮 URL に限り
 	// 解決後の URL でプラグインマッチングが行われるようにする。
 	let initialHost = '';
-	try { initialHost = new URL(url).hostname; } catch { /* malformed URL は後続の new URL で throw する */ }
-	const shouldResolve = opts.followRedirects || KNOWN_SHORT_HOSTS.has(initialHost);
+	let initialUrl: URL | null = null;
+	try {
+		initialUrl = new URL(url);
+		initialHost = initialUrl.hostname;
+	} catch { /* malformed URL は後続の new URL で throw する */ }
+
+	// **`skipRedirectResolution = true` を宣言したプラグイン**が初期 URL にマッチする場合は、
+	// HEAD/GET probe をスキップする (phase12.5)。yodobashi のように TLS layer で bot 切断する
+	// 終端確定 URL に対して、resolveRedirect の HEAD/GET probe が timeout (20 秒) まで空回りする
+	// 純損失を回避する。terminal URL を持つプラグインのみが宣言する想定 (短縮 URL 系プラグインでは
+	// 絶対に有効化しないこと、その場合 resolveRedirect が必須)。
+	const skipResolvePlugin = initialUrl != null
+		? plugins.find(p => p.skipRedirectResolution === true && p.test(initialUrl as URL))
+		: undefined;
+
+	const shouldResolve = !skipResolvePlugin
+		&& (opts.followRedirects || KNOWN_SHORT_HOSTS.has(initialHost));
 	if (shouldResolve) {
 		actualUrl = await resolveRedirect(url, opts);
 	}

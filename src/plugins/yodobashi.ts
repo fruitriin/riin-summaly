@@ -34,6 +34,16 @@ export function test(url: URL): boolean {
 	return YODOBASHI_HOST.test(url.hostname);
 }
 
+/**
+ * yodobashi は **URL が終端確定** (短縮 URL でない、商品 URL は `/product/<id>/` の固定形) なので
+ * `summaly()` 冒頭の `resolveRedirect` (HEAD/GET probe) は不要。さらに HEAD も TLS layer で
+ * 切断されるため、デフォルト挙動だと HEAD probe が timeout (20 秒) まで空回りする純損失が発生する。
+ *
+ * `skipRedirectResolution = true` を宣言することで `summaly()` がこのプラグインにマッチした URL に
+ * 対して resolveRedirect 段を完全にスキップする。本番実測で 21 秒 → 1〜3 秒に短縮見込み。
+ */
+export const skipRedirectResolution = true;
+
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
 	// proxy fallback 段は yodobashi では構造的に救えない (CF Worker fetch の TLS フィンガープリントも
 	// 固定なので yodobashi 側で弾かれる)。本番実測で ~15-20 秒の純損失だったため強制スキップする。

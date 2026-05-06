@@ -1167,6 +1167,26 @@ describe('local tests', () => {
 				expect(t('https://shop.yodobashi.com/')).toBe(false);  // anchored ^...$ で落ちる
 			});
 
+			test('yodobashi プラグインは skipRedirectResolution = true を宣言している (phase12.5)', () => {
+				// HEAD/GET probe が yodobashi の TLS 切断で 20 秒 timeout 待ちになる純損失を回避するため、
+				// summaly() の resolveRedirect を skip させるフラグ。
+				const yo = builtinPlugins.find(p => p.name === 'yodobashi');
+				expect(yo).toBeDefined();
+				expect(yo!.skipRedirectResolution).toBe(true);
+			});
+
+			test('短縮 URL を扱うプラグイン (amazon / branchio-deeplinks) は skipRedirectResolution を宣言していない (phase12.5)', () => {
+				// 短縮 URL 系プラグインで skipRedirectResolution = true にすると resolveRedirect されず、
+				// 初期 URL のままプラグインに渡って正しく動作しなくなるため、絶対に false 相当 (未宣言) にすべき。
+				const amazon = builtinPlugins.find(p => p.name === 'amazon');
+				expect(amazon).toBeDefined();
+				expect(amazon!.skipRedirectResolution).toBeFalsy();
+
+				const branch = builtinPlugins.find(p => p.name === 'branchio-deeplinks');
+				expect(branch).toBeDefined();
+				expect(branch!.skipRedirectResolution).toBeFalsy();
+			});
+
 			test('spotify プラグインが open.spotify.com にマッチする', () => {
 				const spotify = builtinPlugins.find(p => p.name === 'spotify');
 				expect(spotify).toBeDefined();
@@ -2310,6 +2330,95 @@ describe('local tests', () => {
 
 			// summaly が原 URL のままスクレイプを試みて 500 を踏み throw する
 			await expect(summaly(`${host}/short`, { followRedirects: true })).rejects.toThrow();
+		});
+
+		test('skipRedirectResolution = true を宣言したプラグインがマッチすると HEAD/GET probe が呼ばれない (phase12.5)', async () => {
+			let headHits = 0;
+			let getProbeHits = 0;
+			app = fastify();
+			// HEAD/GET probe (resolveRedirect) が呼ばれたら必ずカウントされる
+			app.head('/page', (_req, reply) => {
+				headHits++;
+				return reply.status(200).send();
+			});
+			app.get('/page', (_req, reply) => {
+				const range = _req.headers['range'];
+				if (range === 'bytes=0-0') {
+					// `Range: bytes=0-0` は phase9.1 の GET fallback probe シグニチャ
+					getProbeHits++;
+				}
+				return reply.status(200).send();
+			});
+			await app.listen({ port });
+
+			// skipRedirectResolution = true を宣言したカスタムプラグイン (Summary を直接返す)
+			const customPlugin = {
+				name: 'skip-redirect-test',
+				test: (u: URL) => u.pathname === '/page',
+				summarize: async () => ({
+					title: 'Skip Redirect Test',
+					icon: null,
+					description: null,
+					thumbnail: null,
+					sitename: null,
+					player: { url: null, width: null, height: null, allow: [] },
+					activityPub: null,
+					fediverseCreator: null,
+				}),
+				skipRedirectResolution: true,
+			};
+
+			const summary = await summaly(`${host}/page`, {
+				followRedirects: true,
+				plugins: [customPlugin],
+			});
+			expect(summary.title).toBe('Skip Redirect Test');
+			// resolveRedirect の HEAD/GET probe が呼ばれていないこと
+			expect(headHits).toBe(0);
+			expect(getProbeHits).toBe(0);
+		});
+
+		test('skipRedirectResolution = true でもプラグインが test() でマッチしなければ resolveRedirect は走る (回帰防止)', async () => {
+			let headHits = 0;
+			app = fastify();
+			app.head('/short', (_req, reply) => {
+				headHits++;
+				reply.header('location', `${host}/resolved`);
+				return reply.status(301).send();
+			});
+			app.head('/resolved', (_req, reply) => reply.status(200).send());
+			app.get('/resolved', (_req, reply) => {
+				const html = '<html><head><title>Resolved</title></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			await app.listen({ port });
+
+			// /other にだけマッチするプラグイン (`/short` には test() が false を返す)
+			const customPlugin = {
+				name: 'narrow-test',
+				test: (u: URL) => u.pathname === '/other',
+				summarize: async () => ({
+					title: 'Never Called',
+					icon: null,
+					description: null,
+					thumbnail: null,
+					sitename: null,
+					player: { url: null, width: null, height: null, allow: [] },
+					activityPub: null,
+					fediverseCreator: null,
+				}),
+				skipRedirectResolution: true,
+			};
+
+			const summary = await summaly(`${host}/short`, {
+				followRedirects: true,
+				plugins: [customPlugin],
+			});
+			expect(summary.title).toBe('Resolved');
+			// プラグインがマッチしないので resolveRedirect が通常通り走る
+			expect(headHits).toBeGreaterThanOrEqual(1);
 		});
 	});
 

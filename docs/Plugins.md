@@ -41,6 +41,13 @@ interface SummalyPlugin {
 
   /** 実際の取得処理。Summary を返す。マッチしたが処理失敗（null）は呼び元で `failed summarize` として throw される。 */
   summarize: (url: URL, opts?: GeneralScrapingOptions) => Promise<Summary | null>;
+
+  /** `summaly()` 冒頭の `resolveRedirect` (HEAD/GET probe) を **スキップさせる宣言** (phase12.5)。
+   *  `true` を宣言すると、初期 URL がこのプラグインの `test()` にマッチした場合に限り
+   *  HEAD/GET probe を完全スキップする。**TLS layer で bot 切断するサイト + URL が終端確定**
+   *  (短縮 URL でない、リダイレクト不要) のケースで HEAD probe が timeout で空回りする純損失を回避。
+   *  短縮 URL を扱うプラグイン (`amazon` の `amzn.asia` / `branchio-deeplinks` 等) では絶対に true にしないこと。 */
+  skipRedirectResolution?: boolean;
 }
 ```
 
@@ -51,16 +58,17 @@ interface SummalyPlugin {
 
 `summaly(url, opts)` の処理順:
 
-1. `opts.followRedirects` が true、または URL のホストが `KNOWN_SHORT_HOSTS`（`youtu.be` / `amzn.asia` / `amzn.to` / `a.co` / `t.co` / `bit.ly` 等）に含まれるなら **`resolveRedirect()`** でリダイレクトを解決:
+1. **初期 URL でプラグインを事前マッチング**: `skipRedirectResolution = true` を宣言したプラグインが初期 URL にマッチする場合は、次ステップの `resolveRedirect` をスキップする (phase12.5)
+2. `opts.followRedirects` が true、または URL のホストが `KNOWN_SHORT_HOSTS`（`youtu.be` / `amzn.asia` / `amzn.to` / `a.co` / `t.co` / `bit.ly` 等）に含まれるなら **`resolveRedirect()`** でリダイレクトを解決 (ステップ 1 でスキップが宣言されていなければ):
    - まず HEAD を試す（軽量、body を受信しない）
    - HEAD が失敗した場合は GET に fallback (`Range: bytes=0-0` で body 受信を最小化)。`amzn.asia` のように HEAD に 404 を返すが GET には 301 を返すサーバ向け (phase9.1)
    - どちらも失敗した場合は元の URL のまま続行
-2. プラグイン配列を順に走査して `test(url)` が `true` を返す **最初の** プラグインを採用
-3. プラグイン配列の構築順:
+3. プラグイン配列を順に走査して `test(url)` が `true` を返す **最初の** プラグインを採用
+4. プラグイン配列の構築順:
    1. 組み込みプラグイン（`allowedPlugins` が指定されていれば `name` で絞り込み）
    2. `opts.plugins` で渡されたカスタムプラグイン（フィルタ対象外）
-4. マッチしたプラグインの `summarize(url, scrapingOptions)` を呼ぶ。マッチが無ければ汎用パス `general()` を呼ぶ
-5. 結果の URL フィールド（`icon` / `thumbnail` / `player.url` / `medias[]`）を `sanitizeUrl()` でフィルタ（`https:` / `http:` / `data:` <10KB のみ通す）
+5. マッチしたプラグインの `summarize(url, scrapingOptions)` を呼ぶ。マッチが無ければ汎用パス `general()` を呼ぶ
+6. 結果の URL フィールド（`icon` / `thumbnail` / `player.url` / `medias[]`）を `sanitizeUrl()` でフィルタ（`https:` / `http:` / `data:` <10KB のみ通す）
 
 組み込みプラグインの登録順は [src/plugins/index.ts](../src/plugins/index.ts) で確認できます。**順序が重要** で、`spotify.link` と `open.spotify.com` のように似たホストを扱うプラグインは登録順で結果が変わる可能性があるため注意。
 
@@ -246,9 +254,9 @@ interface SummalyPlugin {
 | 項目 | 内容 |
 |:--|:--|
 | マッチ | `(?:www\.)?yodobashi\.com` (anchored) |
-| 取得方法 | `scpaping()` → `parseGeneral()`。**proxy fallback 段を強制スキップ** (`proxyFallback: undefined`) して curl_cffi に直行する設計 |
+| 取得方法 | `scpaping()` → `parseGeneral()`。**proxy fallback 段を強制スキップ** (`proxyFallback: undefined`) して curl_cffi に直行する設計 + **`skipRedirectResolution = true`** で `summaly()` 冒頭の HEAD/GET probe もスキップ |
 | 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準) |
-| 背景 | yodobashi は **TLS / HTTP/2 レイヤで bot を能動切断**する。Vultr Tokyo IP は `category: "timeout"`、ローカル MacOS は `HTTP/2 stream INTERNAL_ERROR` (即時 RST、time<0.05s) で SummalyBot / ブラウザ UA / 各種 SNS bot UA すべて弾かれる (skill `/url-preview-check` の Phase 3 fail mode H) |
+| 背景 | yodobashi は **TLS / HTTP/2 レイヤで bot を能動切断**する。Vultr Tokyo IP は `category: "timeout"`、ローカル MacOS は `HTTP/2 stream INTERNAL_ERROR` (即時 RST、time<0.05s) で SummalyBot / ブラウザ UA / 各種 SNS bot UA すべて弾かれる (skill `/url-preview-check` の Phase 3 fail mode H)。HEAD probe も同じく TLS 切断で空回りするため、URL が終端確定 (短縮 URL でない) であることを利用して `skipRedirectResolution = true` で probe 自体をスキップする (本番実証 21 秒 → 数秒に短縮、phase12.5 followup #2) |
 | なぜ proxy をスキップするか | **CF Workers fetch も TLS フィンガープリント固定**なので yodobashi 側で構造的に弾かれる。本番実証で proxy 段が ~15-20 秒空回りしてから 502 を返すのが純損失だった (phase12.4 → phase12.5 で確認)。curl_cffi (libcurl-impersonate) で Chrome の TLS フィンガープリント (JA3) を偽装することだけが正解 |
 | 運用要件 | production server に `uv` + `tools/curl-cffi-fetcher/` の `uv sync` 必須。`config.toml` の `[scraping.curl_cffi]` で `enabled = true` + `domains = ["yodobashi.com"]`。curl_cffi 未設定なら通常 scpaping にフォールスルー (= 失敗するが破壊的ではない) |
 | 実証 | 本番 (riinswork.space) で `https://www.yodobashi.com/product/100000001009727358/` のプレビュー取得確認 (2026-05-06、phase12.5 Step 2 完了後) |
