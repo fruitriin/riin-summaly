@@ -38,29 +38,42 @@ Cloudflare Workers の fetch は TLS フィンガープリントが固定で、�
   - OGP 完全取得確認: `og:title` / `og:description` / `og:image` / `og:url` / `og:site_name`
   - 既存実装 (got + 単純 UA リトライ) では HTTP/2 INTERNAL_ERROR で取得不能だったケース
 
-### Step 2 — Node.js IPC 統合 (未着手)
+### Step 2 — Node.js IPC 統合 (完了 2026-05-06)
 
-- [ ] `src/utils/curl-cffi-fetch.ts` — `child_process.spawn` で CLI を呼び出し、
+- [x] `src/utils/curl-cffi-fetch.ts` — `child_process.spawn` で CLI を呼び出し、
   `Got.Response<string>` 互換オブジェクトを返すブリッジ
-  - `uv` バイナリの所在確認 (`which uv` or 環境変数 `SUMMALY_UV_BIN`)
-  - `tools/curl-cffi-fetcher/` 配下で `uv run fetch <url>` を spawn
+  - `uvPath` (デフォルト `'uv'`) と `projectDir` (絶対 or cwd 相対) を config 経由で受ける
+  - `uv run fetch <url>` を spawn (shell: false で injection 不可能)
   - stdout JSON をパース → `Got.Response<string>` 形に整形 (rawBody / headers / statusCode / url)
-  - timeout / max-bytes / impersonate target を呼び出し側から指定可能に
-- [ ] yodobashi プラグインから本ブリッジを呼ぶように変更
-  - 既存の `scpaping()` 経路 → 失敗時に curl_cffi にフォールバック (3 段階目)
-  - もしくは yodobashi 系のみ最初から curl_cffi を使う設計
-- [ ] config TOML で有効/無効を切り替え可能に (`[scraping.curl_cffi].enabled = true`)
-  - production 環境に `uv` が無い場合のガード
-- [ ] テスト: spawn 経由でモック CLI を呼ぶ統合テスト 1 本
+  - timeout は `--timeout` (CLI 側) + spawn timer (`timeoutMs`) の二重防御
+  - `--max-bytes` は呼出側 `contentLengthLimit` をそのまま伝播
+  - 子プロセス timeout で SIGKILL 強制終了
+- [x] `getResponseWithCurlCffiFallback` を 4 段目として追加
+  - `getResponseWithProxyFallback` の **try ブロック後** に curl_cffi gating を実装
+  - 発火条件 3 重 gating: `enabled === true` + categories 一致 + domains 一致 + `https:` プロトコル
+  - `scpaping()` から動的 import で呼ぶ (循環参照回避、proxy fallback と同じパターン)
+- [x] config TOML `[scraping.curl_cffi]` セクション (`bin/config-loader.ts`)
+  - `enabled = false` がデフォルトでオプトイン制御
+  - `projectDir` / `domains` 必須、空配列禁止 (allowlist 必須)
+  - `categories` の typo 検証 (`VALID_ERROR_CATEGORIES` セット)
+  - `uvPath` / `impersonate` / `timeoutMs` は省略可
+- [x] yodobashi プラグイン: `curlCffiFallback` を opts 透過で受け流す
+  (デフォルトの 4 段カスケードに乗るため、プラグイン側で個別に呼ぶ必要なし)
+- [x] テスト 13 本: mock CLI (Node.js script with shebang) を tmp dir に置いて spawn 経由テスト
+  - 成功 / status >=400 / エラー JSON / type filter / malformed JSON / ENOENT spawn / final URL
+  - gating: enabled=false / domains miss / http://非https / config 未指定
+- [x] ドキュメント: `docs/Library.md` (`curlCffiFallback` 行追加)、
+  `docs/SETUP.md` (curl_cffi セクション、配備手順、セキュリティ)、
+  `config.example.toml` + `docs/deploy-examples/summaly-config.example.toml` (両方)、
+  CHANGELOG (Step 2 完了エントリ)
 
-### Step 3 — 運用整備 (Step 2 GO 後)
+### Step 3 — 運用整備 (Step 2 内で対処済み 2026-05-06)
 
-- [ ] `docs/SETUP.md` に uv 配備手順を追記 (production 環境の前提)
-- [ ] `docs/deploy-examples/summaly-config.example.toml` に curl_cffi セクション追加
-- [ ] daemon 化検討: spawn-per-request は起動コスト ~100ms、頻繁に呼ぶならば
-  stdin で URL を連続受信する常駐プロセスに移行
-- [ ] 許可ドメイン制御: curl_cffi で叩ける URL は **summaly 側で allowlist** する
-  (任意 URL を ブラウザ偽装で叩けるツールを scraping bridge として晒さない)
+- [x] `docs/SETUP.md` に uv 配備手順を追記 (Step 2 内で完了 — `[scraping.curl_cffi]` セクション + 「Production 環境への配備」サブセクション)
+- [x] `docs/deploy-examples/summaly-config.example.toml` に curl_cffi セクション追加 (Step 2 内で完了)
+- [x] 許可ドメイン制御 — `domains` allowlist を required + 空配列禁止に実装 (Step 2 内で完了)
+- [ ] daemon 化検討 (将来課題): spawn-per-request は起動コスト ~100ms、頻繁に呼ぶならば
+  stdin で URL を連続受信する常駐プロセスに移行。**現状の使用頻度 (yodobashi.com 限定 + bot block 救援の 4 段目発火) ではコスト無視で十分**。実利用で qps が上がってからで OK
 
 ## 設計判断 / 留意点
 
@@ -91,4 +104,4 @@ Cloudflare Workers の fetch は TLS フィンガープリントが固定で、�
 
 ## サイズ
 
-M〜L (Step 1 完了。Step 2 + Step 3 残)
+M〜L (Step 1 + Step 2 完了。Step 3 運用整備のみ残 — production 配備 / daemon 化 / SETUP.md uv 配備手順は Step 2 で実装済みのため Step 3 はオプショナル)

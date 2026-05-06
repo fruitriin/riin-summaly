@@ -168,6 +168,17 @@ export type GeneralScrapingOptions = {
 	 * `undefined` または `enabled === false` ならリトライ無効（既存挙動互換）。
 	 */
 	proxyFallback?: import('@/utils/proxy-fallback.js').ProxyFallbackConfig;
+
+	/**
+	 * curl_cffi (libcurl-impersonate) フォールバック設定 (phase12.5)。`getResponseWithProxyFallback`
+	 * でも救えなかった TLS layer bot block (yodobashi 級の HTTP/2 INTERNAL_ERROR / 即時切断) を
+	 * Python CLI (`tools/curl-cffi-fetcher/`) を spawn して Chrome TLS フィンガープリント偽装で
+	 * リトライする。`undefined` または `enabled === false` ならリトライ無効（既存挙動互換）。
+	 *
+	 * production server には `uv` を別途インストールし、
+	 * `cd tools/curl-cffi-fetcher && uv sync` で依存解決しておく必要がある。
+	 */
+	curlCffiFallback?: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig;
 };
 
 export async function general(_url: URL | string, opts?: GeneralScrapingOptions): Promise<Summary | null> {
@@ -190,6 +201,7 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 		fallbackUserAgent: opts?.fallbackUserAgent,
 		fallbackRetryCategories: opts?.fallbackRetryCategories,
 		proxyFallback: opts?.proxyFallback,
+		curlCffiFallback: opts?.curlCffiFallback,
 	});
 
 	if (res.pdf != null) {

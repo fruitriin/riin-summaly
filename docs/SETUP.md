@@ -318,6 +318,64 @@ pnpm dev
 sudo journalctl -u summaly -o cat | jq -c 'select(.err.category == "origin_error" or .err.category == "bot_blocked")'
 ```
 
+curl_cffi (TLS layer bot block) フォールバック (phase12.5)
+----------------------------------------------------------------
+
+proxy fallback でも救えない **TLS layer bot block** (yodobashi 級の HTTP/2 INTERNAL_ERROR / 即時切断) に対し、`tools/curl-cffi-fetcher/` の Python CLI を `child_process.spawn` で呼び出してリトライします。`curl_cffi` (libcurl-impersonate) で Chrome / Firefox / Safari の TLS フィンガープリント (JA3) を完全再現することで突破します。
+
+```text
+段階構造 (4 段目):
+1. デフォルト UA で取得
+2. 失敗 + UA レイヤで救えるカテゴリ → fallback UA (phase11.9)
+3. それでも origin_error/bot_blocked で失敗 + ドメイン allowlist 一致 → CF Worker proxy (phase12.1)
+4. それでも timeout/connection_dropped/bot_blocked + curl_cffi domain 一致 → curl_cffi 経由 (phase12.5)
+```
+
+### 設定 (`config.toml`)
+
+```toml
+[scraping.curl_cffi]
+enabled = true
+projectDir = "/path/to/summaly/tools/curl-cffi-fetcher"   # 絶対パス推奨
+uvPath = "uv"                                             # PATH 上の `uv` を使う場合は省略可
+impersonate = "chrome120"                                 # firefox120 / safari17_0 等も可
+categories = ["timeout", "connection_dropped", "bot_blocked"]
+domains = ["yodobashi.com"]                               # 必須。任意 URL ブラウザ偽装の悪用防止
+timeoutMs = 30000
+```
+
+| 設定キー | 説明 | デフォルト |
+|:--|:--|:--|
+| `enabled` | curl_cffi フォールバックを有効化 | `false` |
+| `projectDir` | `tools/curl-cffi-fetcher/` のパス (絶対 or cwd 相対) | （指定必須） |
+| `uvPath` | `uv` バイナリの場所。PATH 上にあれば `'uv'` でよい | `"uv"` |
+| `impersonate` | 偽装する TLS フィンガープリント (`chrome120` / `firefox120` / `safari17_0` 等) | `"chrome120"` |
+| `categories` | リトライ発火対象のエラーカテゴリ | `["timeout", "connection_dropped", "bot_blocked"]` |
+| `domains` | 許可ドメイン (suffix-match)。空配列禁止。任意 URL を ブラウザ偽装で叩けるツールを scraping bridge として晒さないための allowlist | （指定必須） |
+| `timeoutMs` | spawn 起動 + curl_cffi 完走の合計タイムアウト | `30000` |
+
+### Production 環境への配備
+
+production server に Python パッケージマネージャ `uv` を別途インストールし、`tools/curl-cffi-fetcher/` で `uv sync` を実行しておく必要があります。npm の build/publish 対象には含まれていません (`package.json` `files: ["built", "LICENSE"]` で除外)。
+
+```bash
+# uv のインストール (推奨: 公式 stand-alone installer)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# summaly 配備後
+cd /path/to/summaly/tools/curl-cffi-fetcher
+uv sync
+# `uv run fetch https://www.yodobashi.com/product/100000001003176109/` で動作確認
+```
+
+### セキュリティ
+
+- **`spawn` を `shell: false` (デフォルト) で呼ぶ** ため shell injection の経路は無い
+- **URL は `https:` 限定** (二重防御で wrapper 側でも検証)
+- **ドメイン allowlist 必須**。任意 URL をブラウザ偽装で叩く悪用を防ぐ
+- **子プロセス timeout** で SIGKILL 強制終了 (`timeoutMs`)
+- 詳細は `tools/curl-cffi-fetcher/README.md` 参照
+
 パース失敗ドメインのログ蓄積 (phase10.1)
 ----------------------------------------------------------------
 

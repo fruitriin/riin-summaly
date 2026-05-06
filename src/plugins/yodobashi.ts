@@ -41,6 +41,11 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 		}
 		: undefined;
 
+	// curlCffiFallback は config 由来のデフォルト (`['timeout', 'connection_dropped', 'bot_blocked']`)
+	// で yodobashi の TLS layer 切断を既にカバーするためプラグイン側ではオーバーライドしない。
+	// proxy 側だけ非対称にカテゴリを足しているのは「proxy デフォルトには timeout/connection_dropped が
+	// 含まれていない (Amazon class IP block 用に origin_error 中心)」のに対し、curl_cffi デフォルトには
+	// すでに含まれているため。`opts?.curlCffiFallback` をそのまま透過するだけで OK。
 	const res = await scpaping(url.href, {
 		...opts,
 		proxyFallback: proxyOverride,

@@ -37,18 +37,102 @@ res = requests.get(url, impersonate='chrome120')
 
 ## 統合パターン
 
-Node.js から呼ぶには **stdio JSON で疎結合** な spawn-per-request が最も単純:
+Node.js から呼ぶには **stdio JSON で疎結合** な spawn-per-request が最も単純。
+phase12.5 Step 2 で実装した [src/utils/curl-cffi-fetch.ts](../../src/utils/curl-cffi-fetch.ts) のパターン:
 
-```ts
-import { spawn } from 'node:child_process';
-const proc = spawn('uv', ['run', 'fetch', url], { cwd: TOOL_DIR });
-let stdout = '';
-proc.stdout.on('data', chunk => { stdout += chunk; });
-await new Promise(resolve => proc.on('exit', resolve));
-const result = JSON.parse(stdout);  // {status, body, headers, ...}
+### 段階的フォールバック (4 段カスケード)
+
+既存の proxy fallback (phase12.1) と同じ構造で **4 段目** として組み込む:
+
+```text
+1. デフォルト UA で取得 (got)
+2. 失敗 + UA レイヤで救えるカテゴリ → fallback UA リトライ (phase11.9)
+3. それでも失敗 + categories 一致 + domains 一致 → CF Worker proxy (phase12.1)
+4. それでも失敗 + curl_cffi categories 一致 + curl_cffi domains 一致 → curl_cffi (phase12.5)
 ```
 
-実装本体は [tools/curl-cffi-fetcher/](../../tools/curl-cffi-fetcher/) を参照。
+`getResponseWithCurlCffiFallback` が `getResponseWithProxyFallback` をラップする形:
+
+```ts
+// scpaping (got.ts) からの動的 import で循環参照を回避
+const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
+const response = await getResponseWithCurlCffiFallback(args, fallback, opts?.proxyFallback, opts?.curlCffiFallback);
+```
+
+### spawn-per-request の防衛パターン
+
+```ts
+const proc = spawn(cfg.uvPath, [
+    'run', 'fetch', url,
+    '--impersonate', cfg.impersonate,
+    '--timeout', String(responseTimeoutSec),
+    '--max-bytes', String(maxBytes),
+], {
+    cwd: cfg.projectDir,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // shell: false (デフォルト) — argv が直接 execve される。shell injection 不可能
+});
+
+// `error` と `exit` の両方が発火するケース (signal 終了等) で resolve/reject が
+// 二重に呼ばれないよう settle ガード必須
+let settled = false;
+const settle = (fn: () => void) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(killTimer);
+    fn();
+};
+
+const killTimer = setTimeout(() => {
+    proc.kill('SIGKILL');
+    settle(() => reject(new Error(`spawn timeout`)));
+}, cfg.timeoutMs);
+
+proc.on('error', err => settle(() => reject(/* ENOENT for uv 等 */)));
+proc.on('exit', code => settle(() => resolve({ stdout, exitCode: code })));
+```
+
+### 8 層防御 (proxy fallback と同等)
+
+1. **`spawn` を `shell: false` (デフォルト) で呼ぶ** — argv が直接 execve、shell injection 不可能
+2. **URL は `https:` 限定** — wrapper の gating でプロトコル検証 (二重防御)
+3. **ドメイン allowlist (suffix-match)** — 任意 URL ブラウザ偽装の悪用防止
+4. **categories gating** — 4 段目発火条件を最小限に絞る (デフォルト `[timeout, connection_dropped, bot_blocked]`)
+5. **子プロセス timeout** — `setTimeout` + `SIGKILL` で強制終了
+6. **type filter 再検証** — CLI の `content_type` を呼出側 typeFilter で再検証
+7. **body サイズ cap** — `--max-bytes` (CLI 側) + Node 側 `contentLengthLimit` の二重防御
+8. **final URL の安全な再検証** — `new URL()` で http(s) 限定 + 不正なら args.url を維持
+
+### エンコーディング契約 (重要)
+
+`got` 経路では `rawBody` (バイト列) を `detectEncoding` → `toUtf8` で再変換するが、
+**curl_cffi 経路では Python 側で既にデコード済みのため二重変換しない**。CLI の
+`fetch.py` は `curl_cffi.requests.Response.text` (Content-Type charset または chardet で
+デコード済み) を JSON 文字列に乗せて返す。Node 側は `Buffer.from(body, 'utf8')` で
+固定的に UTF-8 として扱う。
+
+non-UTF-8 (古い ISO-8859-1 等) サイトで万が一文字化けが起きた場合は、CLI 側を
+`body_base64` で生バイト列を返すスキーマに拡張するのが正攻法 (現状未実装)。
+
+### TOML config の設計
+
+```toml
+[scraping.curl_cffi]
+enabled = false                                    # デフォルト false (オプトイン)
+projectDir = "/path/to/tools/curl-cffi-fetcher"   # 必須 (絶対 or cwd 相対)
+uvPath = "uv"                                      # PATH 上に `uv` があれば省略可
+impersonate = "chrome120"                          # firefox120 / safari17_0 等
+categories = ["timeout", "connection_dropped", "bot_blocked"]
+domains = ["yodobashi.com"]                        # 必須、空配列禁止
+timeoutMs = 30000
+```
+
+`enabled = false` がデフォルトで **オプトイン制御**。`domains` 必須 + 空配列禁止で
+allowlist の明示性を強制。`uv` 未インストールの production 環境でも summaly 起動は
+失敗しない (4 段目発火時に ENOENT で詳細メッセージ付き throw、原エラーは proxy 段から伝播)。
+
+実装本体は [tools/curl-cffi-fetcher/](../../tools/curl-cffi-fetcher/) と
+[src/utils/curl-cffi-fetch.ts](../../src/utils/curl-cffi-fetch.ts) を参照。
 
 ## 設計判断
 

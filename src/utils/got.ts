@@ -144,13 +144,15 @@ export async function scpaping(
 	const args = getGotOptions(url, opts);
 
 	const fallback = buildFallbackConfig(opts);
-	// 動的 import で循環参照を避ける（proxy-fallback.ts は got.ts の getResponseWithFallback を import している）。
+	// 動的 import で循環参照を避ける（proxy-fallback.ts / curl-cffi-fetch.ts は got.ts の
+	// getResponseWithFallback を import している）。
 	// 初回ロード以降は Node.js のモジュールキャッシュにより同期的に解決されるため hot path のコストはほぼゼロ。
-	const { getResponseWithProxyFallback } = await import('@/utils/proxy-fallback.js');
-	const response = await getResponseWithProxyFallback({
+	// 段階構造: ① default UA → ② fallback UA (phase11.9) → ③ proxy worker (phase12.1) → ④ curl_cffi (phase12.5)
+	const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
+	const response = await getResponseWithCurlCffiFallback({
 		...args,
 		method: 'GET',
-	}, fallback, opts?.proxyFallback);
+	}, fallback, opts?.proxyFallback, opts?.curlCffiFallback);
 
 	// PDF レスポンスは別パスで処理する。
 	// enablePdf が真のときのみ typeFilter で application/pdf を許可しているため、

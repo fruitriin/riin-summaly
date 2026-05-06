@@ -58,6 +58,27 @@ enabled = false
 #
 # Worker 側のデプロイ手順は tools/cf-proxy-worker/README.md 参照。
 
+[scraping.curl_cffi]
+# curl_cffi (libcurl-impersonate) を使った TLS layer bot block 救援フォールバック (phase12.5)。
+# proxy fallback でも救えない **TLS フィンガープリント切断** (yodobashi 級の HTTP/2 INTERNAL_ERROR /
+# 即時切断) に対し、`tools/curl-cffi-fetcher/` の Python CLI を spawn して
+# Chrome / Firefox / Safari の TLS フィンガープリントを偽装してリトライする。
+#
+# **運用要件**: production server に `uv` (Python パッケージマネージャ) を別途インストールし、
+# `cd tools/curl-cffi-fetcher && uv sync` で依存解決しておく必要がある。
+#
+# enabled = false                                  # デフォルト false (要明示オプトイン)
+# projectDir = "/path/to/summaly/tools/curl-cffi-fetcher"  # 絶対パス推奨 (cwd 相対も可)
+# uvPath = "uv"                                    # PATH 上に `uv` があれば省略可。無ければ絶対パス
+# impersonate = "chrome120"                        # `firefox120` / `safari17_0` 等も可
+# categories = ["timeout", "connection_dropped", "bot_blocked"]  # どのカテゴリで curl_cffi を発火するか (デフォルト)
+# domains = [                                      # suffix-match。空配列禁止 (allowlist 必須)
+#   "yodobashi.com",                                #   yodobashi.com TLS layer 切断対策 (実証済 phase12.5)
+# ]                                                 # 任意 URL を ブラウザ偽装で叩けるツールを scraping bridge として晒さないための allowlist
+# timeoutMs = 30000                                # spawn 起動 + curl_cffi 完走の合計タイムアウト
+#
+# 詳細は tools/curl-cffi-fetcher/README.md 参照。
+
 [scraping.fallback]
 # Bot block 検出時に別 UA で 1 回リトライする (phase11.9)。
 # `SummalyBot` 文字列を WAF が弾くサイト (`playing-games.com` 等) を救援する用途。

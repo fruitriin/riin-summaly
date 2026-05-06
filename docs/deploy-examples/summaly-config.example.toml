@@ -41,6 +41,20 @@ categories = ["bot_blocked", "connection_dropped"]
 # ]
 # timeoutMs = 30000
 
+[scraping.curl_cffi]
+# curl_cffi (libcurl-impersonate) を使った TLS layer bot block 救援 (phase12.5)。
+# proxy fallback でも救えない TLS フィンガープリント層の切断 (yodobashi 等) を、
+# `tools/curl-cffi-fetcher/` の Python CLI を spawn して Chrome TLS フィンガープリント偽装で救援する。
+# **運用要件**: production server に `uv` を別途インストール + `uv sync` 必須。
+# 詳細は tools/curl-cffi-fetcher/README.md 参照。
+# enabled = true
+# projectDir = "/path/to/summaly/tools/curl-cffi-fetcher"
+# uvPath = "uv"                                  # PATH 上の `uv` を使う場合は省略可
+# impersonate = "chrome120"                      # firefox120 / safari17_0 等も可
+# categories = ["timeout", "connection_dropped", "bot_blocked"]
+# domains = ["yodobashi.com"]                    # 必須。任意 URL ブラウザ偽装の悪用防止
+# timeoutMs = 30000
+
 [diagnostics]
 # 迂回候補ログ (phase11.6) を有効化したい場合の例:
 # parseFailureLog = true

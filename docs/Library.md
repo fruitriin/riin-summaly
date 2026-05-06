@@ -90,6 +90,7 @@ opts (`SummalyOptions`) — ライブラリ利用時に効くオプション
 | **fallbackUserAgent** | *string* | Bot block 検出時に UA を差し替えて 1 回だけ再試行する (phase11.9)。`undefined` または空文字列ならリトライ無効。`SummalyBot` 文字列を WAF が弾くサイトを `facebookexternalhit/1.1` 等で救援する用途 | `undefined` |
 | **fallbackRetryCategories** | *SummalyErrorCategory[]* | `fallbackUserAgent` が発火するカテゴリ。デフォルトは `['bot_blocked', 'connection_dropped']` | `undefined` (= デフォルト) |
 | **proxyFallback** | *ProxyFallbackConfig* | Cloudflare Workers proxy 経由の救援 (phase12.1)。UA fallback でも救えない IP レピュテーション層の遮断 (Vultr Tokyo IP からの amazon.co.jp 等) に対し、CF Workers 経由でリトライ。`{ enabled, url, secret, categories, domains, timeoutMs }`。Fastify モードでは `[scraping.proxy]` から自動注入。デフォルト `categories` は `['origin_error', 'bot_blocked']` (followup #1 で `Rejected by type filter undefined` も `bot_blocked` に分類されるため救援対象に含まれる)。`domains` allowlist には Amazon TLD + 短縮 URL (`amzn.asia` / `amzn.to` / `a.co`) を含めることを推奨 (followup #4) | `undefined` |
+| **curlCffiFallback** | *CurlCffiFallbackConfig* | curl_cffi (libcurl-impersonate) 経由の救援 (phase12.5)。proxy fallback でも救えない **TLS layer bot block** (yodobashi 級の HTTP/2 INTERNAL_ERROR / 即時切断) に対し、`tools/curl-cffi-fetcher/` の Python CLI を spawn して Chrome / Firefox / Safari の TLS フィンガープリント (JA3) を偽装してリトライ。`{ enabled, uvPath, projectDir, impersonate, categories, domains, timeoutMs }`。Fastify モードでは `[scraping.curl_cffi]` から自動注入。production server には別途 `uv` をインストール + `cd tools/curl-cffi-fetcher && uv sync` 必須。詳細は `tools/curl-cffi-fetcher/README.md` 参照 | `undefined` |
 
 ### 環境変数
 

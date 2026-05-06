@@ -58,6 +58,13 @@
 - **2026-05-05 phase11.8 セッション**: Fastify 6 の `loggerInstance` 型 (`FastifyChildLoggerFactory<RawServer, ...>`) は厳しく、テスト注入で `as any` 経由の `as unknown as FastifyInstance` 二重キャストが必要。pino 互換 mock を任意に作るのは難しい型負荷がある。代替案として「pino を本物で回しつつ stream を捕まえる」方が型は綺麗だが実装コストが高い。テストでの mock pino は知見に追記 (`docs/knowhow/fastify-plugin-error-logging.md`)
 - **2026-05-05 phase11.8 セッション**: parse_error カテゴリのテストは「空 HTML 経由」では general() が title=hostname で summary を返してしまうため発火しない。**カスタムプラグインで `summarize: async () => null` を強制**する経路にすれば確実。テスト名と実挙動の乖離は review agent が指摘してくれた (W-3)
 
+## phase12.5 (curl_cffi Node IPC 統合) 知見
+
+- **2026-05-06 phase12.5 Step 2 セッション**: `child_process.spawn` 経由の Promise を作るとき、`error` と `exit` の両方が発火するケース (signal 終了等) で resolve/reject が二重に呼ばれる潜在バグを review agent が **W-3** で指摘した。`let settled = false; const settle = fn => { if (settled) return; settled = true; clearTimeout(...); fn(); }` のガードパターンで対処。Node の event-driven IPC では「単一発火を保証する手段」が言語に組み込まれていないため、この種のガードは spawn ベースのブリッジで必須。`docs/knowhow/curl-cffi-tls-impersonation.md` の「spawn-per-request の防衛パターン」セクションに記録
+- **2026-05-06 phase12.5 Step 2 セッション**: review agent が **W-1 エンコーディング契約の非明示** を指摘。`got` 経路は `rawBody` → `detectEncoding` → `toUtf8` で encoding 再判定するが、curl_cffi 経路では Python 側 (`response.text`) で既にデコード済みのため二重変換しない設計選択を **無言で** 採用していた。non-UTF-8 サイトで化ける可能性があり、コメントとして明示する必要がある。`Buffer.from(body, 'utf8')` の前にエンコーディング契約セクションを書いて、CLI 側との約束 (CLI が UTF-8 で出す責任 / Node 側は二重変換しない責任) を明示化
+- **2026-05-06 phase12.5 Step 2 セッション**: contribution agent が「**外部プロセス依存を追加した場合は SETUP.md / Library.md の依存宣言と package.json の optionalDependencies 有無を確認する**」というテンプレート改善を提案。これは ADDF テンプレート (`ProgressTemplate.addf.md` ステップ 4.5「ドキュメントと実装の突き合わせ」) に追加すべき汎用項目。本フェーズでは npm publish 対象外設計 (`tools/` 配下) で `optionalDependencies` 追加は不要だったが、将来 Python 以外の外部 CLI を Node から呼ぶ機会があれば類似の選択を迫られる。**ADDF 本体への寄与候補**として記録 (テンプレートの「外部プロセス依存追加時」項目)
+- **2026-05-06 phase12.5 Step 2 セッション**: review agent が **import バグ (`getResponseWithProxyFallback` を `proxy-fallback.js` ではなく `got.js` から import していた)** をテスト失敗経由で検出。typecheck も eslint も通っていた (`got.ts` には同名の export がないが、type だけ通る形だった)。**「typecheck が通るのに runtime で `is not a function`」** はテストでしか catch できないクラスのバグ。spawn 統合のテストを書く価値が改めて確認できた
+
 ## phase12.1 dev サーバ統合 (E2E 完了後) 知見
 
 - **2026-05-06 phase12.1 dev 統合セッション**: 本番 E2E 成功 → dev サーバで手元再現できる UI を後追いで追加するパターン。実装規模としては server.ts に env 読み込み + `/api/dev-config` エンドポイント追加 + `?proxy=1` クエリ処理、UI に hidden checkbox + JS で動的表示。**「本番が動いた → 開発者が手元で再現できないと改善サイクルが回らない」** という観点で、E2E 後の dev 整備は重要

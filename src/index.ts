@@ -233,6 +233,21 @@ export type SummalyOptions = {
 	 * 詳細は `tools/cf-proxy-worker/README.md` 参照。
 	 */
 	proxyFallback?: import('@/utils/proxy-fallback.js').ProxyFallbackConfig;
+
+	/**
+	 * curl_cffi (libcurl-impersonate) フォールバック設定 (phase12.5)。
+	 *
+	 * proxy fallback でも救えなかった **TLS layer bot block** (yodobashi 級の
+	 * HTTP/2 INTERNAL_ERROR / 即時切断) に対し、`tools/curl-cffi-fetcher/` の
+	 * Python CLI を spawn して Chrome / Firefox / Safari の TLS フィンガープリント (JA3) を
+	 * 偽装してリトライする。`enabled === false` ならリトライ無効。
+	 *
+	 * production server には `uv` を別途インストールし、
+	 * `cd tools/curl-cffi-fetcher && uv sync` で依存解決しておく必要がある。
+	 *
+	 * 詳細は `tools/curl-cffi-fetcher/README.md` 参照。
+	 */
+	curlCffiFallback?: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig;
 };
 
 const DEFAULT_CACHE_MAX_AGE = 604800;
@@ -422,6 +437,7 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		fallbackUserAgent: opts.fallbackUserAgent,
 		fallbackRetryCategories: opts.fallbackRetryCategories,
 		proxyFallback: opts.proxyFallback,
+		curlCffiFallback: opts.curlCffiFallback,
 	};
 
 	// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition

@@ -119,6 +119,7 @@ function parseScrapingSection(rawScraping: Toml, out: SummalyOptions): void {
 	}
 	parseScrapingFallbackSection(rawScraping.fallback, out);
 	parseProxySection(rawScraping.proxy, out);
+	parseCurlCffiSection(rawScraping['curl_cffi'], out);
 }
 
 function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void {
@@ -228,6 +229,95 @@ function parseProxySection(rawProxy: Toml, out: SummalyOptions): void {
 		secret,
 		// VALID_ERROR_CATEGORIES でメンバー検証済みなので SummalyErrorCategory[] に narrow できる
 		categories: categories as NonNullable<SummalyOptions['fallbackRetryCategories']>,
+		domains,
+		timeoutMs,
+	};
+}
+
+/**
+ * `[scraping.curl_cffi]` セクションを処理し、`SummalyOptions.curlCffiFallback` にマップする (phase12.5)。
+ *
+ * - `enabled === false` のときは何もマップしない（curl_cffi 無効）
+ * - `enabled === true` で `domains` (allowlist) が必須。空配列は明示的に許可しない（オープンプロキシ化防止）
+ * - `projectDir` 必須（`tools/curl-cffi-fetcher/` の絶対 or 相対パス）
+ * - `uvPath` / `impersonate` / `categories` / `timeoutMs` は省略可能（妥当なデフォルトを採用）
+ */
+function parseCurlCffiSection(rawCurlCffi: Toml, out: SummalyOptions): void {
+	if (rawCurlCffi === undefined) return;
+	if (!isObject(rawCurlCffi)) {
+		throw new TypeError('config: `[scraping.curl_cffi]` must be a table');
+	}
+	let enabled = false;
+	if (rawCurlCffi.enabled !== undefined) {
+		expectType(rawCurlCffi.enabled, 'boolean', 'scraping.curl_cffi.enabled');
+		enabled = rawCurlCffi.enabled as boolean;
+	}
+	if (!enabled) return;
+
+	if (rawCurlCffi.projectDir === undefined) {
+		throw new RangeError('config: `scraping.curl_cffi.projectDir` is required when scraping.curl_cffi.enabled = true');
+	}
+	expectType(rawCurlCffi.projectDir, 'string', 'scraping.curl_cffi.projectDir');
+	const projectDir = (rawCurlCffi.projectDir as string).trim();
+	if (projectDir === '') {
+		throw new RangeError('config: `scraping.curl_cffi.projectDir` must not be empty');
+	}
+
+	let uvPath = 'uv';
+	if (rawCurlCffi.uvPath !== undefined) {
+		expectType(rawCurlCffi.uvPath, 'string', 'scraping.curl_cffi.uvPath');
+		const v = (rawCurlCffi.uvPath as string).trim();
+		if (v === '') {
+			throw new RangeError('config: `scraping.curl_cffi.uvPath` must not be empty when specified');
+		}
+		uvPath = v;
+	}
+
+	let impersonate = 'chrome120';
+	if (rawCurlCffi.impersonate !== undefined) {
+		expectType(rawCurlCffi.impersonate, 'string', 'scraping.curl_cffi.impersonate');
+		const v = (rawCurlCffi.impersonate as string).trim();
+		if (v === '') {
+			throw new RangeError('config: `scraping.curl_cffi.impersonate` must not be empty when specified');
+		}
+		impersonate = v;
+	}
+
+	let categories: string[] = ['timeout', 'connection_dropped', 'bot_blocked'];
+	if (rawCurlCffi.categories !== undefined) {
+		expectStringArray(rawCurlCffi.categories, 'scraping.curl_cffi.categories');
+		for (const c of rawCurlCffi.categories) {
+			if (!VALID_ERROR_CATEGORIES.has(c)) {
+				throw new RangeError(`config: \`scraping.curl_cffi.categories\` contains unknown category "${c}"`);
+			}
+		}
+		categories = rawCurlCffi.categories;
+	}
+
+	if (rawCurlCffi.domains === undefined) {
+		throw new RangeError('config: `scraping.curl_cffi.domains` is required when scraping.curl_cffi.enabled = true');
+	}
+	expectStringArray(rawCurlCffi.domains, 'scraping.curl_cffi.domains');
+	const domains = rawCurlCffi.domains;
+	if (domains.length === 0) {
+		throw new RangeError('config: `scraping.curl_cffi.domains` must not be empty (curl_cffi は明示的な allowlist が必須)');
+	}
+
+	let timeoutMs = 30000;
+	if (rawCurlCffi.timeoutMs !== undefined) {
+		expectType(rawCurlCffi.timeoutMs, 'number', 'scraping.curl_cffi.timeoutMs');
+		expectPositiveInteger(rawCurlCffi.timeoutMs as number, 'scraping.curl_cffi.timeoutMs');
+		timeoutMs = rawCurlCffi.timeoutMs as number;
+	}
+
+	out.curlCffiFallback = {
+		enabled: true,
+		uvPath,
+		projectDir,
+		impersonate,
+		// VALID_ERROR_CATEGORIES でメンバー検証済みなので SummalyErrorCategory[] に narrow できる。
+		// 型は `CurlCffiFallbackConfig['categories']` を直接参照（`fallbackRetryCategories` を流用しない）。
+		categories: categories as NonNullable<SummalyOptions['curlCffiFallback']>['categories'],
 		domains,
 		timeoutMs,
 	};
