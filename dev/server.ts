@@ -114,6 +114,7 @@ app.get<{ Querystring: SummalyQuery }>('/api/summaly', async (req, reply) => {
 				'amazon.it', 'amazon.es', 'amazon.ca', 'amazon.com.au', 'amazon.com.br',
 				'amazon.com.mx', 'amazon.in',
 				'amzn.asia', 'amzn.to', 'a.co',
+				'yodobashi.com',
 			],
 			timeoutMs: 30000,
 		};

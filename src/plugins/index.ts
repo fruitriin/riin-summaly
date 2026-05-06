@@ -11,6 +11,7 @@ import * as komiflo from './komiflo.js';
 import * as nijie from './nijie.js';
 import * as npmjs from './npmjs.js';
 import * as nintendoStore from './nintendo-store.js';
+import * as yodobashi from './yodobashi.js';
 import { SummalyPlugin } from '@/iplugin.js';
 
 export const plugins: SummalyPlugin[] = [
@@ -27,4 +28,5 @@ export const plugins: SummalyPlugin[] = [
 	nijie,
 	npmjs,
 	nintendoStore,
+	yodobashi,
 ];

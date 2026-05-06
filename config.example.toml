@@ -88,6 +88,7 @@ allowed = [
   "twitter",
   "npmjs",
   "nintendo-store",
+  "yodobashi",
   # 性的コンテンツを含むサイトの組み込みプラグイン。除外したい場合はコメントアウトのまま:
   # "dlsite",
   # "iwara",

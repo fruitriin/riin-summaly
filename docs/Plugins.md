@@ -1,7 +1,7 @@
 Plugins.md — プラグイン詳細
 ================================================================
 
-summaly のプラグインシステムと、組み込み 13 プラグインの仕様、カスタムプラグインの書き方をまとめます。
+summaly のプラグインシステムと、組み込み 14 プラグインの仕様、カスタムプラグインの書き方をまとめます。
 
 目次
 ----------------------------------------------------------------
@@ -22,6 +22,7 @@ summaly のプラグインシステムと、組み込み 13 プラグインの�
   - [nijie](#nijie)
   - [npmjs](#npmjs)
   - [nintendo-store](#nintendo-store)
+  - [yodobashi](#yodobashi)
 - [カスタムプラグインの書き方](#カスタムプラグインの書き方)
 - [共通ユーティリティ](#共通ユーティリティ)
 
@@ -237,6 +238,20 @@ interface SummalyPlugin {
 | 背景 | Akamai Bot Manager の JS challenge 配下だが、Nintendo は **`facebookexternalhit` / `Slackbot-LinkExpanding` UA を allowlist** している (= SNS share を意図的に許可)。SummalyBot UA や Twitterbot / Discordbot UA だと `*-wr.nintendo.com/?c=ncl&...&kupver=akamai-5.0.1` の challenge ページにリダイレクトされる |
 | 倫理判断 | phase11.9 fallback UA と同じ倫理判断: SNS bot UA を名乗るのは「OGP 取得が目的」なので Nintendo の意図に沿う |
 | 副作用 | プラグイン内で `fallbackUserAgent` / `fallbackRetryCategories` を **明示的に未設定** にして UA 上書きが発生しないようにしている |
+
+### yodobashi
+
+実装: [src/plugins/yodobashi.ts](../src/plugins/yodobashi.ts)
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `(?:www\.)?yodobashi\.com` (anchored) |
+| 取得方法 | 通常 `scpaping()` → `parseGeneral()` だが **proxy fallback の categories を拡張** (`['origin_error', 'bot_blocked', 'timeout', 'connection_dropped']`) して timeout / 切断系も proxy 救援対象に含める |
+| 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準) |
+| 背景 | yodobashi は **TLS / HTTP/2 レイヤで bot を能動切断**する。Vultr Tokyo IP は `category: "timeout"`、ローカル MacOS は `HTTP/2 stream INTERNAL_ERROR` (即時 RST、time<0.05s) で SummalyBot / ブラウザ UA / 各種 SNS bot UA すべて弾かれる (skill `/url-preview-check` の Phase 3 fail mode H) |
+| なぜ救援可能性があるか | yodobashi は **OGP を整備しており share link 機能も提供**しているため SNS で share されたい意思はある。CF Workers の egress IP / TLS フィンガープリントなら通る可能性がある（実証は本番デプロイ後の検証で判定） |
+| 運用要件 | Worker `wrangler.toml` の `ALLOWED_DOMAINS` と summaly `[scraping.proxy].domains` の **両側に `yodobashi.com` を追加** + Worker を `wrangler deploy`。proxy 機能自体が未設定なら通常 scpaping にフォールスルー (= 失敗するが破壊的ではない) |
+| Worker 経由でも失敗したら | CF Workers IP も yodobashi に弾かれている。Misskey 側で薄い preview を許容 (= 改修保留として記録) |
 
 カスタムプラグインの書き方
 ----------------------------------------------------------------

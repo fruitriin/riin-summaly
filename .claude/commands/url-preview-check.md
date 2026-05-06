@@ -182,11 +182,15 @@ curl 結果のパターンから **5 タイプ**に分類:
 - **対処 B (allowlist が無い場合)**: JS 実行エンジン (Puppeteer / Playwright) が必要だが summaly のスコープ外。**対処保留**として Misskey 側で薄い preview を許容
 - 関連 knowhow: [src/plugins/nintendo-store.ts](../../src/plugins/nintendo-store.ts) — `facebookexternalhit` UA 固定の実装例
 
-### H. HTTP/2 stream INTERNAL_ERROR (対処困難)
+### H. HTTP/2 stream INTERNAL_ERROR / TLS layer 切断 (proxy で試す価値あり)
 
-- 兆候: `curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR` でローカル / 本番ともに即座に切断 (`status=000 size=0 time<0.1s`)。`yodobashi.com` で実証 (2026-05-06)。`category` は `timeout` (got 側で `socket` 待ちタイムアウトに化ける)
-- 対処: TLS / HTTP/2 ハンドシェイク段階で server 側が能動的に切る bot 対策。UA を変えても、IP を変えても切断される。**proxy 経由でも同じ TLS スタックなので救えない**
-- 判断: 対処保留。CF Workers の TLS fingerprint が違えば通る可能性あるが、未実証
+- 兆候: `curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR` でローカルから即座に切断 (`status=000 size=0 time<0.1s`)、本番 (Vultr) からは `category: timeout` (`Timeout awaiting 'socket' for 20000ms`)。UA / SNS bot UA すべてで弾かれる
+- **対処**: phase12.4 で **専用プラグイン + proxy categories 拡張** パターンを採用。`(www.)?yodobashi.com` で実装:
+  - test() で対象ホストにマッチ
+  - summarize() で `proxyFallback.categories` を `['origin_error', 'bot_blocked', 'timeout', 'connection_dropped']` に **拡張**（デフォルトでは `timeout` は proxy 発火対象外）
+  - Worker `wrangler.toml` の `ALLOWED_DOMAINS` と summaly `[scraping.proxy].domains` 両側に対象ホストを追加 + Worker `wrangler deploy`
+- **判断条件**: 対象サイトが OGP を整備していて (= share させたい意思あり)、CF Workers の egress IP / TLS フィンガープリントで通る可能性があれば実装する価値あり。Worker でも 502 で弾かれるなら諦める（保留 + Misskey 側で薄い preview 許容）
+- 関連 knowhow: [src/plugins/yodobashi.ts](../../src/plugins/yodobashi.ts) — proxy categories 拡張パターンの実装例
 
 ## Phase 4: 修正レイヤの選定
 

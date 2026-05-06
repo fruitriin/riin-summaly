@@ -98,6 +98,13 @@ export const sampleGroups: SampleGroup[] = [
 		],
 	},
 	{
+		name: 'yodobashi (phase12.4 — proxy 経由必須)',
+		description: 'TLS / HTTP/2 レイヤで bot 切断するため UA レイヤでは救えない。proxy fallback で CF Workers の egress IP / TLS フィンガープリント経由で救援を試みる。env で proxy 設定 + checkbox ON が必要',
+		urls: [
+			{ label: 'ヨドバシ商品ページ', url: 'https://www.yodobashi.com/product/100000001003176109/', presets: { proxy: true }, note: '本番運用では Worker と summaly 両側 allowlist に yodobashi.com 必須' },
+		],
+	},
+	{
 		name: 'nintendo-store (phase12.3)',
 		description: 'Akamai Bot Manager 配下だが facebookexternalhit UA は allowlist されているので、UA 切り替えで OGP 取得',
 		urls: [

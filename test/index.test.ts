@@ -1153,6 +1153,20 @@ describe('local tests', () => {
 				expect(t('https://store-jp.nintendo.com.evil.example/')).toBe(false);
 			});
 
+			test('yodobashi プラグインが yodobashi.com にマッチする (phase12.4)', () => {
+				const yo = builtinPlugins.find(p => p.name === 'yodobashi');
+				expect(yo).toBeDefined();
+				const t = (s: string) => yo!.test(new URL(s));
+
+				expect(t('https://www.yodobashi.com/product/100000001003176109/')).toBe(true);
+				expect(t('https://yodobashi.com/anything')).toBe(true);  // bare hostname
+
+				// マッチしないべき URL
+				expect(t('https://yodobashi.co.jp/')).toBe(false);  // 別ドメイン
+				expect(t('https://www.yodobashi.com.evil.example/')).toBe(false);
+				expect(t('https://shop.yodobashi.com/')).toBe(false);  // anchored ^...$ で落ちる
+			});
+
 			test('spotify プラグインが open.spotify.com にマッチする', () => {
 				const spotify = builtinPlugins.find(p => p.name === 'spotify');
 				expect(spotify).toBeDefined();

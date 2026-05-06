@@ -1,5 +1,6 @@
 (unreleased)
 ------------------
+* **feat**: yodobashi プラグインを追加 (phase12.4)。`yodobashi.com` は TLS / HTTP/2 レイヤで bot を能動切断する厳しい WAF を持っており SummalyBot / ブラウザ / SNS bot UA すべてで弾かれる (skill `/url-preview-check` Phase 3 fail mode H)。OGP は整備されているので **proxy fallback の categories を `timeout` / `connection_dropped` も含めるよう拡張**して CF Workers の egress IP / TLS フィンガープリント経由で救援を試みる新パターン。Worker `wrangler.toml` の `ALLOWED_DOMAINS` と summaly `[scraping.proxy].domains` 両側に `yodobashi.com` 追加 + Worker 再 deploy が運用要件
 * **feat**: nintendo-store プラグインを追加 (phase12.3)。`store-jp.nintendo.com` 等の My Nintendo Store は Akamai Bot Manager の JS challenge 配下で SummalyBot / ブラウザ UA / Twitterbot / Discordbot だと challenge ページにリダイレクトされるが、`facebookexternalhit/1.1` UA は allowlist されている事実を利用。プラグイン内で UA を固定して `scpaping()` → `parseGeneral()` に流すことで OGP (`og:title` / `og:image` / `og:description` / `og:site_name="My Nintendo Store..."`) が取得できる。skill `/url-preview-check` の Phase 3 fail mode G 「Akamai Bot Manager」のうち SNS bot UA allowlist がある場合の対処パターン
 * **fix**: youtube プラグインがライブ配信 URL (`/live/<id>`) にマッチしない問題を修正 (phase12.2)。`PATH_PATTERNS` に `/live/` を追加して oEmbed エンドポイント経由で取得できるようにした。実例: `youtube.com/live/YVjfasn756M` でタイトル / サムネ / iframe player が取れる
 * **feat**: Outbound proxy フォールバック (Cloudflare Workers) を追加 (phase12.1):
