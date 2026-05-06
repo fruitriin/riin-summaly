@@ -14,6 +14,11 @@
   * **followup (2026-05-06)**: Amazon が Vultr Tokyo IP に対して `200 + content-type 欠落` で malformed response を返す bot block 新パターンを発見。`Rejected by type filter undefined` エラーを `unsupported_type` から `bot_blocked` に再分類して proxy fallback で救援できるようにした。proxy categories のデフォルトも `['origin_error']` から `['origin_error', 'bot_blocked']` に変更
   * **followup #2 (2026-05-06)**: 長い query 付き Amazon URL (`/<slug>/dp/<asin>?_encoding=UTF8&pd_rd_w=...&ref_=...`) は CF Workers proxy 経由でも Amazon が 500 を返すケースを発見。`amazon` プラグインに `normalizeAmazonUrl` を追加し、`/dp/<asin>` の canonical 形に正規化（query / fragment / SEO slug を全部削る）してから取得するように変更。referral tracking の query は商品ページの内容に影響しないため副作用なし。**`SummalyResult.url` は変更前と同じ解決済み URL のまま**（正規化は scpaping への送信 URL のみに適用、resolveRedirect の出力には影響しない）
   * **followup #3 (2026-05-06)**: `amazon.co.jp/dp/...` (bare hostname) の URL が amazon プラグインの `test()` でマッチせず general パスに流れて URL 正規化を経由していなかった問題を修正。`test()` を `^(?:www\.)?amazon\.<TLD>$` の anchored 正規表現にして bare / www 両形式をマッチさせる。`normalizeAmazonUrl` も hostname を `www.` 付きの canonical 形に揃えるようにし、Amazon が 301 でリダイレクトする挙動を summaly 側で先回りして潰す。`aws.amazon.com` 等のサブドメインは引き続きマッチしない（テストで担保）
+  * **followup #4 (2026-05-06)**: `amzn.asia/d/<id>` 等の Amazon 短縮 URL が summaly 本番で薄い preview HTML (og:title="Amazon" / og:image=previewdoh.png) しか取れない問題を修正。原因は Vultr Tokyo IP からの `amzn.asia` GET に Amazon が 301 リダイレクトを返さず 200 + preview HTML を返すため、`resolveRedirect` が `www.amazon.co.jp` に解決できず amazon プラグインへも到達しなかった。修正:
+    - `amazon.test()` に `amzn.asia` / `amzn.to` / `a.co` を追加してマッチ可能に
+    - `summarize()` に 2 段取得: 短縮 URL は一度 scpaping → final URL から ASIN 抽出 → canonical 形で再 scpaping。final URL も短縮ドメインのままなら preview HTML をそのままパース
+    - `parseAmazonHtml` を別関数に切り出し、`#title` / `#productDescription` / `#landingImage` が無い preview HTML でも og:title / og:description / og:image を fallback で見るように補強
+    - proxy allowlist に `amzn.asia` / `amzn.to` / `a.co` を追加（Worker と summaly 両側、両方のデプロイ反映が必要）
 * **feat**: 迂回候補ログ（ブロック失敗の別系統 JSONL）を追加 (phase11.6):
   * `parseFailureLogBlockedJsonlPath` / `parseFailureLogBlockedJsonlMaxBytes` を追加。`isFilteredFailure` 対象（4xx/5xx, timeout, SSRF block, type filter, network, connection_dropped）の失敗を別ファイルに集約
   * 既存 `parseFailureLogJsonlPath`（プラグイン候補）には引き続き thin + 非フィルタ throw のみ書かれ、シグナル純度を維持

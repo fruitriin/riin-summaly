@@ -17,8 +17,19 @@ export const name = 'amazon';
  */
 const AMAZON_HOST = /^(?:www\.)?amazon\.(?:com|co\.jp|ca|com\.br|com\.mx|co\.uk|de|fr|it|es|nl|cn|in|au)$/;
 
+/**
+ * Amazon 短縮 URL ホスト (phase12.1 followup #4)。
+ *
+ * Vultr Tokyo IP からの amzn.asia GET は Amazon が 301 リダイレクトを返さず **200 + 軽量
+ * preview HTML** を返してしまい (`og:title="Amazon"`, `og:image=previewdoh/amazon.png`)、
+ * resolveRedirect 経由でも `www.amazon.co.jp` に解決されない。これを amazon plugin で扱うため、
+ * 短縮ホストもマッチさせて summarize() 内で final URL から ASIN 抽出 → canonical 化 → 再 scpaping
+ * する経路を追加する。
+ */
+const AMAZON_SHORT_HOST = /^(?:amzn\.asia|amzn\.to|a\.co)$/;
+
 export function test(url: URL): boolean {
-	return AMAZON_HOST.test(url.hostname);
+	return AMAZON_HOST.test(url.hostname) || AMAZON_SHORT_HOST.test(url.hostname);
 }
 
 /**
@@ -72,17 +83,56 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	// **URL 正規化 (phase12.1 followup)**: `?_encoding=...&pd_rd_w=...&ref_=...` のような長い query
 	// が付くと CF Workers proxy 経由でも Amazon が 500 を返すケースがあるため、`/dp/<asin>` 形式に
 	// 正規化してから取得する。referral tracking の query は商品ページの内容に影響しない。
-	const normalized = normalizeAmazonUrl(url);
-	const res = await scpaping(normalized.href, opts);
-	const $ = res.$;
+	let normalized = normalizeAmazonUrl(url);
 
-	const title = $('#title').text();
+	// **短縮 URL の 2 段取得 (phase12.1 followup #4)**: `amzn.asia/d/<id>` は path から ASIN を
+	// 抽出できないので一旦 scpaping → final URL から ASIN 取得 → canonical で再 scpaping する。
+	// Vultr (本番) では Amazon が `amzn.asia` GET に対して 200 + 軽量 preview HTML を返してしまい、
+	// `res.response.url` が短縮ドメインのままになる。その場合 ASIN 抽出は不可能なので、preview HTML を
+	// そのままパースして null を返す（amazon プラグインから general へのフォールバックは無いので
+	// 薄い結果でも summary を返す形）。
+	if (AMAZON_SHORT_HOST.test(url.hostname) && normalized.href === url.href) {
+		const firstRes = await scpaping(url.href, opts);
+		// final URL (Got が記録するリダイレクト解決後の URL) から ASIN を抽出してみる
+		let finalUrl: URL;
+		try {
+			finalUrl = new URL(firstRes.response.url);
+		} catch {
+			finalUrl = url;
+		}
+		const reNormalized = normalizeAmazonUrl(finalUrl);
+		if (reNormalized.href !== finalUrl.href) {
+			// ASIN 抽出成功 → canonical で再取得
+			normalized = reNormalized;
+		} else {
+			// ASIN 抽出失敗 (preview HTML のまま) → 最初に取った HTML をパース
+			return parseAmazonHtml(firstRes.$);
+		}
+	}
+
+	const res = await scpaping(normalized.href, opts);
+	return parseAmazonHtml(res.$);
+}
+
+/**
+ * scpaping 結果の cheerio から amazon 商品ページの metadata を抽出する。
+ *
+ * 商品ページ (`/dp/<asin>` で 200 + フル HTML) なら `#title` / `#productDescription` /
+ * `#landingImage` で抽出。`amzn.asia` の軽量 preview HTML だと商品ページの DOM 要素が無いため、
+ * OG meta tags (`og:title` / `og:image` / `og:description`) を fallback で見て「Amazon」「Amazon ロゴ」
+ * 程度の薄い情報でも返す。
+ */
+function parseAmazonHtml($: import('cheerio').CheerioAPI): summary {
+	const title = $('#title').text() || $('meta[property="og:title"]').attr('content') || '';
 
 	const description =
 		$('#productDescription').text() ||
+		$('meta[property="og:description"]').attr('content') ||
 		$('meta[name="description"]').attr('content');
 
-	const thumbnail: string | undefined = $('#landingImage').attr('src');
+	const thumbnail: string | undefined =
+		$('#landingImage').attr('src') ||
+		$('meta[property="og:image"]').attr('content');
 
 	const playerUrl =
 		$('meta[property="twitter:player"]').attr('content') ||

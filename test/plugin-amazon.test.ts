@@ -79,6 +79,29 @@ describe('normalizeAmazonUrl', () => {
 	});
 });
 
+describe('amazon.test() short URL hosts (phase12.1 followup #4)', () => {
+	test('amzn.asia もマッチする', async () => {
+		const { test: amazonTest } = await import('@/plugins/amazon.js');
+		expect(amazonTest(new URL('https://amzn.asia/d/0faScmAn'))).toBe(true);
+	});
+
+	test('amzn.to もマッチする', async () => {
+		const { test: amazonTest } = await import('@/plugins/amazon.js');
+		expect(amazonTest(new URL('https://amzn.to/abc123'))).toBe(true);
+	});
+
+	test('a.co もマッチする', async () => {
+		const { test: amazonTest } = await import('@/plugins/amazon.js');
+		expect(amazonTest(new URL('https://a.co/d/abc'))).toBe(true);
+	});
+
+	test('amzn.com.evil 等のサブ偽装はマッチしない', async () => {
+		const { test: amazonTest } = await import('@/plugins/amazon.js');
+		expect(amazonTest(new URL('https://amzn.asia.evil.example/d/x'))).toBe(false);
+		expect(amazonTest(new URL('https://www.amzn.asia/d/x'))).toBe(false); // 短縮ホストに www. は不要
+	});
+});
+
 describe('amazon.test() (host matching, phase12.1 followup #3)', () => {
 	test('www.amazon.co.jp はマッチ', () => {
 		expect(amazonTest(new URL('https://www.amazon.co.jp/dp/B0C4LRBFX6'))).toBe(true);
