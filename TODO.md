@@ -23,6 +23,12 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 12.1 | [docs/plans/phase12.1-cf-workers-proxy-fallback.md](docs/plans/phase12.1-cf-workers-proxy-fallback.md) — Cloudflare Workers Free を outbound proxy として使い、Amazon class の IP block を救援。実験ステップ (Step 1.3) で GO/NO-GO 判定する設計 | M〜L | 完了 (2026-05-05 GO 確定 → 2026-05-06 followup #1〜#4 で `Rejected by type filter undefined` / 長 query / bare hostname / amzn.asia 短縮 URL すべて本番救援動作確認済み。Step 5 pino fallback フィールドのみ phase11.6 deferral と合流予定) |
 | 高 | 12.5 | [docs/plans/phase12.5-curl-cffi-fetcher.md](docs/plans/phase12.5-curl-cffi-fetcher.md) — `curl_cffi` (libcurl-impersonate) で Chrome TLS フィンガープリントを偽装し、yodobashi 級の TLS layer bot block を救援。Step 1 実験 GO 確定 (2026-05-06)、Step 2 Node IPC 統合は次サイクル | M〜L | 進行中 (Step 1 完了、Step 2/3 残) |
 
+### 将来検討メモ (Plan は未起票)
+
+| メモ項目 | 概要 | 検討トリガー |
+|---|---|---|
+| **Playwright モード (fail mode I 対策)** | SPA + JS 動的 OGP 注入 (nitori-net 等、`/url-preview-check` skill の fail mode I) を救援するために実ブラウザレンダリングを導入する。**設計方針**: yodobashi の `forceCurlCffiFallback` と同じく **「前段を丸ごとスキップして Playwright モード直行」** をプラグイン側で宣言できる形 (`forcePlaywrightFallback: true` を渡す) にする。CF Workers Browser Rendering ではなく **自前で Playwright を抱える** 方針 (個人運用で課金を増やさないため、Vultr のメモリ拡張が必要)。`tools/playwright-fetcher/` を curl_cffi と同じ tools 配下に分離して npm publish 対象外。allowlist 必須 (任意 URL での JS 実行は SSRF + RCE 経路の温床)。L 〜 XL サイズ | fail mode I の発生頻度が無視できないレベル (例: `parse-failure-log` で月 N 件) になってきた時、もしくは個人的に preview したい SPA EC が増えた時 |
+
 ### 外部リポ連携（summaly スコープ外）
 
 | 項目 | 概要 | 状態 |
