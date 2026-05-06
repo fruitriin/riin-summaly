@@ -246,12 +246,12 @@ interface SummalyPlugin {
 | 項目 | 内容 |
 |:--|:--|
 | マッチ | `(?:www\.)?yodobashi\.com` (anchored) |
-| 取得方法 | 通常 `scpaping()` → `parseGeneral()` だが **proxy fallback の categories を拡張** (`['origin_error', 'bot_blocked', 'timeout', 'connection_dropped']`) して timeout / 切断系も proxy 救援対象に含める |
+| 取得方法 | `scpaping()` → `parseGeneral()`。**proxy fallback 段を強制スキップ** (`proxyFallback: undefined`) して curl_cffi に直行する設計 |
 | 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準) |
 | 背景 | yodobashi は **TLS / HTTP/2 レイヤで bot を能動切断**する。Vultr Tokyo IP は `category: "timeout"`、ローカル MacOS は `HTTP/2 stream INTERNAL_ERROR` (即時 RST、time<0.05s) で SummalyBot / ブラウザ UA / 各種 SNS bot UA すべて弾かれる (skill `/url-preview-check` の Phase 3 fail mode H) |
-| なぜ救援可能性があるか | yodobashi は **OGP を整備しており share link 機能も提供**しているため SNS で share されたい意思はある。CF Workers の egress IP / TLS フィンガープリントなら通る可能性がある（実証は本番デプロイ後の検証で判定） |
-| 運用要件 | Worker `wrangler.toml` の `ALLOWED_DOMAINS` と summaly `[scraping.proxy].domains` の **両側に `yodobashi.com` を追加** + Worker を `wrangler deploy`。proxy 機能自体が未設定なら通常 scpaping にフォールスルー (= 失敗するが破壊的ではない) |
-| Worker 経由でも失敗したら | CF Workers IP も yodobashi に弾かれている。Misskey 側で薄い preview を許容 (= 改修保留として記録) |
+| なぜ proxy をスキップするか | **CF Workers fetch も TLS フィンガープリント固定**なので yodobashi 側で構造的に弾かれる。本番実証で proxy 段が ~15-20 秒空回りしてから 502 を返すのが純損失だった (phase12.4 → phase12.5 で確認)。curl_cffi (libcurl-impersonate) で Chrome の TLS フィンガープリント (JA3) を偽装することだけが正解 |
+| 運用要件 | production server に `uv` + `tools/curl-cffi-fetcher/` の `uv sync` 必須。`config.toml` の `[scraping.curl_cffi]` で `enabled = true` + `domains = ["yodobashi.com"]`。curl_cffi 未設定なら通常 scpaping にフォールスルー (= 失敗するが破壊的ではない) |
+| 実証 | 本番 (riinswork.space) で `https://www.yodobashi.com/product/100000001009727358/` のプレビュー取得確認 (2026-05-06、phase12.5 Step 2 完了後) |
 
 カスタムプラグインの書き方
 ----------------------------------------------------------------

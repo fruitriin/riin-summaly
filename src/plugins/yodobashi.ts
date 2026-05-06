@@ -5,7 +5,8 @@ import { scpaping } from '@/utils/got.js';
 export const name = 'yodobashi';
 
 /**
- * ヨドバシカメラオンラインショップ (`www.yodobashi.com` / `yodobashi.com`) のプラグイン (phase12.4)。
+ * ヨドバシカメラオンラインショップ (`www.yodobashi.com` / `yodobashi.com`) のプラグイン
+ * (phase12.4 で proxy 拡張で導入 → phase12.5 で curl_cffi 直行に切替)。
  *
  * yodobashi は **TLS / HTTP/2 レイヤーで能動的に bot を切断**する。Vultr Tokyo IP からは
  * `category: "timeout"` (`Timeout awaiting 'socket'`)、ローカル MacOS からは `HTTP/2 stream
@@ -13,16 +14,19 @@ export const name = 'yodobashi';
  * SNS bot UA すべてで弾かれるため UA レイヤーでは救えない (skill `/url-preview-check` の
  * Phase 3 fail mode H 「HTTP/2 INTERNAL_ERROR」)。
  *
- * **しかし yodobashi は OGP を整備しており share link 機能も提供**しているため、SNS で share
- * されたい意思はある。CF Workers の egress IP / TLS フィンガープリントなら通る可能性が高い。
- * このプラグインは proxy fallback の `categories` に `timeout` / `connection_dropped` を
- * **強制追加** して、デフォルトでは発火しない timeout カテゴリでも yodobashi だけは proxy 経由で
- * リトライさせる設計。
+ * **CF Workers proxy も TLS フィンガープリントが固定なので構造的に救えない** (本番実証で
+ * proxy 段が ~15-20 秒空回りして失敗、結果として 4 段目の curl_cffi で救援していた)。
+ * 唯一の正解経路は **`curl_cffi` (libcurl-impersonate) で Chrome TLS フィンガープリントを偽装**
+ * すること (phase12.5)。
  *
- * **運用要件**: Worker 側 `wrangler.toml` の `ALLOWED_DOMAINS` と summaly 側
- * `[scraping.proxy].domains` の両方に `yodobashi.com` を追加した上で `wrangler deploy` 必須。
- * Worker 経由でも CF egress IP から弾かれる場合は 502 が返り、proxy 救援は失敗する
- * (その場合 Misskey 側で薄い preview を許容)。
+ * このプラグインは:
+ * - **proxy fallback 段を強制スキップ** して 15-20 秒の純損失を回避
+ * - curl_cffi fallback は opts 透過で受ける (デフォルトカテゴリ
+ *   `['timeout', 'connection_dropped', 'bot_blocked']` で yodobashi の TLS 切断をカバー)
+ *
+ * **運用要件**: production server に `uv` をインストール + `cd tools/curl-cffi-fetcher && uv sync`、
+ * config.toml の `[scraping.curl_cffi]` で `enabled = true` + `domains = ["yodobashi.com"]`。
+ * curl_cffi が未設定なら通常 scpaping にフォールスルー (= 失敗するが破壊的ではない)。
  */
 const YODOBASHI_HOST = /^(?:www\.)?yodobashi\.com$/;
 
@@ -31,24 +35,12 @@ export function test(url: URL): boolean {
 }
 
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
-	// proxy fallback の categories を拡張: 通常デフォルトの ['origin_error', 'bot_blocked'] では
-	// 救えない `timeout` / `connection_dropped` も yodobashi では発火対象に含める。
-	// proxyFallback 自体が未設定 (= 機能無効) なら何もしない (通常の scpaping にフォールスルー)。
-	const proxyOverride = opts?.proxyFallback != null
-		? {
-			...opts.proxyFallback,
-			categories: ['origin_error', 'bot_blocked', 'timeout', 'connection_dropped'] satisfies import('@/utils/parse-failure-log.js').SummalyErrorCategory[],
-		}
-		: undefined;
-
-	// curlCffiFallback は config 由来のデフォルト (`['timeout', 'connection_dropped', 'bot_blocked']`)
-	// で yodobashi の TLS layer 切断を既にカバーするためプラグイン側ではオーバーライドしない。
-	// proxy 側だけ非対称にカテゴリを足しているのは「proxy デフォルトには timeout/connection_dropped が
-	// 含まれていない (Amazon class IP block 用に origin_error 中心)」のに対し、curl_cffi デフォルトには
-	// すでに含まれているため。`opts?.curlCffiFallback` をそのまま透過するだけで OK。
+	// proxy fallback 段は yodobashi では構造的に救えない (CF Worker fetch の TLS フィンガープリントも
+	// 固定なので yodobashi 側で弾かれる)。本番実測で ~15-20 秒の純損失だったため強制スキップする。
+	// curl_cffi fallback は opts そのままで透過 (デフォルトカテゴリで TLS 切断をカバー済み)。
 	const res = await scpaping(url.href, {
 		...opts,
-		proxyFallback: proxyOverride,
+		proxyFallback: undefined,
 	});
 	return await parseGeneral(url, res);
 }
