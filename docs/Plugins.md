@@ -1,7 +1,7 @@
 Plugins.md — プラグイン詳細
 ================================================================
 
-summaly のプラグインシステムと、組み込み 12 プラグインの仕様、カスタムプラグインの書き方をまとめます。
+summaly のプラグインシステムと、組み込み 13 プラグインの仕様、カスタムプラグインの書き方をまとめます。
 
 目次
 ----------------------------------------------------------------
@@ -21,6 +21,7 @@ summaly のプラグインシステムと、組み込み 12 プラグインの�
   - [komiflo](#komiflo)
   - [nijie](#nijie)
   - [npmjs](#npmjs)
+  - [nintendo-store](#nintendo-store)
 - [カスタムプラグインの書き方](#カスタムプラグインの書き方)
 - [共通ユーティリティ](#共通ユーティリティ)
 
@@ -223,6 +224,19 @@ interface SummalyPlugin {
 | 固定値 | `sitename: 'npm'`、icon/thumbnail は `https://static-production.npmjs.com/58a19602036db1daee0d7863c94673a4.png`（120×120 PNG） |
 | 背景 | `www.npmjs.com` は Cloudflare Bot Management で正規 bot UA を含めて 403 を返すが、`registry.npmjs.org` は素通しで `application/json` を返す。X / Discord の OG カードは verified bot の IP allowlist 経由で表示されており、HTTP レイヤでは突破不可 |
 | ヘルパ export | `extractPackageName(pathname)` / `buildRegistryUrl(pkg)` / `buildSummaryFromRegistry(body)` |
+
+### nintendo-store
+
+実装: [src/plugins/nintendo-store.ts](../src/plugins/nintendo-store.ts)
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `store(?:-<TLD>)?\.nintendo\.com` (`store-jp.nintendo.com` / `store-us.nintendo.com` / `store.nintendo.com` 等) |
+| 取得方法 | UA を `facebookexternalhit/1.1` に **固定** して `scpaping()` → `parseGeneral()` に流す |
+| 抽出フィールド | `parseGeneral` 経由なので OG / Twitter Card 標準ロジック (`og:title` / `og:image` / `og:description` / `og:site_name`) |
+| 背景 | Akamai Bot Manager の JS challenge 配下だが、Nintendo は **`facebookexternalhit` / `Slackbot-LinkExpanding` UA を allowlist** している (= SNS share を意図的に許可)。SummalyBot UA や Twitterbot / Discordbot UA だと `*-wr.nintendo.com/?c=ncl&...&kupver=akamai-5.0.1` の challenge ページにリダイレクトされる |
+| 倫理判断 | phase11.9 fallback UA と同じ倫理判断: SNS bot UA を名乗るのは「OGP 取得が目的」なので Nintendo の意図に沿う |
+| 副作用 | プラグイン内で `fallbackUserAgent` / `fallbackRetryCategories` を **明示的に未設定** にして UA 上書きが発生しないようにしている |
 
 カスタムプラグインの書き方
 ----------------------------------------------------------------

@@ -1138,6 +1138,21 @@ describe('local tests', () => {
 				expect(t('https://www.youtube.com/lives')).toBe(false);  // /live で始まるが境界違い
 			});
 
+			test('nintendo-store プラグインが store-jp.nintendo.com にマッチする (phase12.3)', () => {
+				const ns = builtinPlugins.find(p => p.name === 'nintendo-store');
+				expect(ns).toBeDefined();
+				const t = (s: string) => ns!.test(new URL(s));
+
+				expect(t('https://store-jp.nintendo.com/item/software/D70010000096249')).toBe(true);
+				expect(t('https://store-us.nintendo.com/item/anything')).toBe(true);  // 将来の TLD バリエーション
+				expect(t('https://store.nintendo.com/anything')).toBe(true);
+
+				// マッチしないべき URL
+				expect(t('https://www.nintendo.com/jp/')).toBe(false);  // 旧サイト、別構造
+				expect(t('https://nintendo.com/')).toBe(false);
+				expect(t('https://store-jp.nintendo.com.evil.example/')).toBe(false);
+			});
+
 			test('spotify プラグインが open.spotify.com にマッチする', () => {
 				const spotify = builtinPlugins.find(p => p.name === 'spotify');
 				expect(spotify).toBeDefined();

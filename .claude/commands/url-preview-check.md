@@ -169,11 +169,18 @@ curl 結果のパターンから **5 タイプ**に分類:
 - 対処: HTML スクレイプを諦めて公式 API 直叩き (npm の `registry.npmjs.org` パターン)
 - 関連 knowhow: [plugin-infrastructure-patterns.md](../../docs/knowhow/plugin-infrastructure-patterns.md) の「Cloudflare 配下サイトの公式 JSON API 直叩きパターン」
 
-### G. Akamai Bot Manager の JS challenge (対処困難)
+### G. Akamai Bot Manager の JS challenge (一部 SNS bot allowlist 経由で救援可)
 
-- 兆候: 元 URL から `*-wr.example.com/?c=ncl&...&kupver=akamai-5.0.1&t=<元URL>` のような challenge ページに redirect。HTML には `<title>` も og 系も全部空。`store-jp.nintendo.com` で実証 (2026-05-06)
-- 対処: **JS 実行エンジンが必要** (Puppeteer / Playwright) で、CF Workers でも proxy でも突破不可
-- 判断: summaly のスコープ外として **対処保留**。Misskey 側で当該サイトのカードは表示しない / 薄い preview を許容する選択
+- 兆候: 元 URL から `*-wr.example.com/?c=ncl&...&kupver=akamai-5.0.1&t=<元URL>` のような challenge ページに redirect。HTML には `<title>` も og 系も全部空
+- 切り分け方法: **複数の SNS bot UA を試す**:
+  - `Mozilla/5.0` ブラウザ UA → challenge (= JS 実行必要)
+  - `Twitterbot/1.0` → challenge (or 通る)
+  - `facebookexternalhit/1.1` → ★**通れば allowlist あり**
+  - `Slackbot-LinkExpanding 1.0` → ★**通れば allowlist あり**
+  - `Discordbot/2.0` → challenge (or 通る)
+- **対処 A (allowlist がある場合)**: 該当サイト用プラグインを作り `scpaping()` の `userAgent` を `facebookexternalhit/1.1` に固定して取得 → `parseGeneral()` で OGP 抽出。`bluesky` プラグインや `nintendo-store` プラグインがこのパターン (phase12.3 で実装、`store-jp.nintendo.com`)
+- **対処 B (allowlist が無い場合)**: JS 実行エンジン (Puppeteer / Playwright) が必要だが summaly のスコープ外。**対処保留**として Misskey 側で薄い preview を許容
+- 関連 knowhow: [src/plugins/nintendo-store.ts](../../src/plugins/nintendo-store.ts) — `facebookexternalhit` UA 固定の実装例
 
 ### H. HTTP/2 stream INTERNAL_ERROR (対処困難)
 

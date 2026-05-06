@@ -121,6 +121,7 @@ allowed = ["amazon", "bluesky", "wikipedia", "branchio-deeplinks", "youtube", "s
 | `komiflo` | `komiflo.com/comics/<id>` | thumbnail フォールバック時に `api.komiflo.com` から取得 + sensitive |
 | `nijie` | `nijie.info/view.php` | JSON-LD `ImageObject` から description / thumbnail を補完 + sensitive |
 | `npmjs` | `(www.)?npmjs.com/package/...` | Cloudflare 配下の HTML を諦め `registry.npmjs.org` を直叩き、`dist-tags.latest` から title / description を組み立てる |
+| `nintendo-store` | `store(-<TLD>)?.nintendo.com` | Akamai JS challenge 回避: UA を `facebookexternalhit/1.1` に固定して OGP 取得 (Nintendo が SNS bot UA を allowlist している事実を利用) |
 
 各プラグインの詳細仕様、カスタムプラグインの書き方、共通ユーティリティは **[docs/Plugins.md](docs/Plugins.md)** にあります。
 

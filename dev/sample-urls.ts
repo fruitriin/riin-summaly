@@ -98,6 +98,13 @@ export const sampleGroups: SampleGroup[] = [
 		],
 	},
 	{
+		name: 'nintendo-store (phase12.3)',
+		description: 'Akamai Bot Manager 配下だが facebookexternalhit UA は allowlist されているので、UA 切り替えで OGP 取得',
+		urls: [
+			{ label: 'My Nintendo Store JP', url: 'https://store-jp.nintendo.com/item/software/D70010000096249' },
+		],
+	},
+	{
 		name: 'npmjs (Registry API)',
 		description: 'Cloudflare 配下の HTML を諦めて Registry API (registry.npmjs.org) を直叩き（phase11.4）',
 		urls: [

@@ -10,6 +10,7 @@ import * as iwara from './iwara.js';
 import * as komiflo from './komiflo.js';
 import * as nijie from './nijie.js';
 import * as npmjs from './npmjs.js';
+import * as nintendoStore from './nintendo-store.js';
 import { SummalyPlugin } from '@/iplugin.js';
 
 export const plugins: SummalyPlugin[] = [
@@ -25,4 +26,5 @@ export const plugins: SummalyPlugin[] = [
 	komiflo,
 	nijie,
 	npmjs,
+	nintendoStore,
 ];
