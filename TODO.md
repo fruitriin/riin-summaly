@@ -5,7 +5,7 @@
 
 phase 番号は **着手順**（数値が小さいほど先）。同じ大番号内（例: 2.1 と 2.2）は並列着手可能。
 
-## 現在のフェーズ: 全タスク完了（phase12.1 followup #1〜#4 まで本番実証成功 2026-05-06、Step 5 pino fallback フィールドのみ phase11.6 deferral と合流予定）
+## 現在のフェーズ: phase12.5 Step 1 (curl_cffi 実験) GO 確定。Step 2 (Node IPC 統合) を次サイクルで着手
 
 ## バックログ
 
@@ -21,6 +21,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 11.3 | [docs/plans/phase11.3-scpaping-follow-redirect.md](docs/plans/phase11.3-scpaping-follow-redirect.md) — Fastify モードで scpaping のリダイレクト follow が無効化されているバグ修正（[riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) 真因） | S | 完了 (2026-05-05) |
 | — | 11.9 | [docs/plans/phase11.9-bot-block-ua-retry.md](docs/plans/phase11.9-bot-block-ua-retry.md) — bot block 対策（複合 UA + フォールバック UA リトライ）。`SummalyBot` 文字列で WAF に弾かれるサイトを救援（実証 2/3 救える） | M | 完了 (2026-05-05、pino fallback フィールドは phase11.6 に廆す) |
 | — | 12.1 | [docs/plans/phase12.1-cf-workers-proxy-fallback.md](docs/plans/phase12.1-cf-workers-proxy-fallback.md) — Cloudflare Workers Free を outbound proxy として使い、Amazon class の IP block を救援。実験ステップ (Step 1.3) で GO/NO-GO 判定する設計 | M〜L | 完了 (2026-05-05 GO 確定 → 2026-05-06 followup #1〜#4 で `Rejected by type filter undefined` / 長 query / bare hostname / amzn.asia 短縮 URL すべて本番救援動作確認済み。Step 5 pino fallback フィールドのみ phase11.6 deferral と合流予定) |
+| 高 | 12.5 | [docs/plans/phase12.5-curl-cffi-fetcher.md](docs/plans/phase12.5-curl-cffi-fetcher.md) — `curl_cffi` (libcurl-impersonate) で Chrome TLS フィンガープリントを偽装し、yodobashi 級の TLS layer bot block を救援。Step 1 実験 GO 確定 (2026-05-06)、Step 2 Node IPC 統合は次サイクル | M〜L | 進行中 (Step 1 完了、Step 2/3 残) |
 
 ### 外部リポ連携（summaly スコープ外）
 
@@ -61,6 +62,10 @@ phase11.8 完了（エラーログ出力）
 phase11.9 完了（bot block UA リトライ、pino fallback フィールドは phase11.6 に廆す）
    ↓
 phase12.1 完了（CF Workers proxy fallback、Step 1〜7 + dev 統合 + E2E 検証済、pino fallback のみ phase11.6 と合流予定）
+phase12.2 完了（youtube /live/ URL 対応）
+phase12.3 完了（nintendo-store プラグイン、facebookexternalhit UA 固定）
+phase12.4 完了（yodobashi プラグイン、proxy categories 拡張パターン）
+phase12.5 進行中（curl_cffi TLS impersonation、Step 1 GO 確定、Step 2 Node IPC 統合は次サイクル）
 ```
 
 ---

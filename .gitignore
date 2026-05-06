@@ -13,3 +13,8 @@ CLAUDE.repo.md
 # --- /ADDF Framework ---
 
 .env
+
+# Python (tools/curl-cffi-fetcher 等)
+.venv/
+__pycache__/
+*.pyc
