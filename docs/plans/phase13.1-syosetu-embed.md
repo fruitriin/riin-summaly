@@ -1,6 +1,6 @@
 # phase13.1 — 小説家になろうプラグイン + `/embed` エンドポイント基盤
 
-> 状態: **進行中** (Step 1 + Step 2 完了 2026-05-08、Step 3 syosetu プラグイン本体 + Step 4〜8 残)
+> 状態: **進行中** (Step 1 + Step 2 + Step 3 完了 2026-05-08。Step 4 残テスト網羅 / Step 5 dev 手動 / Step 6 docs / Step 7 knowhow / Step 8 quality-gate が残)
 > 種別: 機能追加 / プラグイン追加 / Fastify 新エンドポイント
 > サイズ: **M〜L**
 > 依存: [phase2.1](phase2.1-plugin-infrastructure.md)（プラグイン基盤）、[phase4.1](phase4.1-fastify-in-memory-cache.md)（Fastify LRU キャッシュ流用）、[phase8.1](phase8.1-toml-config.md)（TOML config）
@@ -339,23 +339,14 @@ Misskey browser ──iframe src=player.url──> summaly /embed
   - [test/config-loader.test.ts](../../test/config-loader.test.ts) に embed セクションパース + バリデーションのテスト追加
   - [test/config-example-plugins.test.ts](../../test/config-example-plugins.test.ts) を `syosetu` 追加で更新（[Feedback.md](../../.claude/Feedback.md) のチェック構造）
 
-- [ ] **Step 3 — syosetu プラグインの追加**
-  - [src/plugins/syosetu.ts](../../src/plugins/syosetu.ts) を新設:
-    - `export const name = 'syosetu';`
-    - `test(url)`: `(ncode|novel18)\.syosetu\.com` + path に ncode を含む
-    - `summarize(url, opts)`:
-      - URL から `ncode` と R-18 フラグを抽出
-      - `https://api.syosetu.com/{novelapi|novel18api}/api/?ncode=<ncode>&out=json&of=t-w-s-bg-g-nt-e-ir15-izk-ibl-igl-k` を `getJson` で取得
-      - `[allcount, novelData]` を分解、allcount=0 なら null 返却
-      - `composeDescription(novel)` と `composeSitename(isR18)` で Summary を組み立て
-      - `opts.embedBaseUrl` があれば player.url を組み立て
-    - `renderEmbed(url, opts)`:
-      - 同じ API 呼び出し（重複呼び出しは Step 6 で in-memory cache を検討、今回は素直に 2 回叩く）
-      - HTML を `escapeHtml` で組み立て返却
-  - [src/plugins/index.ts](../../src/plugins/index.ts) に登録（amazon の前後どこか、テスト範囲が重ならない場所）
-  - **ジャンル ID マッピングテーブル** を [src/plugins/syosetu-genres.ts](../../src/plugins/syosetu-genres.ts) として分離（biggenre / genre の数値 → 表示名）
-    - 参考: https://dev.syosetu.com/man/api/#param-bigjanru / `#param-janru`
-    - `as const` で定義、`Record<number, string>` で公開
+- [x] **Step 3 — syosetu プラグインの追加** (完了 2026-05-08)
+  - [x] `src/plugins/syosetu.ts` を新設 (test / extractNcodeAndR18 / buildApiUrl / parseNovelApiResponse / composeDescription / composeEmbedHtml / buildSummaryFromApi / summarize / renderEmbed)
+  - [x] ジャンル ID マッピングは **`src/utils/syosetu-genres.ts`** として分離 (Plan の `src/plugins/syosetu-genres.ts` から変更 — `src/plugins/` 配下は plugin のみ置く既存テスト規約を尊重するため)
+  - [x] `src/plugins/index.ts` に syosetu を登録
+  - [x] `config.example.toml` + `docs/deploy-examples/summaly-config.example.toml` 両方の `[plugins].allowed` に `"syosetu"` 追加
+  - [x] テスト 32 件追加 (test() URL マッチ + 別パス除外 / extractNcodeAndR18 / buildApiUrl / composeDescription / buildSummaryFromApi / composeEmbedHtml + XSS 攻撃 3 ケース)
+  - [x] レビュー対応 (W-1 ncode 正規表現を `n\d+[a-z][0-9a-z]*` に強化、`/novelview/` `/ncode/` 等の他パス誤マッチを構造的に除外 + S-1/S-4 コメント補足)
+
 
 - [ ] **Step 4 — テスト**（fastify mock + フィクスチャベース、ネットワーク非依存）
   - **embed エンドポイントのテスト** [test/embed.test.ts](../../test/embed.test.ts) 新設:

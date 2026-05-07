@@ -23,7 +23,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 12.1 | [docs/plans/phase12.1-cf-workers-proxy-fallback.md](docs/plans/phase12.1-cf-workers-proxy-fallback.md) — Cloudflare Workers Free を outbound proxy として使い、Amazon class の IP block を救援。実験ステップ (Step 1.3) で GO/NO-GO 判定する設計 | M〜L | 完了 (2026-05-05 GO 確定 → 2026-05-06 followup #1〜#4 で `Rejected by type filter undefined` / 長 query / bare hostname / amzn.asia 短縮 URL すべて本番救援動作確認済み。Step 5 pino fallback フィールドのみ phase11.6 deferral と合流予定) |
 | 高 | 12.5 | [docs/plans/phase12.5-curl-cffi-fetcher.md](docs/plans/phase12.5-curl-cffi-fetcher.md) — `curl_cffi` (libcurl-impersonate) で Chrome TLS フィンガープリントを偽装し、yodobashi 級の TLS layer bot block を救援。Step 1 実験 GO 確定 (2026-05-06)、Step 2 Node IPC 統合は次サイクル | M〜L | 進行中 (Step 1 完了、Step 2/3 残) |
 | — | 12.6 | [docs/plans/phase12.6-sqex-store-proxy.md](docs/plans/phase12.6-sqex-store-proxy.md) — Square Enix e-STORE (`store.jp.square-enix.com`) 救援。`forceProxyFallback` フラグ新設 + sqex プラグイン追加。データセンター IP を CDN 段で広く弾く新パターン (HTTP 200 + 正規 404 ページボディ、エラーシグナル無し) を救援 | S〜M | 完了 (2026-05-07、本番デプロイ + 動作確認は運用者側) |
-| 中 | 13.1 | [docs/plans/phase13.1-syosetu-embed.md](docs/plans/phase13.1-syosetu-embed.md) — 小説家になろうプラグイン + `/embed` エンドポイント基盤。プレイヤー iframe で作者・ジャンル・あらすじを表示（JS 一切なしのバニラ HTML+CSS、CSP `default-src 'none'`、XSS 全エスケープ）。なろう公式 API 直叩き、R-18 ドメインで `sensitive: true` | M〜L | 進行中 (Step 1 embed エンドポイント基盤 + Step 2 config 拡張 完了 2026-05-08、Step 3 syosetu プラグイン本体 / Step 4 テスト網羅 / Step 5 dev / Step 6 docs / Step 7 knowhow が残) |
+| 中 | 13.1 | [docs/plans/phase13.1-syosetu-embed.md](docs/plans/phase13.1-syosetu-embed.md) — 小説家になろうプラグイン + `/embed` エンドポイント基盤。プレイヤー iframe で作者・ジャンル・あらすじを表示（JS 一切なしのバニラ HTML+CSS、CSP `default-src 'none'`、XSS 全エスケープ）。なろう公式 API 直叩き、R-18 ドメインで `sensitive: true` | M〜L | 進行中 (Step 1 embed 基盤 + Step 2 config + Step 3 syosetu プラグイン 完了 2026-05-08、Step 4 残テスト網羅 / Step 5 dev / Step 6 docs / Step 7 knowhow が残) |
 | 高 | 14 | [docs/plans/phase14-domain-strategy-cache.md](docs/plans/phase14-domain-strategy-cache.md) — 経路学習キャッシュ (host + path prefix 2段、JSONL 永続化、N 連続失敗で invalidate)。bootstrap JSONL 同梱で初回コスト回避。`forceCurlCffiFallback` / `forceProxyFallback` を廃止し、プラグインは「引き出し方の自在性」専用に整理。汎用パスでも自動最適化される | M〜L | ほぼ完了 (Step 1 + Step 2 系 + Step 3 + Step 4 + Step 6 docs + Step 7 skill 更新 完了 2026-05-08、残る Step 5 dev UI のみ — UI 手動検証必要のため自動化対象外) |
 
 ### 将来検討メモ (Plan は未起票)
@@ -77,7 +77,7 @@ phase12.4 完了（yodobashi プラグイン、proxy categories 拡張パター�
 phase12.5 進行中（curl_cffi TLS impersonation、Step 1 GO 確定、Step 2 Node IPC 統合は次サイクル）
 phase12.6 完了（sqex プラグイン + forceProxyFallback 新設、エラーシグナルなし IP block 新パターン救援）
    ↓
-phase13.1 進行中（Step 1 embed 基盤 + Step 2 config 完了 2026-05-08、Step 3 syosetu plugin 本体 〜 Step 7 残）
+phase13.1 進行中（Step 1 embed 基盤 + Step 2 config + Step 3 syosetu plugin 完了 2026-05-08、Step 4〜7 残）
 phase14   ほぼ完了（Step 1 + Step 2 系 + Step 3 + Step 4 + Step 6 docs + Step 7 skill 完了 2026-05-08、残る Step 5 dev UI のみ — 手動検証必要）
 ```
 

@@ -113,13 +113,12 @@ describe('/embed エンドポイント基盤 (phase13.1 Step 1)', () => {
 		expect(res.statusCode).toBe(400);
 	});
 
-	test('対応プラグインが無い (renderEmbed 未実装) なら 404', async () => {
-		// 組み込みプラグインで renderEmbed を実装しているものはまだ無い (phase13.1 Step 3 で syosetu 実装予定)
-		// → どんな URL も 404 「no plugin matched」を返すはず
+	test('対応プラグインが無い URL なら 404 (どの組み込みプラグインも test() にマッチしない URL)', async () => {
+		// allowedPlugins に存在しないプラグイン名を指定 → 必ず dispatch 失敗 (組み込みプラグインから探しても見つからない)
 		await startApp({
-			embedConfig: { enabled: true, allowedPlugins: ['syosetu'], frameAncestors: ['*'] },
+			embedConfig: { enabled: true, allowedPlugins: ['nonexistent-plugin'], frameAncestors: ['*'] },
 		});
-		const res = await app!.inject({ method: 'GET', url: '/embed?url=https://ncode.syosetu.com/n7587fe/' });
+		const res = await app!.inject({ method: 'GET', url: '/embed?url=https://example.com/page' });
 		expect(res.statusCode).toBe(404);
 		expect(res.body).toBe('no plugin matched');
 	});
@@ -128,11 +127,11 @@ describe('/embed エンドポイント基盤 (phase13.1 Step 1)', () => {
 		// Misskey transformPlayerUrl が autoplay=1 / auto_play=1 を勝手に追加する仕様への対応
 		// (Step 0 調査結果): 厳密 query 検証で 400 を返さないこと
 		await startApp({
-			embedConfig: { enabled: true, allowedPlugins: ['syosetu'], frameAncestors: ['*'] },
+			embedConfig: { enabled: true, allowedPlugins: ['nonexistent-plugin'], frameAncestors: ['*'] },
 		});
 		const res = await app!.inject({
 			method: 'GET',
-			url: '/embed?url=https://ncode.syosetu.com/n7587fe/&autoplay=1&auto_play=1',
+			url: '/embed?url=https://example.com/page&autoplay=1&auto_play=1',
 		});
 		// プラグイン無しで 404 が返るが、`autoplay` で 400 にはならないことが重要
 		expect(res.statusCode).toBe(404);
