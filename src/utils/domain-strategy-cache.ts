@@ -423,3 +423,24 @@ export function tryStatJsonl(path: string): { size: number } | undefined {
 		return undefined;
 	}
 }
+
+/**
+ * 現在 active な `DomainStrategyCache` インスタンス (phase14 Step 2a)。
+ *
+ * `setActiveCache` で設定する。`scpaping()` は `getActiveCache()` で取得して lookup する。
+ * 設計選択: `agent` (got.ts) と同じくモジュールレベル singleton。
+ *
+ * - **Fastify モード**: プラグイン setup 時に `[scraping.strategy_cache].enabled = true` なら
+ *   インスタンス化して `setActiveCache` を呼ぶ (Step 2b で実装)
+ * - **ライブラリモード**: 利用者が `setActiveCache` を直接呼ぶ
+ * - **テスト**: `beforeEach` / `afterEach` で `setActiveCache(undefined)` に戻して状態リセット
+ */
+let activeCache: DomainStrategyCache | undefined;
+
+export function setActiveCache(cache: DomainStrategyCache | undefined): void {
+	activeCache = cache;
+}
+
+export function getActiveCache(): DomainStrategyCache | undefined {
+	return activeCache;
+}

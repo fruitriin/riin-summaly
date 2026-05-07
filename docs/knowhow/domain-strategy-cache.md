@@ -135,6 +135,43 @@ class DomainStrategyCache {
 
 プラグインは **「引き出し方の自在性」** (DOM 直読み・API 直叩き・URL 正規化) のみ担当する設計に進化する。
 
+## phase14 Step 2a 統合パターン (2026-05-07)
+
+### モジュールレベル singleton で cache を共有
+
+`scpaping()` から cache を参照する経路として、`agent` (got.ts) と同じく `setActiveCache` / `getActiveCache` のモジュールレベル singleton を採用。理由:
+
+- summaly() は per-request 関数なので cache を request 引数で渡すと毎回インスタンス再作成のリスク (永続化ファイル再ロード等)
+- Fastify mode は plugin instance state で持てるが、ライブラリ mode + テストの両方をカバーするには singleton が最も簡潔
+- テスト分離は `afterEach(() => setActiveCache(undefined))` で OK (`setAgent({})` と同じ運用)
+
+### ゲート不通過 (`null`) と実行時失敗 (`throw`) の意味区別
+
+`fetchByStrategy` の戻り値設計:
+
+```typescript
+// null = ゲート不通過 (config 無効・allowlist 不一致・https 以外) → recordFailure 呼ばない
+// throw = 実行時失敗 → recordFailure (連続失敗カウント増)
+```
+
+混同すると「config を一時的に無効化したらキャッシュエントリが N 回で破棄されてしまう」誤動作になる。**「現環境で使えない」** と **「一時的に失敗」** は別物として扱う。
+
+### `forceX` フラグとの優先順位
+
+cache hit より forceX (forceProxyFallback / forceCurlCffiFallback) を優先する設計:
+
+- `forceX` はプラグインが「このサイトは確実にこの経路でしか取れない」と確信しているシグナル
+- cache に古い情報が残っていても plugin の意思を尊重する
+- phase14 Step 4 で `forceX` は廃止予定。移行期は二重存在して問題ない (forceX が短期で使われるサイトは限定的)
+
+### `'default'` strategy の fast path は UA リトライしない設計
+
+通常カスケードの 1 段目は `getResponseWithFallback` (UA リトライ付き) だが、cache hit `'default'` の fast path は `getResponse` 直接 (リトライなし)。理由:
+
+- cache が `'default'` を記録 = 過去 default UA 単独で成功した実績
+- リトライ前提のラッパは不要
+- fast path で失敗したら recordFailure → cascade で改めて UA リトライを試す形になる (二重リトライにならない)
+
 ## 参考
 
 - [docs/plans/phase14-domain-strategy-cache.md](../plans/phase14-domain-strategy-cache.md)

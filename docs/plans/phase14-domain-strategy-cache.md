@@ -152,16 +152,31 @@ scpaping(url, opts)
 - compaction 失敗時の `.tmp` ファイル cleanup を `unlinkSync` で追加 (レビュー C-2)
 - append 用と compaction 用の error logged フラグを分離 (レビュー W-1: 一方が抑制されても他方は通る)
 
-### Step 2 — `scpaping()` への統合
+### Step 2a — `scpaping()` への統合 (cache hit fast path のみ) (完了 2026-05-07)
 
-- [ ] `src/utils/got.ts` の `scpaping()` で:
-  - 開始時に cache lookup
-  - ヒット → 該当 strategy で取得試行 (= `getResponseWithFallback` / `viaProxyWorker` / `viaCurlCffi` を直接呼ぶ)
-  - 失敗 → 通常カスケード
-  - 成功した経路を `recordSuccess` で記録
+- [x] `src/utils/domain-strategy-cache.ts` に module-level singleton (`setActiveCache` / `getActiveCache`) 追加 (`agent` と同じパターン)
+- [x] `src/utils/got.ts` の `scpaping()` で:
+  - 内部関数 `fetchResponse` に切り出し
+  - 開始時に cache lookup (forceX フラグの後、通常カスケードの前)
+  - ヒット → `fetchByStrategy` で該当 strategy を直接呼ぶ
+    - 'default' / 'fallback_ua' → `getResponse` (UA 切替のみ、リトライなし)
+    - 'proxy' → `viaProxyWorker` (cascade 経由しない)
+    - 'curl_cffi' → `viaCurlCffi` (cascade 経由しない)
+  - ゲート不通過 (config / allowlist / https 不一致) → null 返して fallthrough (recordFailure 呼ばない、中立)
+  - fast path 成功 → `cache.recordSuccess(hitKey, strategy)`
+  - fast path 失敗 (throw) → `cache.recordFailure(hitKey)` + 通常カスケード fallthrough
+  - キャッシュミス → 通常 4 段カスケード (既存挙動)
+- [x] テスト 7 ケース: cache 未設定回帰 / default 成功 / default 失敗 → throw / default 失敗 → cascade 救援 / fallback_ua ゲート不通過 / proxy ゲート不通過 / 閾値到達破棄
+- [x] レビュー対応 (W-1 / W-2 / S-1 / S-2 / S-3 全て修正)
+
+### Step 2b — cascade tracking + Summary レイヤ override (未着手)
+
+- [ ] `src/utils/got.ts` の cascade 関数群 (`getResponseWithFallback` / `getResponseWithProxyFallback` / `getResponseWithCurlCffiFallback`) に **strategy tracker** を追加し、cache miss 時にどの strategy で成功したかを記録できるようにする
+- [ ] `src/utils/got.ts` で cascade 成功時に `recordSuccess` を呼ぶ (cache miss 経路でも学習が積み上がるように)
 - [ ] `parseGeneral` 後の Summary で「成功 / 失敗」を判定 → cache に通知
   - 設計判断: 「成功判定」は scpaping 完了後 (HTTP 層) ではなく Summary 確定後 (= general() の最後 / プラグインの summarize() の最後) に行う
   - これは scpaping のスコープ外 (`parseGeneral` で thin な Summary が返るケースを失敗扱いにしたい) → `summaly()` レイヤで record する
+- [ ] Fastify モードで `[scraping.strategy_cache].enabled = true` を読み取って `DomainStrategyCache` インスタンスを自動生成 + `setActiveCache` する
 
 ### Step 3 — bootstrap JSONL 同梱
 
@@ -250,4 +265,4 @@ scpaping(url, opts)
 
 ## 完了状況
 
-Step 1 完了 (2026-05-07)。Step 2〜7 は次サイクル以降。
+Step 1 完了 (2026-05-07)。Step 2a 完了 (2026-05-07、cache hit fast path のみ)。Step 2b〜7 は次サイクル以降。

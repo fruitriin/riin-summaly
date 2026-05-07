@@ -7,6 +7,7 @@ import { StatusError } from '@/utils/status-error.js';
 import { detectEncoding, toUtf8 } from '@/utils/encoding.js';
 import { defaultHttpAgent, defaultHttpsAgent } from '@/utils/agent.js';
 import { categorizeError, type SummalyErrorCategory } from '@/utils/parse-failure-log.js';
+import { getActiveCache, type DomainStrategy } from '@/utils/domain-strategy-cache.js';
 
 /**
  * 外部から `setAgent` で渡された agent。設定されている場合は keep-alive デフォルトより優先される。
@@ -137,20 +138,87 @@ export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, mes
 	}
 }
 
-export async function scpaping(
-	url: string,
-	opts?: GeneralScrapingOptions,
-): Promise<ScpapingResult> {
-	const args = getGotOptions(url, opts);
+/**
+ * 経路学習キャッシュのヒット時に該当 strategy を直接呼ぶ fast path 実装 (phase14 Step 2a)。
+ *
+ * - `'default'` / `'fallback_ua'`: `getResponse` を呼ぶ (UA を切り替えるだけ)
+ * - `'proxy'`: `viaProxyWorker` を直接呼ぶ (cascade を経由しない)
+ * - `'curl_cffi'`: `viaCurlCffi` を直接呼ぶ (cascade を経由しない)
+ *
+ * **ゲート**: 該当 strategy の前提条件 (config 有効化 / allowlist 一致 / `https:` プロトコル等)
+ * を満たさない場合は `null` を返し、呼出側が cache 値を無視してカスケードに fallthrough する。
+ *
+ * **戻り値の意味区別 (W-1 review feedback)**:
+ * - `null` = ゲート不通過 (config 上使えない、中立)。`recordFailure` は呼ばない (失敗ではないため)
+ * - `throw` = 実行時失敗。呼出側で `recordFailure` を呼ぶ (連続失敗カウント対象)
+ *
+ * **設計意図 (W-1 review feedback)**: `'default'` strategy は通常カスケードの 1 段目
+ * (`getResponseWithFallback`) ではなく `getResponse` を直接呼ぶ (= UA リトライしない)。
+ * 理由: cache が `'default'` を記録している = 過去 default UA 単独で成功したという意味なので、
+ * リトライ前提のラッパは不要。fast path で失敗したら recordFailure → cascade 経路で
+ * 改めて UA リトライを試す形になる (= 二重リトライにならない)。
+ */
+async function fetchByStrategy(
+	args: Omit<GotOptions, 'method'>,
+	strategy: DomainStrategy,
+	fallback: FallbackUaConfig | undefined,
+	proxyCfg: import('@/utils/proxy-fallback.js').ProxyFallbackConfig | undefined,
+	curlCffiCfg: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig | undefined,
+): Promise<Got.Response<string> | null> {
+	if (strategy === 'default') {
+		return await getResponse({ ...args, method: 'GET' });
+	}
+	if (strategy === 'fallback_ua') {
+		// fallback UA が無い (= config で無効) ならゲート不通過
+		if (fallback == null) return null;
+		return await getResponse({
+			...args,
+			method: 'GET',
+			headers: { ...args.headers, 'user-agent': fallback.userAgent },
+		});
+	}
+	if (strategy === 'proxy') {
+		if (proxyCfg == null || !proxyCfg.enabled || proxyCfg.secret === '') return null;
+		const targetUrl = new URL(args.url);
+		if (targetUrl.protocol !== 'https:') return null;
+		const { matchesDomain, viaProxyWorker } = await import('@/utils/proxy-fallback.js');
+		if (!matchesDomain(targetUrl.hostname, proxyCfg.domains)) return null;
+		return await viaProxyWorker({ ...args, method: 'GET' }, proxyCfg);
+	}
+	// strategy === 'curl_cffi' (DomainStrategy のユニオン型を網羅)
+	if (curlCffiCfg == null || !curlCffiCfg.enabled) return null;
+	const targetUrl = new URL(args.url);
+	if (targetUrl.protocol !== 'https:') return null;
+	const { matchesDomain } = await import('@/utils/proxy-fallback.js');
+	if (!matchesDomain(targetUrl.hostname, curlCffiCfg.domains)) return null;
+	const { viaCurlCffi } = await import('@/utils/curl-cffi-fetch.js');
+	return await viaCurlCffi({ ...args, method: 'GET' }, curlCffiCfg);
+}
 
-	const fallback = buildFallbackConfig(opts);
-	// 動的 import で循環参照を避ける（proxy-fallback.ts / curl-cffi-fetch.ts は got.ts の
-	// getResponseWithFallback を import している）。
-	// 初回ロード以降は Node.js のモジュールキャッシュにより同期的に解決されるため hot path のコストはほぼゼロ。
-	// 段階構造: ① default UA → ② fallback UA (phase11.9) → ③ proxy worker (phase12.1) → ④ curl_cffi (phase12.5)
-	const curlCffiCfg = opts?.curlCffiFallback;
-	const proxyCfg = opts?.proxyFallback;
-	let response: Got.Response<string>;
+/**
+ * `scpaping()` 内のレスポンス取得部分を切り出した内部関数 (phase14 Step 2a)。
+ *
+ * 優先順位:
+ * 1. `forceCurlCffiFallback` / `forceProxyFallback` フラグが立っていればそちらを優先 (Step 4 で廃止予定)
+ * 2. 経路学習キャッシュにヒットがあれば fast path で該当 strategy を直接呼ぶ
+ *    - 成功 → `recordSuccess` で更新して return
+ *    - 失敗 → `recordFailure` で連続失敗カウントを進めて通常カスケードに fallthrough
+ * 3. 通常 4 段カスケード (default UA → fallback UA → proxy → curl_cffi)
+ *    - **注**: phase14 Step 2a では cascade tracking + recordSuccess は実装しない (Step 2b で実装)。
+ *      cache に登録されるのは Step 2a 時点では「ヒット → 成功」または bootstrap (Step 3 同梱予定) のみ
+ */
+async function fetchResponse(
+	args: ReturnType<typeof getGotOptions>,
+	opts: GeneralScrapingOptions | undefined,
+	fallback: FallbackUaConfig | undefined,
+	proxyCfg: import('@/utils/proxy-fallback.js').ProxyFallbackConfig | undefined,
+	curlCffiCfg: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig | undefined,
+): Promise<Got.Response<string>> {
+	// **`forceX` 経路は cache fast path より優先**: プラグインが「このサイトは特定経路でしか取れない」
+	// と確信しているシグナル。cache に古い情報が残っていても plugin の意思を尊重する。
+	// `forceX` 設定済み + ゲート不通過の場合 (allowlist / https: 不一致) は通常カスケードに直行 — このとき
+	// 厳密には cache fast path も bypass されるが、phase14 Step 4 で forceX が廃止される予定で
+	// 移行期の cache 同居設計にコストをかける必要はない判断 (W-2 review feedback)。
 	if (
 		opts?.forceCurlCffiFallback === true
 		&& curlCffiCfg != null
@@ -168,16 +236,16 @@ export async function scpaping(
 			&& matchesDomain(targetUrl.hostname, curlCffiCfg.domains)
 		) {
 			const { viaCurlCffi } = await import('@/utils/curl-cffi-fetch.js');
-			response = await viaCurlCffi({ ...args, method: 'GET' }, curlCffiCfg);
-		} else {
-			// allowlist / protocol を満たさない (= プラグインの想定外) → 通常段階に fallthrough
-			const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
-			response = await getResponseWithCurlCffiFallback({
-				...args,
-				method: 'GET',
-			}, fallback, proxyCfg, curlCffiCfg);
+			return await viaCurlCffi({ ...args, method: 'GET' }, curlCffiCfg);
 		}
-	} else if (
+		// allowlist / protocol を満たさない (= プラグインの想定外) → 通常段階に fallthrough
+		const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
+		return await getResponseWithCurlCffiFallback({
+			...args,
+			method: 'GET',
+		}, fallback, proxyCfg, curlCffiCfg);
+	}
+	if (
 		opts?.forceProxyFallback === true
 		&& proxyCfg != null
 		&& proxyCfg.enabled
@@ -195,23 +263,59 @@ export async function scpaping(
 			targetUrl.protocol === 'https:'
 			&& matchesDomain(targetUrl.hostname, proxyCfg.domains)
 		) {
-			response = await viaProxyWorker({ ...args, method: 'GET' }, proxyCfg);
-		} else {
-			// allowlist / protocol を満たさない (= プラグインの想定外) → 通常段階に fallthrough
-			// (4 段カスケード default UA → fallback UA → proxy → curl_cffi がそのまま動く)
-			const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
-			response = await getResponseWithCurlCffiFallback({
-				...args,
-				method: 'GET',
-			}, fallback, proxyCfg, curlCffiCfg);
+			return await viaProxyWorker({ ...args, method: 'GET' }, proxyCfg);
 		}
-	} else {
+		// allowlist / protocol を満たさない (= プラグインの想定外) → 通常段階に fallthrough
+		// (4 段カスケード default UA → fallback UA → proxy → curl_cffi がそのまま動く)
 		const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
-		response = await getResponseWithCurlCffiFallback({
+		return await getResponseWithCurlCffiFallback({
 			...args,
 			method: 'GET',
 		}, fallback, proxyCfg, curlCffiCfg);
 	}
+
+	// 経路学習キャッシュ fast path (phase14 Step 2a)
+	const cache = getActiveCache();
+	const hit = cache?.lookup(args.url);
+	if (cache != null && hit != null) {
+		try {
+			const response = await fetchByStrategy(args, hit.entry.strategy, fallback, proxyCfg, curlCffiCfg);
+			if (response != null) {
+				cache.recordSuccess(hit.hitKey, hit.entry.strategy);
+				return response;
+			}
+			// strategy ゲート不通過 (config が変わった等) → fallthrough。recordFailure はしない
+			// (失敗ではなく「現環境で使えない」だけなので連続失敗カウントを進めるのは不適切)
+		} catch {
+			// fast path 失敗 → 連続失敗カウントを進める。N 連続失敗で破棄される
+			cache.recordFailure(hit.hitKey);
+			// fallthrough して通常カスケードを試す (= 一時障害なら別経路で取れる可能性、
+			// 取れたら次サイクルで cache 値が更新される ※ Step 2b)
+		}
+	}
+
+	// 通常 4 段カスケード
+	const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
+	return await getResponseWithCurlCffiFallback({
+		...args,
+		method: 'GET',
+	}, fallback, proxyCfg, curlCffiCfg);
+}
+
+export async function scpaping(
+	url: string,
+	opts?: GeneralScrapingOptions,
+): Promise<ScpapingResult> {
+	const args = getGotOptions(url, opts);
+
+	const fallback = buildFallbackConfig(opts);
+	// 動的 import で循環参照を避ける（proxy-fallback.ts / curl-cffi-fetch.ts は got.ts の
+	// getResponseWithFallback を import している）。
+	// 初回ロード以降は Node.js のモジュールキャッシュにより同期的に解決されるため hot path のコストはほぼゼロ。
+	// 段階構造: ① default UA → ② fallback UA (phase11.9) → ③ proxy worker (phase12.1) → ④ curl_cffi (phase12.5)
+	const curlCffiCfg = opts?.curlCffiFallback;
+	const proxyCfg = opts?.proxyFallback;
+	const response = await fetchResponse(args, opts, fallback, proxyCfg, curlCffiCfg);
 
 	// PDF レスポンスは別パスで処理する。
 	// enablePdf が真のときのみ typeFilter で application/pdf を許可しているため、
