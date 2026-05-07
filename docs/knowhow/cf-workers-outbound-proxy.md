@@ -305,50 +305,26 @@ phase12.1 GO 判定 (Step 1.3) で `dp/B0C4LRBFX6` 1 件で GO したが、**実
 
 **意味**: **データセンター IP レンジ全般を CDN 段で広く弾く** タイプ。SQEX は CloudFront 経由で配信していて、Vultr Tokyo の IP レンジを「悪い IP」として認識し、200 で 404 ページを返却する設計。HTTP 層では何のエラーシグナルも出ない (status code, content-type, content-length すべて妥当) ため、phase12.1 の `getResponseWithProxyFallback` (エラーカテゴリベース発火) では **救援できない**。
 
-### 救援パターン: `forceProxyFallback` フラグ (phase12.6)
+### 救援パターン: 経路学習キャッシュ + bootstrap (phase14 で `forceProxyFallback` を廃止)
 
-phase12.5 で `forceCurlCffiFallback` (1〜3段目スキップして curl_cffi 直行) を入れたのと並列構造で、`forceProxyFallback` (1〜2段目スキップして CF Workers proxy 直行) を新設:
+phase12.6 では `forceProxyFallback: true` (1〜2段目スキップして CF Workers proxy 直行) フラグでこの新パターンを救援していたが、**phase14 Step 4 で廃止**。
 
-```typescript
-// src/general.ts の GeneralScrapingOptions に追加
-forceProxyFallback?: boolean;
+代替: phase14 Step 3 で導入した `data/domain-strategy-bootstrap.jsonl` に `store.jp.square-enix.com → proxy` エントリを入れることで、`scpaping()` 冒頭の cache hit fast path が proxy を直接呼ぶ経路に統合された。`forceX` フラグを書く代わりに bootstrap.jsonl に 1 行追加するだけで新サイトを登録できる仕組み。
+
+**設計の進化**:
+
+```
+phase12.6 (旧):
+  プラグイン → forceProxyFallback: true → got.ts で proxy 直行分岐
+
+phase14 Step 4 (新):
+  bootstrap.jsonl: {"pathKey":"store.jp.square-enix.com","strategy":"proxy",...}
+  → scpaping() 冒頭で cache lookup → hit → fetchByStrategy('proxy') → viaProxyWorker
 ```
 
-```typescript
-// src/utils/got.ts の scpaping() で分岐 (forceCurlCffiFallback の else if として配置)
-} else if (
-    opts?.forceProxyFallback === true
-    && proxyCfg != null
-    && proxyCfg.enabled
-    && proxyCfg.secret !== ''
-) {
-    const { matchesDomain, viaProxyWorker } = await import('@/utils/proxy-fallback.js');
-    if (
-        targetUrl.protocol === 'https:'
-        && matchesDomain(targetUrl.hostname, proxyCfg.domains)
-    ) {
-        response = await viaProxyWorker({ ...args, method: 'GET' }, proxyCfg);
-    } else {
-        // allowlist / protocol 不一致 → 通常段階に fallthrough (4 段カスケードがそのまま動く)
-    }
-}
-```
+### 「`forceCurlCffiFallback` と `forceProxyFallback` の排他性」 (歴史的記述)
 
-プラグイン側 (`src/plugins/sqex.ts`):
-
-```typescript
-export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
-    const res = await scpaping(url.href, {
-        ...opts,
-        forceProxyFallback: true,
-    });
-    return await parseGeneral(url, res);
-}
-```
-
-### `forceCurlCffiFallback` との排他性
-
-両方 `true` を指定した場合、`forceCurlCffiFallback` が優先される。ただし両方を必要とするサイトは想定していない (TLS 切断するサイトでは proxy 経由でも構造的に救えないため curl_cffi が正解; IP block するだけのサイトは proxy で十分)。プラグインはどちらか 1 つだけ宣言すること。`GeneralScrapingOptions.forceProxyFallback` の JSDoc にこのルールを明記している。
+phase12.6 時点では両方 `true` を指定した場合 `forceCurlCffiFallback` が優先される設計だったが、phase14 Step 4 で両フラグが廃止されたため、本記述は**歴史的な経緯のみ**。経路学習キャッシュでは entry の `strategy` フィールドが 1 つの値 (`default` / `fallback_ua` / `proxy` / `curl_cffi`) を持ち、排他性が型レベルで保証されている。
 
 ### 教訓: 「黒箱比較」が切り分け早さを決める
 

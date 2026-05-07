@@ -211,19 +211,14 @@ async function fetchByStrategy(
 }
 
 /**
- * `scpaping()` 内のレスポンス取得部分を切り出した内部関数 (phase14 Step 2a + Step 2b 前半 + Step 2b 後半)。
+ * `scpaping()` 内のレスポンス取得部分を切り出した内部関数 (phase14 Step 2a + Step 2b 前半 + Step 2b 後半 + Step 4)。
  *
  * **設計**: scpaping は `cache.recordX` を直接呼ばず、`opts._cacheRecording` (mutable side-channel)
  * に context を埋めて `summaly()` レイヤに伝達する。`summaly()` が Summary 確定後に thin 判定して
  * `recordSuccess` / `recordFailure` を一括判定する設計に統合済み (Step 2b 後半)。
  *
- * 優先順位:
- * 1. `forceCurlCffiFallback` / `forceProxyFallback` フラグが立っていればそちらを優先 (Step 4 で廃止予定)。
- *    - **設計判断 (S-1 review feedback)**: `forceX` 経路では `_cacheRecording` に何も書かない。
- *      これにより summaly() が record をスキップする (cache 管理対象外)。phase14 Step 4 で
- *      `forceX` フラグを廃止して経路学習キャッシュに統合する移行期設計のため、現状で
- *      cache に記録すると `forceX` を消した瞬間に矛盾する経路情報が残る恐れがあるのを回避
- * 2. 経路学習キャッシュにヒットがあれば fast path で該当 strategy を直接呼ぶ (Step 2a)
+ * 優先順位 (Step 4 で `forceCurlCffiFallback` / `forceProxyFallback` フラグを廃止し、cache + bootstrap に統合):
+ * 1. 経路学習キャッシュにヒットがあれば fast path で該当 strategy を直接呼ぶ (Step 2a)
  *    - 成功 → `recState.strategy = hit.entry.strategy` をセット
  *    - throw 失敗 → そのまま fallthrough (recState.strategy 未設定のまま、cascade で上書きされる)。
  *      **注**: fast path 失敗そのものを `recordFailure` には記録しない (Step 2b 後半 設計)。
@@ -231,11 +226,16 @@ async function fetchByStrategy(
  *      新 strategy が hitKey に上書きされる (recordSuccess) ため、いずれにせよ最終的な
  *      cache 状態は cascade 結果が支配する
  *    - ゲート不通過 (null) → `recState.gateFailedNeutral = true`、cache hit エントリを温存
- * 3. 通常 4 段カスケード (default UA → fallback UA → proxy → curl_cffi) (Step 2b 前半)
+ * 2. 通常 4 段カスケード (default UA → fallback UA → proxy → curl_cffi) (Step 2b 前半)
  *    - cache が active なら `tracker` を作成し cascade に渡す。各段の成功時に
  *      `tracker.value = '<strategy>'` がセットされる。
  *    - cascade 成功 → `recState.strategy = tracker.value` をセット
  *    - cascade 失敗 (throw) → そのまま伝播。summaly() catch が `recordFailure` を呼ぶ
+ *
+ * **Step 4 での `forceX` 廃止**: 以前は `forceCurlCffiFallback` / `forceProxyFallback` で yodobashi /
+ * sqex 等のサイトに対して 1〜3段目を強制スキップしていたが、Step 3 で同梱した
+ * `data/domain-strategy-bootstrap.jsonl` の bootstrap エントリ (yodobashi → curl_cffi、
+ * sqex → proxy) で cache fast path が効くため `forceX` フラグは不要になった。
  *
  * `recordKey` の選定 (lookup 直後に決定):
  * - cache hit があれば `hit.hitKey`
@@ -251,66 +251,6 @@ async function fetchResponse(
 	proxyCfg: import('@/utils/proxy-fallback.js').ProxyFallbackConfig | undefined,
 	curlCffiCfg: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig | undefined,
 ): Promise<Got.Response<string>> {
-	// **`forceX` 経路は cache fast path より優先**: プラグインが「このサイトは特定経路でしか取れない」
-	// と確信しているシグナル。cache に古い情報が残っていても plugin の意思を尊重する。
-	// `forceX` 設定済み + ゲート不通過の場合 (allowlist / https: 不一致) は通常カスケードに直行 — このとき
-	// 厳密には cache fast path も bypass されるが、phase14 Step 4 で forceX が廃止される予定で
-	// 移行期の cache 同居設計にコストをかける必要はない判断 (W-2 review feedback)。
-	if (
-		opts?.forceCurlCffiFallback === true
-		&& curlCffiCfg != null
-		&& curlCffiCfg.enabled
-	) {
-		// **1〜3段目をスキップして curl_cffi 直行 (phase12.5 followup #3)**:
-		// yodobashi のように TLS layer で確実に弾かれるサイトでは 1段目 socket timeout (20秒)
-		// が純損失なので、最初から curl_cffi を呼ぶ。allowlist / https: の二重防御は維持する
-		// (forceCurlCffiFallback を許可するプラグインが test() で URL を絞っている前提だが
-		// defense-in-depth で domains / protocol を再検証)。
-		const targetUrl = new URL(args.url);
-		const { matchesDomain } = await import('@/utils/proxy-fallback.js');
-		if (
-			targetUrl.protocol === 'https:'
-			&& matchesDomain(targetUrl.hostname, curlCffiCfg.domains)
-		) {
-			const { viaCurlCffi } = await import('@/utils/curl-cffi-fetch.js');
-			return await viaCurlCffi({ ...args, method: 'GET' }, curlCffiCfg);
-		}
-		// allowlist / protocol を満たさない (= プラグインの想定外) → 通常段階に fallthrough
-		const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
-		return await getResponseWithCurlCffiFallback({
-			...args,
-			method: 'GET',
-		}, fallback, proxyCfg, curlCffiCfg);
-	}
-	if (
-		opts?.forceProxyFallback === true
-		&& proxyCfg != null
-		&& proxyCfg.enabled
-		&& proxyCfg.secret !== ''
-	) {
-		// **1〜2段目をスキップして CF Workers proxy 直行 (phase12.6)**:
-		// SQEX e-STORE のように **HTTP 200 + 正規 404 ページボディ** で IP block するサイトは、
-		// got レイヤではエラーが発生しないため `getResponseWithProxyFallback` のエラー発火型では
-		// 救援できない。最初から proxy 経由で取りに行く。allowlist / https: の二重防御は維持する
-		// (forceProxyFallback を許可するプラグインが test() で URL を絞っている前提だが
-		// defense-in-depth で domains / protocol を再検証)。
-		const targetUrl = new URL(args.url);
-		const { matchesDomain, viaProxyWorker } = await import('@/utils/proxy-fallback.js');
-		if (
-			targetUrl.protocol === 'https:'
-			&& matchesDomain(targetUrl.hostname, proxyCfg.domains)
-		) {
-			return await viaProxyWorker({ ...args, method: 'GET' }, proxyCfg);
-		}
-		// allowlist / protocol を満たさない (= プラグインの想定外) → 通常段階に fallthrough
-		// (4 段カスケード default UA → fallback UA → proxy → curl_cffi がそのまま動く)
-		const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
-		return await getResponseWithCurlCffiFallback({
-			...args,
-			method: 'GET',
-		}, fallback, proxyCfg, curlCffiCfg);
-	}
-
 	// 経路学習キャッシュ fast path (phase14 Step 2a + Step 2b 後半)
 	//
 	// **設計**: scpaping は `cache.recordX` を直接呼ばず、`opts._cacheRecording` に context を埋めて

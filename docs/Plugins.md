@@ -255,11 +255,11 @@ interface SummalyPlugin {
 | 項目 | 内容 |
 |:--|:--|
 | マッチ | `(?:www\.)?yodobashi\.com` (anchored) |
-| 取得方法 | `scpaping()` → `parseGeneral()`。**3 重スキップで yodobashi に対する無駄リクエストをゼロ化**: ① `skipRedirectResolution = true` で `summaly()` 冒頭の HEAD/GET probe スキップ、② `forceCurlCffiFallback: true` で 1〜3段目 (default UA / fallback UA / proxy) スキップ、③ `proxyFallback: undefined` 強制 |
+| 取得方法 | `scpaping()` → `parseGeneral()`。**経路学習キャッシュ + bootstrap で curl_cffi 直行** (phase14 Step 3+4): `data/domain-strategy-bootstrap.jsonl` に `yodobashi.com → curl_cffi` エントリが入っているため Fastify モードで cache 有効なら scpaping 冒頭の cache hit fast path で curl_cffi が直接呼ばれる。さらに `skipRedirectResolution = true` で `summaly()` 冒頭の HEAD/GET probe をスキップ (TLS 切断する HEAD の空回り回避)。phase12.5 Step 2 / followup #3 で導入した `forceCurlCffiFallback` / `proxyFallback: undefined` フラグは phase14 Step 4 で廃止 |
 | 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準) |
 | 背景 | yodobashi は **TLS / HTTP/2 レイヤで bot を能動切断**する。Vultr Tokyo IP は `category: "timeout"`、ローカル MacOS は `HTTP/2 stream INTERNAL_ERROR` (即時 RST、time<0.05s) で SummalyBot / ブラウザ UA / 各種 SNS bot UA すべて弾かれる (skill `/url-preview-check` の Phase 3 fail mode H)。HEAD probe も同じく TLS 切断で空回りするため、URL が終端確定 (短縮 URL でない) であることを利用して `skipRedirectResolution = true` で probe 自体をスキップする (本番実証 21 秒 → 数秒に短縮、phase12.5 followup #2) |
-| なぜ proxy をスキップするか | **CF Workers fetch も TLS フィンガープリント固定**なので yodobashi 側で構造的に弾かれる。本番実証で proxy 段が ~15-20 秒空回りしてから 502 を返すのが純損失だった (phase12.4 → phase12.5 で確認)。curl_cffi (libcurl-impersonate) で Chrome の TLS フィンガープリント (JA3) を偽装することだけが正解 |
-| 運用要件 | production server に `uv` + `tools/curl-cffi-fetcher/` の `uv sync` 必須。`config.toml` の `[scraping.curl_cffi]` で `enabled = true` + `domains = ["yodobashi.com"]`。curl_cffi 未設定なら通常 scpaping にフォールスルー (= 失敗するが破壊的ではない) |
+| なぜ curl_cffi なのか | **CF Workers fetch も TLS フィンガープリント固定**なので yodobashi 側で構造的に弾かれる。curl_cffi (libcurl-impersonate) で Chrome の TLS フィンガープリント (JA3) を偽装することだけが正解 (phase12.4 → phase12.5 で確認) |
+| 運用要件 | production server に `uv` + `tools/curl-cffi-fetcher/` の `uv sync` 必須。`config.toml` の `[scraping.curl_cffi]` で `enabled = true` + `domains = ["yodobashi.com"]`、`[scraping.strategy_cache]` で `enabled = true` (デフォルト)。curl_cffi 未設定なら cache fast path がゲート不通過で通常 scpaping にフォールスルー (= 失敗するが破壊的ではない) |
 | 実証 | 本番 (riinswork.space) で `https://www.yodobashi.com/product/100000001009727358/` のプレビュー取得確認 (2026-05-06、phase12.5 Step 2 完了後) |
 
 ### sqex
@@ -269,11 +269,11 @@ interface SummalyPlugin {
 | 項目 | 内容 |
 |:--|:--|
 | マッチ | `(?:www\.)?store\.jp\.square-enix\.com` (anchored) |
-| 取得方法 | `scpaping()` (with `forceProxyFallback: true`) → `parseGeneral()`。1〜2段目 (default UA / fallback UA) をスキップして CF Workers proxy 直行 |
+| 取得方法 | `scpaping()` → `parseGeneral()`。**経路学習キャッシュ + bootstrap で proxy 直行** (phase14 Step 3+4): `data/domain-strategy-bootstrap.jsonl` に `store.jp.square-enix.com → proxy` エントリが入っているため Fastify モードで cache 有効なら scpaping 冒頭の cache hit fast path で proxy が直接呼ばれる。phase12.6 で導入した `forceProxyFallback` フラグは phase14 Step 4 で廃止 |
 | 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準) |
 | 背景 | Square Enix e-STORE はデータセンター IP レンジ全般を CDN 段で広く弾く。Vultr Tokyo IP からは **HTTP/200 + `text/html;charset=utf-8` + 正規 404 ページボディ** が返ってくるため、`got` レイヤでは何のエラーも発生しない (= phase12.1 の `getResponseWithProxyFallback` のエラー発火型では救援できない、新パターン)。サーバ HTML には完璧な OGP (`og:title` / `og:description` / `og:image` / `og:site_name`) が入っているので、proxy 経由で IP を変えれば取得できる |
 | 短縮 URL | `sqex.to/<id>` は HEAD で `store.jp.square-enix.com/...` に正常解決可能 (CloudFront 経由)。`summaly()` 冒頭の resolveRedirect で展開 → このプラグインがマッチ |
-| 運用要件 | `[scraping.proxy]` で `enabled = true` + `domains` に `store.jp.square-enix.com` を含む。CF Worker (`tools/cf-proxy-worker/wrangler.toml`) の `ALLOWED_DOMAINS` にも同 host 必須。proxy が未設定な環境では通常段階に fallthrough (= 404 ページが返る) |
+| 運用要件 | `[scraping.proxy]` で `enabled = true` + `domains` に `store.jp.square-enix.com` を含む。CF Worker (`tools/cf-proxy-worker/wrangler.toml`) の `ALLOWED_DOMAINS` にも同 host 必須。`[scraping.strategy_cache]` で `enabled = true` (デフォルト)。proxy が未設定な環境では cache fast path がゲート不通過で通常段階に fallthrough (= 404 ページが返る) |
 
 カスタムプラグインの書き方
 ----------------------------------------------------------------

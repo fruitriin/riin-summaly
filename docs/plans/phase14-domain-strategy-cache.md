@@ -224,15 +224,17 @@ scpaping(url, opts)
 - [x] `docs/SETUP.md` / `config.example.toml` / `docs/deploy-examples/...example.toml` の bootstrapPath 説明を「省略時は同梱を自動解決」に更新
 - [x] レビュー対応 (W-1 docs 乖離 / W-2 CHANGELOG 漏れ / W-3 path 区切り依存 / S-1 候補設計コメント / S-2 amazon.com/gp 判断メモ / S-3 全グループ網羅テスト / S-4 README 導入バージョン)
 
-### Step 4 — `forceX` 廃止 + プラグイン整理
+### Step 4 — `forceX` 廃止 + プラグイン整理 (完了 2026-05-08)
 
-- [ ] `src/plugins/yodobashi.ts` から `forceCurlCffiFallback: true` / `proxyFallback: undefined` 削除
-- [ ] `src/plugins/sqex.ts` から `forceProxyFallback: true` 削除
-- [ ] `src/general.ts` の `GeneralScrapingOptions` から `forceCurlCffiFallback?` / `forceProxyFallback?` 削除
-- [ ] `src/utils/got.ts` の scpaping 分岐から該当ブロック削除
-- [ ] `src/utils/proxy-fallback.ts` の `viaProxyWorker` は引き続き export (cache lookup から呼ぶため)
-- [ ] テスト更新 (forceX テスト削除、cache 経由テスト追加)
-- [ ] `skipRedirectResolution` は **残す**: HEAD probe スキップは経路学習とは独立した最適化 (yodobashi のように TLS 切断する HEAD のスキップ)
+- [x] `src/plugins/yodobashi.ts` から `forceCurlCffiFallback: true` / `proxyFallback: undefined` 削除
+- [x] `src/plugins/sqex.ts` から `forceProxyFallback: true` 削除
+- [x] `src/general.ts` の `GeneralScrapingOptions` から `forceCurlCffiFallback?` / `forceProxyFallback?` 削除 (フィールド + 伝搬行)
+- [x] `src/utils/got.ts` の scpaping 分岐から該当ブロック削除 (~50 行) + JSDoc 更新
+- [x] `src/utils/proxy-fallback.ts` の `viaProxyWorker` は引き続き export (cache lookup から呼ぶため、変更なし)
+- [x] テスト削除 (`describe('scpaping forceCurlCffiFallback ...')` 3 件、`describe('scpaping forceProxyFallback ...')` 5 件)
+- [x] `skipRedirectResolution` は維持 (yodobashi に対して有効、HEAD probe スキップは経路学習と独立した最適化)
+- [x] docs 更新 (Plugins.md / SETUP.md / cf-workers-outbound-proxy / domain-strategy-cache knowhow / CHANGELOG)
+- [x] レビュー対応 (W-1 sqex JSDoc strategy_cache 前提明示 / W-2 yodobashi JSDoc 同上 + デグレ警告 / I-1 「プラグイン残す意味」明示)
 
 ### Step 5 — dev サーバ UI 統合
 
@@ -304,4 +306,4 @@ scpaping(url, opts)
 
 ## 完了状況
 
-Step 1 + Step 2 系 (2a/2b 前半/2b 後半/2b-4) + Step 3 (bootstrap 同梱) 完了 (2026-05-08)。Step 4 (forceX 廃止) 〜 Step 7 が残。
+Step 1 + Step 2 系 + Step 3 + Step 4 (forceX 廃止) 完了 (2026-05-08)。Step 5 (dev UI) / Step 6 (docs) / Step 7 (skill 更新) が残 — いずれも非ブロッカー。

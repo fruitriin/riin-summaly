@@ -181,46 +181,6 @@ export type GeneralScrapingOptions = {
 	curlCffiFallback?: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig;
 
 	/**
-	 * **1段目 〜 3段目をスキップして curl_cffi を最初に試す** (phase12.5 followup #3)。
-	 *
-	 * yodobashi のように **TLS layer で確実に bot 切断するサイト** では、1段目 (default UA) の
-	 * `got` リクエストが `socket timeout` (デフォルト 20 秒) で空回りする純損失がある。
-	 * `forceCurlCffiFallback: true` を渡すとこの空回りをゼロにし、最初から curl_cffi を呼ぶ。
-	 *
-	 * 発火条件:
-	 * - `curlCffiFallback?.enabled === true` (curl_cffi 自体が有効)
-	 * - `domains` allowlist + `https:` プロトコルが通る
-	 *
-	 * 上記を満たさない場合は通常の段階的フォールバックに戻る (curl_cffi が利用不可な環境への保険)。
-	 *
-	 * プラグイン側で確実に curl_cffi が正解 (= 通常 got 経路は構造的に弾かれる) と判明している
-	 * サイトのみ宣言する想定。yodobashi がその typical 例。
-	 */
-	forceCurlCffiFallback?: boolean;
-
-	/**
-	 * **1段目 〜 2段目をスキップして CF Workers proxy を最初に試す** (phase12.6)。
-	 *
-	 * SQEX e-STORE のように **HTTP 200 + 正規 404 ページボディ** で IP block する
-	 * (= got レイヤではエラーが何も発生せず、エラー発火型の `getResponseWithProxyFallback`
-	 * では救援不能な) サイト向けに、最初から proxy 経由で取りに行くフラグ。
-	 *
-	 * 発火条件:
-	 * - `proxyFallback?.enabled === true` かつ `secret !== ''` (proxy 自体が有効)
-	 * - `domains` allowlist + `https:` プロトコルが通る
-	 *
-	 * 上記を満たさない場合は通常の段階的フォールバックに戻る (proxy が未設定な dev 環境への保険)。
-	 *
-	 * プラグイン側で確実に proxy が正解 (= 通常 got 経路は IP レピュテーションで弾かれる) と
-	 * 判明しているサイトのみ宣言する想定。`forceCurlCffiFallback` と並列構造。
-	 *
-	 * **`forceCurlCffiFallback` との排他性**: 両方 `true` を指定した場合、`forceCurlCffiFallback`
-	 * (TLS layer 救援) が優先される。両方を同時に必要とするサイトは想定していない (TLS 切断する
-	 * サイトでは proxy 経由でも構造的に救えないため)。プラグインはどちらか 1 つだけ宣言すること。
-	 */
-	forceProxyFallback?: boolean;
-
-	/**
 	 * @internal
 	 * 経路学習キャッシュの記録 context を伝達する mutable side-channel (phase14 Step 2b 後半)。
 	 * `summaly()` が `{}` を渡し、`scpaping()` が読み書きする。`summaly()` が Summary 確定後に
@@ -251,8 +211,6 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 		fallbackRetryCategories: opts?.fallbackRetryCategories,
 		proxyFallback: opts?.proxyFallback,
 		curlCffiFallback: opts?.curlCffiFallback,
-		forceCurlCffiFallback: opts?.forceCurlCffiFallback,
-		forceProxyFallback: opts?.forceProxyFallback,
 		// 経路学習キャッシュの記録 context を伝搬させる (phase14 Step 2b 後半)。
 		// summaly() が `{}` を渡してきた参照をそのまま scpaping に渡すと、scpaping で書かれた
 		// 内容を summaly() 側から読める (mutable side-channel)。

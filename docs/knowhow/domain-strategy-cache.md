@@ -306,11 +306,20 @@ Step 2b 前半までは `cache hit fast path 失敗 → recordFailure(hitKey)` �
 
 これは「**HTTP 層の即時シグナルを Summary 層の最終判定で吸収する**」という Step 2b 後半 の中心設計と一致。
 
-### `forceX` 経路では `_cacheRecording` を触らない
+### `forceX` 経路の取扱 (phase14 Step 4 で廃止)
 
-`forceCurlCffiFallback` / `forceProxyFallback` フラグが立っているサイトは cache 管理対象外。phase14 Step 4 で `forceX` 廃止予定のため、移行期で cache に記録すると `forceX` を消した瞬間に矛盾する経路情報が残る恐れがある。
+phase12.5 / 12.6 で導入された `forceCurlCffiFallback` / `forceProxyFallback` フラグは、**phase14 Step 4 で完全廃止**。yodobashi / sqex はそれぞれ bootstrap entry (`yodobashi.com → curl_cffi`、`store.jp.square-enix.com → proxy`) で cache fast path を経由する経路に統合された。
 
-`forceX` 経路は `_cacheRecording` を一切触らない → summaly() レイヤの record は recordKey 未設定で no-op → cache に何も記録されない。
+設計の進化:
+
+| phase | yodobashi 経路 | sqex 経路 |
+|---|---|---|
+| 12.4 | proxy fallback (categories 拡張で救援、~15-20s 空回り) | (未実装) |
+| 12.5 | `forceCurlCffiFallback: true` で 1〜3段目スキップ | (未実装) |
+| 12.6 | 同上 | `forceProxyFallback: true` で 1〜2段目スキップ |
+| 14 Step 4 | bootstrap entry → cache fast path で curl_cffi 直行 | bootstrap entry → cache fast path で proxy 直行 |
+
+新設計の利点: 新サイトを追加するときに `forceX` フラグを書く代わりに bootstrap.jsonl に 1 行追加するだけ。プラグインは「URL pattern 判定」と (必要なら) 「skipRedirectResolution の宣言」だけ持てばよい。
 
 ### `isThinSummary` の url 依存
 
