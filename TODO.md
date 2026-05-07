@@ -7,6 +7,13 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 
 ## 現在のフェーズ: phase13.1 + phase14 ともにほぼ完了 (2026-05-08)。残るは UI 手動検証範囲のみ。auto-run 可能タスク完了状態
 
+> **次サイクル候補** (auto-run 可能タスク尽きた状態の段階的選択肢、`docs/knowhow/addf-dev-operation-patterns.md` 「auto-run 可能タスクが尽きたときの運用」参照):
+> 1. **Plan の半自動 Step を切り分けて API 部分だけ実装** — 候補なし (phase14 Step 5 API は実装済)
+> 2. **累積 Feedback の knowhow 化** — 完了 (docs/knowhow/addf-dev-operation-patterns.md 新設、本コミット)
+> 3. **既存負債の自動修正** — 候補: `general.ts` opts 個別列挙を spread refactor (Feedback.md 「個別技術負債」記載、`GeneralScrapingOptions` 拡張時のための予防的リファクタ)
+> 4. **将来検討メモ から Plan 起票** — 候補: Playwright モード (fail mode I 対策、サイズ L〜XL)
+> 5. **PushNotification + CronDelete でオーナーに通知して `/loop` 停止** — 3 サイクル連続で auto-runnable タスクなしが続いたら検討
+
 ## バックログ
 
 | 優先度 | Phase | 計画ファイル | サイズ | 状態 |

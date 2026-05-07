@@ -8,6 +8,7 @@
 |---|---|---|
 | [ADDF/claude-md-at-mention.md](ADDF/claude-md-at-mention.md) | CLAUDE.md の @FileName メンション展開の仕組みと使い分け | @展開, メンション, クオート, ネスト展開, CLAUDE.md, インライン展開, ファイル参照, ブートシーケンス |
 | [ADDF/ignore-file-strategy.md](ADDF/ignore-file-strategy.md) | .gitignore / .claudeignore / .git/info/exclude の役割分けと運用戦略 | .gitignore, .claudeignore, .git/info/exclude, respectGitignore, settings.json, settings.local.json, Glob, Grep, ファイル除外 |
+| [addf-dev-operation-patterns.md](addf-dev-operation-patterns.md) | `/addf-dev` cron 連続自動運転 (phase14 / phase13.1) で蓄積した運用パターン: 大型 Plan の Step 分割運用 (1 セッション 1 Step、合体実施条件、自動化対象外 Step の扱い、半自動 Step の API/UI 切り分け) / Stage 1 4.6 ノウハウ再確認 + 自己レビュー (発火条件・skip 条件・運用フロー) / Stage 2 skip 条件 (code 変更ゼロ docs/skill 専用) / `addf-security-review-agent` 必須適用条件 (HTML 返すエンドポイント・任意ヘッダ生成・暗号関連) / 削除中心 Step のレビュー観点 / 4.5 ステップへの「過去 Step で予定と書いた docs 表現」grep チェック補強案 / utility を `src/plugins/` に置かない原則 / auto-run 可能タスクが尽きたときの段階的選択肢 (API 切り分け→knowhow 化→既存負債→Plan 起票→PushNotification) | /addf-dev, cron 連続運転, Plan Step 分割, 4.6 ステップ責務キーワード再フィルタ, Stage 2 skip, security-review 必須条件, 削除中心レビュー, docs 同期 grep, src/plugins utility 規約, auto-run 完了時の選択肢, ADDF テンプレート寄与候補 |
 
 ## JavaScript / TypeScript パターン
 
