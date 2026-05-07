@@ -7,12 +7,12 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 
 ## 現在のフェーズ: phase13.1 + phase14 ともにほぼ完了 (2026-05-08)。残るは UI 手動検証範囲のみ。auto-run 可能タスク完了状態
 
-> **次サイクル候補** (auto-run 可能タスク尽きた状態の段階的選択肢、`docs/knowhow/addf-dev-operation-patterns.md` 「auto-run 可能タスクが尽きたときの運用」参照):
+> **次サイクル候補消化状況** (`docs/knowhow/addf-dev-operation-patterns.md` 「auto-run 可能タスクが尽きたときの運用」参照):
 > 1. **Plan の半自動 Step を切り分けて API 部分だけ実装** — 候補なし (phase14 Step 5 API は実装済)
-> 2. **累積 Feedback の knowhow 化** — 完了 (docs/knowhow/addf-dev-operation-patterns.md 新設、本コミット)
-> 3. **既存負債の自動修正** — 候補: `general.ts` opts 個別列挙を spread refactor (Feedback.md 「個別技術負債」記載、`GeneralScrapingOptions` 拡張時のための予防的リファクタ)
-> 4. **将来検討メモ から Plan 起票** — 候補: Playwright モード (fail mode I 対策、サイズ L〜XL)
-> 5. **PushNotification + CronDelete でオーナーに通知して `/loop` 停止** — 3 サイクル連続で auto-runnable タスクなしが続いたら検討
+> 2. **累積 Feedback の knowhow 化** — 完了 (docs/knowhow/addf-dev-operation-patterns.md 新設、2026-05-08)
+> 3. **既存負債の自動修正** — 完了 (2026-05-08、`general.ts` spread refactor + `followRedirects: undefined` 明示 override)
+> 4. **将来検討メモ から Plan 起票** — 完了 (2026-05-08、Playwright モードを `phase15.1-playwright-fallback.md` として昇格)
+> 5. **PushNotification + CronDelete でオーナーに通知して `/loop` 停止** — option 1〜4 すべて消化済。次サイクル以降に auto-runnable がなければ実行検討
 
 ## バックログ
 
@@ -28,16 +28,17 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 11.3 | [docs/plans/phase11.3-scpaping-follow-redirect.md](docs/plans/phase11.3-scpaping-follow-redirect.md) — Fastify モードで scpaping のリダイレクト follow が無効化されているバグ修正（[riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1) 真因） | S | 完了 (2026-05-05) |
 | — | 11.9 | [docs/plans/phase11.9-bot-block-ua-retry.md](docs/plans/phase11.9-bot-block-ua-retry.md) — bot block 対策（複合 UA + フォールバック UA リトライ）。`SummalyBot` 文字列で WAF に弾かれるサイトを救援（実証 2/3 救える） | M | 完了 (2026-05-05、pino fallback フィールドは phase11.6 に廆す) |
 | — | 12.1 | [docs/plans/phase12.1-cf-workers-proxy-fallback.md](docs/plans/phase12.1-cf-workers-proxy-fallback.md) — Cloudflare Workers Free を outbound proxy として使い、Amazon class の IP block を救援。実験ステップ (Step 1.3) で GO/NO-GO 判定する設計 | M〜L | 完了 (2026-05-05 GO 確定 → 2026-05-06 followup #1〜#4 で `Rejected by type filter undefined` / 長 query / bare hostname / amzn.asia 短縮 URL すべて本番救援動作確認済み。Step 5 pino fallback フィールドのみ phase11.6 deferral と合流予定) |
-| 高 | 12.5 | [docs/plans/phase12.5-curl-cffi-fetcher.md](docs/plans/phase12.5-curl-cffi-fetcher.md) — `curl_cffi` (libcurl-impersonate) で Chrome TLS フィンガープリントを偽装し、yodobashi 級の TLS layer bot block を救援。Step 1 実験 GO 確定 (2026-05-06)、Step 2 Node IPC 統合は次サイクル | M〜L | 進行中 (Step 1 完了、Step 2/3 残) |
+| — | 12.5 | [docs/plans/phase12.5-curl-cffi-fetcher.md](docs/plans/phase12.5-curl-cffi-fetcher.md) — `curl_cffi` (libcurl-impersonate) で Chrome TLS フィンガープリントを偽装し、yodobashi 級の TLS layer bot block を救援 | M〜L | 完了 (Step 1+2+3 完了 2026-05-06、daemon 化検討のみ将来課題) |
 | — | 12.6 | [docs/plans/phase12.6-sqex-store-proxy.md](docs/plans/phase12.6-sqex-store-proxy.md) — Square Enix e-STORE (`store.jp.square-enix.com`) 救援。`forceProxyFallback` フラグ新設 + sqex プラグイン追加。データセンター IP を CDN 段で広く弾く新パターン (HTTP 200 + 正規 404 ページボディ、エラーシグナル無し) を救援 | S〜M | 完了 (2026-05-07、本番デプロイ + 動作確認は運用者側) |
 | 中 | 13.1 | [docs/plans/phase13.1-syosetu-embed.md](docs/plans/phase13.1-syosetu-embed.md) — 小説家になろうプラグイン + `/embed` エンドポイント基盤。プレイヤー iframe で作者・ジャンル・あらすじを表示（JS 一切なしのバニラ HTML+CSS、CSP `default-src 'none'`、XSS 全エスケープ）。なろう公式 API 直叩き、R-18 ドメインで `sensitive: true` | M〜L | ほぼ完了 (Step 1 + 2 + 3 + 4 部分 + 6 + 7 完了 2026-05-08。残 Step 5 dev 手動 — UI 検証必要のため自動化対象外) |
 | 高 | 14 | [docs/plans/phase14-domain-strategy-cache.md](docs/plans/phase14-domain-strategy-cache.md) — 経路学習キャッシュ (host + path prefix 2段、JSONL 永続化、N 連続失敗で invalidate)。bootstrap JSONL 同梱で初回コスト回避。`forceCurlCffiFallback` / `forceProxyFallback` を廃止し、プラグインは「引き出し方の自在性」専用に整理。汎用パスでも自動最適化される | M〜L | ほぼ完了 (Step 1 + 2 系 + 3 + 4 + 6 + 7 + 5 部分 (`/api/strategy-cache` API) 完了 2026-05-08、残る UI パネル + 目視検証のみ — 手動範囲) |
+| 低 | 15.1 | [docs/plans/phase15.1-playwright-fallback.md](docs/plans/phase15.1-playwright-fallback.md) — Playwright モード (fail mode I 救援、SPA + JS 動的 OGP 注入対応)。phase14 経路学習キャッシュに `'playwright'` strategy を追加。`tools/playwright-fetcher/` 独立構成、allowlist 必須、メモリ要件あり (Vultr 拡張)。実ブラウザレンダリングのため最終手段位置付け | L〜XL | 未着手 (着手トリガー: fail mode I 発生頻度 月 N 件 / 個人的に preview したい SPA EC が増えた時) |
 
 ### 将来検討メモ (Plan は未起票)
 
-| メモ項目 | 概要 | 検討トリガー |
-|---|---|---|
-| **Playwright モード (fail mode I 対策)** | SPA + JS 動的 OGP 注入 (nitori-net 等、`/url-preview-check` skill の fail mode I) を救援するために実ブラウザレンダリングを導入する。**設計方針**: yodobashi の `forceCurlCffiFallback` と同じく **「前段を丸ごとスキップして Playwright モード直行」** をプラグイン側で宣言できる形 (`forcePlaywrightFallback: true` を渡す) にする。CF Workers Browser Rendering ではなく **自前で Playwright を抱える** 方針 (個人運用で課金を増やさないため、Vultr のメモリ拡張が必要)。`tools/playwright-fetcher/` を curl_cffi と同じ tools 配下に分離して npm publish 対象外。allowlist 必須 (任意 URL での JS 実行は SSRF + RCE 経路の温床)。L 〜 XL サイズ | fail mode I の発生頻度が無視できないレベル (例: `parse-failure-log` で月 N 件) になってきた時、もしくは個人的に preview したい SPA EC が増えた時 |
+> **2026-05-08**: Playwright モード (fail mode I 対策) は [docs/plans/phase15.1-playwright-fallback.md](docs/plans/phase15.1-playwright-fallback.md) に Plan 昇格しました。phase14 経路学習キャッシュに統合する設計方針 (旧 `forcePlaywrightFallback` フラグ案は廃止、`'playwright'` strategy を bootstrap JSONL に追加する形に変更)。着手トリガーは引き続き「fail mode I の発生頻度が無視できないレベル」または「個人的に preview したい SPA EC が増えた時」。
+
+(現在、将来検討メモは空)
 
 ### 外部リポ連携（summaly スコープ外）
 
@@ -81,11 +82,13 @@ phase12.1 完了（CF Workers proxy fallback、Step 1〜7 + dev 統合 + E2E 検
 phase12.2 完了（youtube /live/ URL 対応）
 phase12.3 完了（nintendo-store プラグイン、facebookexternalhit UA 固定）
 phase12.4 完了（yodobashi プラグイン、proxy categories 拡張パターン）
-phase12.5 進行中（curl_cffi TLS impersonation、Step 1 GO 確定、Step 2 Node IPC 統合は次サイクル）
+phase12.5 完了（curl_cffi TLS impersonation、Step 1+2+3 完了 2026-05-06、daemon 化検討のみ将来課題）
 phase12.6 完了（sqex プラグイン + forceProxyFallback 新設、エラーシグナルなし IP block 新パターン救援）
    ↓
 phase13.1 ほぼ完了（Step 1+2+3+4 部分+6+7 完了 2026-05-08、Step 5 dev 手動のみ残）
 phase14   ほぼ完了（Step 1+2+3+4+6+7+5 部分 (`/api/strategy-cache`) 完了 2026-05-08、残る Step 5 UI パネル + 目視検証のみ — 手動範囲）
+   ↓
+phase15.1 未着手（Playwright モード、fail mode I 救援。着手トリガー: 発生頻度月 N 件 / 個人的に preview したい SPA EC 増加）
 ```
 
 ---
