@@ -28,11 +28,19 @@
 4.5. **ドキュメントと実装の突き合わせ**: 今回の変更に対応する文書・サンプル・設定例が更新されているかチェックする
    - 公開 API（`SummalyOptions` / `SummalyResult` / プラグインインターフェース等）の変更 → README, docs/Library.md, docs/Plugins.md
    - Fastify モード設定・運用機能の変更 → docs/SETUP.md, docs/deploy-examples/README.md
-   - **設定ファイル example の更新**（特に修正漏れしやすい！）→ `config.example.toml`（ルート）と `docs/deploy-examples/summaly-config.example.toml`（デプロイ用）の **両方**。新規 TOML キー・デフォルト値変更・セクション追加すべて
+   - **設定ファイル example の更新**(特に修正漏れしやすい！)→ `config.example.toml`(ルート)と `docs/deploy-examples/summaly-config.example.toml`(デプロイ用)の **両方**。新規 TOML キー・デフォルト値変更・セクション追加すべて
    - 新規 / 変更されたユーザー向け機能 → CHANGELOG (unreleased セクション)
    - dev サーバ周りの変更 → dev/sample-urls.ts, dev/public/ の関連箇所
    - knowhow に値する設計判断 → docs/knowhow/ + docs/knowhow/INDEX.md
    - **見落としがあれば実装フェーズに差し戻す**。「実装は完成したがドキュメント未反映」の状態でレビューに進まない
+4.6. **ノウハウ再確認 + 自己レビュー** (Stage 1 → Stage 2 への引き渡し前): 実装で確定した責務をキーワード化し、関連 knowhow を `addf-knowhow-filter` で再フィルタしてから自己レビューを行う
+   - **発火条件**: 新規ファイル / 新規 export 関数を追加した場合、または既存ファイルに新しい責務カテゴリを足した場合(URL 処理 / 永続化 / 子プロセス spawn / セキュリティ境界 / 暗号処理 等)
+       - S サイズ(バグ fix 1〜2 行等)で新規責務が無いことが明らかなら本ステップはスキップ可
+   - **責務キーワードの抽出例**: 今回の変更を 1 文で説明し、その中で出てくる名詞句を keyword として書き出す
+       - 例: 「URL から pathKey を導出して JSONL に永続化するキャッシュを実装した」→ "URL parsing", "JSONL 永続化", "LRU cache", "原子的ファイル置き換え"
+   - **`addf-knowhow-filter` を起動**: 抽出した keyword を渡して関連 knowhow のパスと要約を取り寄せる(Plan 起点の knowhow pull とは別経路。Plan が想定していなかった責務を catch する目的)
+   - **自己レビュー**: 取り寄せた各 knowhow について、「自分の実装が同じ落とし穴を踏んでいないか」を 1 つずつ照合する。落とし穴を踏んでいたら実装に差し戻して修正 → ビルド・Lint・テスト再実行
+   - **Stage 2 (`addf-code-review-agent`) に渡せる品質に達したか自己判断する**: 「レビュー agent から指摘されそうな観点」を先に潰しておくことで、レビュー指摘との二重チェックになる(指摘があれば自分の見落とし、無ければ自己レビューが効いた、と学習可能)
 5. `addf-code-review-agent` でコードレビューを実施する
 6. `addf-contribution-agent` で ADD フレームワークへのコントリビューション候補を検出する
 7. レビュー指摘への対応:
