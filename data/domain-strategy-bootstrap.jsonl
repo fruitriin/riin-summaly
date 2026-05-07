@@ -1,0 +1,9 @@
+{"pathKey":"yodobashi.com","strategy":"curl_cffi","successCount":1,"consecutiveFailures":0,"lastSuccessAt":0,"lastAttemptAt":0}
+{"pathKey":"www.yodobashi.com","strategy":"curl_cffi","successCount":1,"consecutiveFailures":0,"lastSuccessAt":0,"lastAttemptAt":0}
+{"pathKey":"store.jp.square-enix.com","strategy":"proxy","successCount":1,"consecutiveFailures":0,"lastSuccessAt":0,"lastAttemptAt":0}
+{"pathKey":"www.amazon.co.jp/dp","strategy":"proxy","successCount":1,"consecutiveFailures":0,"lastSuccessAt":0,"lastAttemptAt":0}
+{"pathKey":"amazon.co.jp/dp","strategy":"proxy","successCount":1,"consecutiveFailures":0,"lastSuccessAt":0,"lastAttemptAt":0}
+{"pathKey":"www.amazon.co.jp/gp","strategy":"proxy","successCount":1,"consecutiveFailures":0,"lastSuccessAt":0,"lastAttemptAt":0}
+{"pathKey":"amazon.co.jp/gp","strategy":"proxy","successCount":1,"consecutiveFailures":0,"lastSuccessAt":0,"lastAttemptAt":0}
+{"pathKey":"www.amazon.com/dp","strategy":"proxy","successCount":1,"consecutiveFailures":0,"lastSuccessAt":0,"lastAttemptAt":0}
+{"pathKey":"amazon.com/dp","strategy":"proxy","successCount":1,"consecutiveFailures":0,"lastSuccessAt":0,"lastAttemptAt":0}

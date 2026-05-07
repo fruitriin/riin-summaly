@@ -90,7 +90,7 @@ enabled = false
 # 現時点でこのセクションを設定しても挙動は変わらない (将来互換のため明示しておくのは可)。
 #
 # enabled = true                                    # デフォルト ON。明示 false で従来カスケードのみ
-# bootstrapPath = "data/domain-strategy-bootstrap.jsonl"   # リポ同梱の初期データ。省略時は bootstrap なし (Step 3 で同梱予定)
+# bootstrapPath = "data/domain-strategy-bootstrap.jsonl"   # リポ同梱の初期データ。省略時は npm 同梱の同名ファイルを自動解決 (phase14 Step 3)
 # runtimePath = "/var/cache/summaly/domain-strategy.jsonl" # 学習結果の永続化先。省略時は永続化なし (in-memory のみ)
 # maxEntries = 5000                                 # in-memory LRU の上限エントリ数
 # consecutiveFailureThreshold = 3                   # N 連続失敗でエントリ破棄

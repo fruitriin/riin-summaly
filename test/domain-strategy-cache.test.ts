@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import {
 	pathKeysOf,
 	DomainStrategyCache,
+	getDefaultBootstrapPath,
 	type DomainStrategyEntry,
 } from '@/utils/domain-strategy-cache.js';
 
@@ -379,5 +380,31 @@ describe('DomainStrategyCache (永続化)', () => {
 		cache.recordSuccess('a.com', 'proxy');
 		expect(cache.size).toBe(1);
 		// 永続化先が無いだけで in-memory には残る
+	});
+});
+
+describe('getDefaultBootstrapPath (phase14 Step 3)', () => {
+	test('リポ同梱 data/domain-strategy-bootstrap.jsonl の絶対パスを返す', async () => {
+		const path = getDefaultBootstrapPath();
+		expect(path).toBeDefined();
+		// W-3 review feedback: パス区切り依存をなくすため `path.basename` で検証
+		const { basename } = await import('node:path');
+		expect(path != null ? basename(path) : '').toBe('domain-strategy-bootstrap.jsonl');
+	});
+
+	test('返されたパスのファイルを読むと bootstrap エントリが含まれる (全グループ網羅)', () => {
+		const path = getDefaultBootstrapPath();
+		expect(path).toBeDefined();
+		const cache = new DomainStrategyCache({ bootstrapPath: path });
+		// yodobashi グループ: curl_cffi
+		expect(cache.lookup('https://yodobashi.com/test')?.entry.strategy).toBe('curl_cffi');
+		expect(cache.lookup('https://www.yodobashi.com/test')?.entry.strategy).toBe('curl_cffi');
+		// sqex グループ: proxy
+		expect(cache.lookup('https://store.jp.square-enix.com/item/123')?.entry.strategy).toBe('proxy');
+		// amazon co.jp グループ: proxy (S-3 review feedback: 全グループ網羅)
+		expect(cache.lookup('https://www.amazon.co.jp/dp/B0XXXXX')?.entry.strategy).toBe('proxy');
+		expect(cache.lookup('https://amazon.co.jp/gp/product/X')?.entry.strategy).toBe('proxy');
+		// amazon com グループ: proxy
+		expect(cache.lookup('https://www.amazon.com/dp/B0YYYYY')?.entry.strategy).toBe('proxy');
 	});
 });

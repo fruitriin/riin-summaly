@@ -351,6 +351,53 @@ if (strategyCacheOpts != null && strategyCacheOpts.enabled) {
 
 これで `[scraping.strategy_cache]` TOML を書くだけで cache が有効化される (運用者向け簡素な API)。
 
+## phase14 Step 3 統合パターン (2026-05-08)
+
+### bootstrap JSONL の npm 同梱
+
+`data/domain-strategy-bootstrap.jsonl` を `package.json` の `files: ["built", "data", "LICENSE"]` で publish 対象化。`data/` ディレクトリが利用者の `node_modules/@misskey-dev/summaly/data/` 配下に配備される。
+
+bundler (tsdown) は `src/` のみを bundle するので **data/ ファイルは bundle 出力に含まれない**。npm publish の `files` 指定で別途配布される。これは tools/ (curl_cffi Python CLI) の同じパターンと対比できる。
+
+### `import.meta.url` 起点のパス自動解決
+
+ESM の `import.meta.url` を起点に bundle 配置 vs source dev 配置の両方を `statSync` で probe する設計:
+
+```typescript
+const dir = dirname(fileURLToPath(import.meta.url));
+const candidates = [
+  join(dir, '..', 'data', 'domain-strategy-bootstrap.jsonl'),       // bundled: built/<file> → ../data/
+  join(dir, '..', '..', 'data', 'domain-strategy-bootstrap.jsonl'), // source: src/utils/X.ts → ../../data/
+];
+for (const c of candidates) {
+  try { if (statSync(c).isFile()) return c; } catch { /* try next */ }
+}
+return undefined; // graceful fallback
+```
+
+**設計のポイント**:
+- 2 候補 probe で「同一コードが build 後と source 直接実行の両方で動く」ことを担保
+- 見つからない場合は undefined → bootstrap なしで動作継続 (graceful)
+- Fastify auto-init 1 回限りの呼出なので `statSync` 起動コストは無視できる
+- 将来 tsdown 設定で chunk が `built/chunks/` 配下に置かれるようになったら 3 つ目の候補追加が必要 (`../../data/...`)
+
+### `DomainStrategyCache` 内では auto-resolve しない設計判断
+
+`getDefaultBootstrapPath()` は `DomainStrategyCache` のコンストラクタからは呼ばれない。テストで `new DomainStrategyCache()` した時に意図せずリポ data ファイルがロードされて状態汚染することを避けるため、**呼出側 (Fastify auto-init / 明示的に library mode で利用) が自分で解決して渡す**。
+
+```typescript
+// Fastify auto-init (src/index.ts)
+setActiveCache(new DomainStrategyCache({
+  bootstrapPath: strategyCacheOpts.bootstrapPath ?? getDefaultBootstrapPath(),
+  ...
+}));
+```
+
+**得られる効果**:
+- DomainStrategyCache 単体テストは bootstrap 影響なしで実行可能
+- Fastify mode 利用者は何も設定しなくても yodobashi/sqex/amazon が「初日から正しい経路で動く」
+- 明示的な `bootstrapPath` を書けば override 可能
+
 ## 参考
 
 - [docs/plans/phase14-domain-strategy-cache.md](../plans/phase14-domain-strategy-cache.md)

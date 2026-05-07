@@ -31,7 +31,8 @@
  */
 
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** 学習対象の取得経路。`scpaping` カスケードの段ごとに対応する。 */
 export type DomainStrategy = 'default' | 'fallback_ua' | 'proxy' | 'curl_cffi';
@@ -410,6 +411,56 @@ export class DomainStrategyCache {
 			}
 		}
 	}
+}
+
+/**
+ * リポ同梱の bootstrap JSONL の絶対パスを返す (phase14 Step 3)。
+ *
+ * `data/domain-strategy-bootstrap.jsonl` は `package.json` `files: ["built", "data", "LICENSE"]`
+ * で publish 対象に含まれており、利用者の `node_modules/@misskey-dev/summaly/data/` 配下に配備される。
+ *
+ * **パス解決戦略**: `import.meta.url` を起点に複数の候補を `statSync` で probe する:
+ * - **bundled**: `built/index.js` → `../data/domain-strategy-bootstrap.jsonl`
+ * - **source dev**: `src/utils/domain-strategy-cache.ts` → `../../data/domain-strategy-bootstrap.jsonl`
+ *
+ * 見つからない場合 (= カスタムビルドや非標準レイアウト) は `undefined` を返す。
+ * 呼出側は undefined のとき bootstrap なしで cache を初期化する。
+ *
+ * 設計選択: `DomainStrategyCache` コンストラクタで自動解決すると、テスト時に意図せず本ファイルが
+ * ロードされて状態が汚染されるため、本関数は **明示的に呼ばれた場合のみ** デフォルトを返す。
+ * Fastify auto-init (src/index.ts) では `bootstrapPath ?? getDefaultBootstrapPath()` で利用する。
+ */
+export function getDefaultBootstrapPath(): string | undefined {
+	if (typeof import.meta.url !== 'string') return undefined;
+	let here: string;
+	try {
+		here = fileURLToPath(import.meta.url);
+	} catch {
+		return undefined;
+	}
+	const dir = dirname(here);
+	// **2 候補を順番に probe する設計 (S-1 review feedback)**:
+	// - tsdown でビルドした output ('built/index.js' or `built/<chunk>-<hash>.js`) から見ると
+	//   data/ は `../data/` に位置する (publish 後の `node_modules/@misskey-dev/summaly/data/`)
+	// - source dev (`src/utils/domain-strategy-cache.ts` を tsx で実行) から見ると
+	//   data/ は `../../data/` に位置する (repo root の `data/`)
+	// 将来 tsdown 設定で chunk が `built/chunks/` 配下に置かれるようになっても 2 番目の
+	// candidate が source レイアウトでない限り fallback しないので注意 (将来配置変更時は本配列の追加が必要)。
+	const candidates = [
+		// bundled: built/<file> から見て ../data/...
+		join(dir, '..', 'data', 'domain-strategy-bootstrap.jsonl'),
+		// source dev: src/utils/domain-strategy-cache.ts から見て ../../data/...
+		join(dir, '..', '..', 'data', 'domain-strategy-bootstrap.jsonl'),
+	];
+	for (const c of candidates) {
+		try {
+			const st = statSync(c);
+			if (st.isFile()) return c;
+		} catch {
+			// ENOENT 等、次の候補を試す
+		}
+	}
+	return undefined;
 }
 
 /**

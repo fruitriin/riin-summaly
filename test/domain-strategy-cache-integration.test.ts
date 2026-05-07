@@ -426,6 +426,27 @@ describe('Fastify モードでの cache 自動インスタンス化 (phase14 Ste
 		}
 	});
 
+	test('bootstrapPath 未指定 + enabled=true → 同梱 bootstrap が自動ロードされる (Step 3)', async () => {
+		setActiveCache(undefined);
+		const fastifyApp = fastify();
+		const opts = { domainStrategyCache: { enabled: true } };
+		await new Promise<void>((resolve, reject) => {
+			Summaly(fastifyApp, opts, (err) => err != null ? reject(err) : resolve());
+		});
+		try {
+			const cache = getActiveCache();
+			expect(cache).toBeDefined();
+			// bootstrap で yodobashi.com → curl_cffi が登録されている
+			const yodobashi = cache?.lookup('https://yodobashi.com/test')?.entry;
+			expect(yodobashi?.strategy).toBe('curl_cffi');
+			// sqex → proxy
+			const sqex = cache?.lookup('https://store.jp.square-enix.com/item')?.entry;
+			expect(sqex?.strategy).toBe('proxy');
+		} finally {
+			await fastifyApp.close();
+		}
+	});
+
 	test('domainStrategyCache の各オプションが DomainStrategyCache に渡される (path 系含む)', async () => {
 		// W-3 review feedback: `bootstrapPath` / `runtimePath` も含めて全フィールドの伝搬を網羅する
 		setActiveCache(undefined);

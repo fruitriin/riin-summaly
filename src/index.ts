@@ -25,6 +25,7 @@ import { chooseLogLevel } from '@/utils/log-level.js';
 import {
 	DomainStrategyCache,
 	getActiveCache,
+	getDefaultBootstrapPath,
 	setActiveCache,
 	type CacheRecordingState,
 } from '@/utils/domain-strategy-cache.js';
@@ -619,13 +620,13 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 	// 既存の `setAgent` パターンと同じ前提。
 	const strategyCacheOpts = options.domainStrategyCache;
 	if (strategyCacheOpts != null && strategyCacheOpts.enabled) {
-		// `bootstrapPath` / `runtimePath` 未指定時 (`undefined`) は `DomainStrategyCache` 内で
-		// 「bootstrap なし」「永続化なし、in-memory のみ」として解釈される。Step 3 で bootstrap.jsonl
-		// を同梱したらデフォルトのパス解決を入れる予定。
+		// `bootstrapPath` 未指定時はリポ同梱 `data/domain-strategy-bootstrap.jsonl` を自動解決する (phase14 Step 3)。
+		// 同梱ファイルが見つからない (= カスタムビルド等) なら `undefined` のまま → bootstrap なし扱い。
+		// `runtimePath` 未指定時は永続化なし (in-memory のみ) として解釈される。
 		// W-1 review feedback: `cache` の中間変数を省いてシャドーイング (Fastify cache LRU との衝突) を回避
 		setActiveCache(new DomainStrategyCache({
 			maxEntries: strategyCacheOpts.maxEntries,
-			bootstrapPath: strategyCacheOpts.bootstrapPath,
+			bootstrapPath: strategyCacheOpts.bootstrapPath ?? getDefaultBootstrapPath(),
 			runtimePath: strategyCacheOpts.runtimePath,
 			consecutiveFailureThreshold: strategyCacheOpts.consecutiveFailureThreshold,
 			compactionThreshold: strategyCacheOpts.compactionThreshold,

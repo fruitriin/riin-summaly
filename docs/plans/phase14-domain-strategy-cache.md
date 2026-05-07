@@ -213,12 +213,16 @@ scpaping(url, opts)
 - Fastify close 時の cleanup なし: 既存 `setAgent` も同様で、ライブラリ利用時のテスト責任で reset
 - `bootstrapPath` / `runtimePath` 未指定時 (`undefined`) は `DomainStrategyCache` 内で「bootstrap なし / 永続化なし」として解釈される。Step 3 で bootstrap.jsonl 同梱したらデフォルトのパス解決を入れる予定
 
-### Step 3 — bootstrap JSONL 同梱
+### Step 3 — bootstrap JSONL 同梱 (完了 2026-05-08)
 
-- [ ] `data/domain-strategy-bootstrap.jsonl` を作成 (yodobashi / sqex / amazon.co.jp/dp / amazon.com/dp 等)
-- [ ] `package.json` の `files` に `data/` を追加 (npm publish に含める)
-- [ ] tsdown 設定で `data/` をビルド出力に copy する設定 or 起動時に解決パスを `node_modules/@misskey-dev/summaly/data/...` 経由で参照
-- [ ] `data/README.md` で bootstrap の役割を説明
+- [x] `data/domain-strategy-bootstrap.jsonl` を作成 (yodobashi / www.yodobashi / sqex / amazon.co.jp/dp / amazon.co.jp/gp / amazon.com/dp 等 9 行)
+- [x] `package.json` の `files` に `data/` を追加 (npm publish に含める)
+- [x] パス解決方式: tsdown bundle へのコピーではなく **`getDefaultBootstrapPath()` で `import.meta.url` から自動解決** (bundled `built/<file>` → `../data/...` と source `src/utils/X.ts` → `../../data/...` の 2 候補を `statSync` で probe)
+- [x] `data/README.md` で bootstrap の役割を説明 (スキーマ・新サイト追加の流れ・curl_cffi/proxy/fallback_ua 選定基準・amazon.com/gp 不在の判断メモ)
+- [x] `src/index.ts` Fastify auto-init で `bootstrapPath ?? getDefaultBootstrapPath()` を適用
+- [x] テスト 3 件追加 (getDefaultBootstrapPath 絶対パス返却 / 全グループ網羅 lookup / Fastify auto-load)
+- [x] `docs/SETUP.md` / `config.example.toml` / `docs/deploy-examples/...example.toml` の bootstrapPath 説明を「省略時は同梱を自動解決」に更新
+- [x] レビュー対応 (W-1 docs 乖離 / W-2 CHANGELOG 漏れ / W-3 path 区切り依存 / S-1 候補設計コメント / S-2 amazon.com/gp 判断メモ / S-3 全グループ網羅テスト / S-4 README 導入バージョン)
 
 ### Step 4 — `forceX` 廃止 + プラグイン整理
 
@@ -300,4 +304,4 @@ scpaping(url, opts)
 
 ## 完了状況
 
-Step 1 完了 (2026-05-07)。Step 2a 完了 (2026-05-07)。Step 2b 前半完了 (2026-05-07)。Step 2b 後半完了 (2026-05-08)。Step 2b-4 完了 (2026-05-08、Fastify auto-init)。Step 3〜7 は次サイクル以降。
+Step 1 + Step 2 系 (2a/2b 前半/2b 後半/2b-4) + Step 3 (bootstrap 同梱) 完了 (2026-05-08)。Step 4 (forceX 廃止) 〜 Step 7 が残。

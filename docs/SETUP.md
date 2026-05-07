@@ -398,7 +398,7 @@ compactionThreshold = 1000
 | 設定キー | 説明 | デフォルト |
 |:--|:--|:--|
 | `enabled` | 経路学習キャッシュを有効化 | `true` |
-| `bootstrapPath` | リポ同梱の初期 JSONL パス (yodobashi → curl_cffi 等の bootstrap 値) | （省略時は bootstrap なし。Step 3 で `data/domain-strategy-bootstrap.jsonl` が同梱される予定） |
+| `bootstrapPath` | リポ同梱の初期 JSONL パス (yodobashi → curl_cffi 等の bootstrap 値) | 省略時は npm 同梱の `data/domain-strategy-bootstrap.jsonl` を自動解決してロード (Step 3) |
 | `runtimePath` | 学習結果の永続化先 JSONL。`fs.appendFileSync` で 1 行ずつ追記 | （省略時は永続化なし、in-memory のみ） |
 | `maxEntries` | in-memory LRU の上限エントリ数 | `5000` |
 | `consecutiveFailureThreshold` | N 連続失敗でエントリ破棄 | `3` |
