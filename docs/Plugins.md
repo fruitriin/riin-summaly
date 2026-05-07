@@ -23,6 +23,7 @@ summaly のプラグインシステムと、組み込み 14 プラグインの�
   - [npmjs](#npmjs)
   - [nintendo-store](#nintendo-store)
   - [yodobashi](#yodobashi)
+  - [sqex](#sqex)
 - [カスタムプラグインの書き方](#カスタムプラグインの書き方)
 - [共通ユーティリティ](#共通ユーティリティ)
 
@@ -260,6 +261,19 @@ interface SummalyPlugin {
 | なぜ proxy をスキップするか | **CF Workers fetch も TLS フィンガープリント固定**なので yodobashi 側で構造的に弾かれる。本番実証で proxy 段が ~15-20 秒空回りしてから 502 を返すのが純損失だった (phase12.4 → phase12.5 で確認)。curl_cffi (libcurl-impersonate) で Chrome の TLS フィンガープリント (JA3) を偽装することだけが正解 |
 | 運用要件 | production server に `uv` + `tools/curl-cffi-fetcher/` の `uv sync` 必須。`config.toml` の `[scraping.curl_cffi]` で `enabled = true` + `domains = ["yodobashi.com"]`。curl_cffi 未設定なら通常 scpaping にフォールスルー (= 失敗するが破壊的ではない) |
 | 実証 | 本番 (riinswork.space) で `https://www.yodobashi.com/product/100000001009727358/` のプレビュー取得確認 (2026-05-06、phase12.5 Step 2 完了後) |
+
+### sqex
+
+実装: [src/plugins/sqex.ts](../src/plugins/sqex.ts)
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `(?:www\.)?store\.jp\.square-enix\.com` (anchored) |
+| 取得方法 | `scpaping()` (with `forceProxyFallback: true`) → `parseGeneral()`。1〜2段目 (default UA / fallback UA) をスキップして CF Workers proxy 直行 |
+| 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準) |
+| 背景 | Square Enix e-STORE はデータセンター IP レンジ全般を CDN 段で広く弾く。Vultr Tokyo IP からは **HTTP/200 + `text/html;charset=utf-8` + 正規 404 ページボディ** が返ってくるため、`got` レイヤでは何のエラーも発生しない (= phase12.1 の `getResponseWithProxyFallback` のエラー発火型では救援できない、新パターン)。サーバ HTML には完璧な OGP (`og:title` / `og:description` / `og:image` / `og:site_name`) が入っているので、proxy 経由で IP を変えれば取得できる |
+| 短縮 URL | `sqex.to/<id>` は HEAD で `store.jp.square-enix.com/...` に正常解決可能 (CloudFront 経由)。`summaly()` 冒頭の resolveRedirect で展開 → このプラグインがマッチ |
+| 運用要件 | `[scraping.proxy]` で `enabled = true` + `domains` に `store.jp.square-enix.com` を含む。CF Worker (`tools/cf-proxy-worker/wrangler.toml`) の `ALLOWED_DOMAINS` にも同 host 必須。proxy が未設定な環境では通常段階に fallthrough (= 404 ページが返る) |
 
 カスタムプラグインの書き方
 ----------------------------------------------------------------

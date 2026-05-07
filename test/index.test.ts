@@ -1190,6 +1190,29 @@ describe('local tests', () => {
 				expect(yo!.skipRedirectResolution).toBe(true);
 			});
 
+			test('sqex プラグインが store.jp.square-enix.com にマッチする (phase12.6)', () => {
+				const sx = builtinPlugins.find(p => p.name === 'sqex');
+				expect(sx).toBeDefined();
+				const t = (s: string) => sx!.test(new URL(s));
+
+				expect(t('https://store.jp.square-enix.com/item/MWFF140773_2.html')).toBe(true);
+				expect(t('https://www.store.jp.square-enix.com/item/abc.html')).toBe(true);
+
+				// マッチしないべき URL
+				expect(t('https://square-enix.com/')).toBe(false);  // ストア外
+				expect(t('https://store.na.square-enix-games.com/')).toBe(false);  // 別国別ドメイン
+				expect(t('https://store.jp.square-enix.com.evil.example/')).toBe(false);
+				expect(t('https://sqex.to/ZjZdX')).toBe(false);  // 短縮 URL は resolveRedirect で展開後にマッチする
+			});
+
+			test('sqex プラグインは skipRedirectResolution を宣言していない (phase12.6)', () => {
+				// 短縮 URL `sqex.to/<id>` は HEAD で `store.jp.square-enix.com/...` に正常解決できるため、
+				// summaly() の resolveRedirect 段に任せる設計 (yodobashi の TLS 切断のような事情は無い)。
+				const sx = builtinPlugins.find(p => p.name === 'sqex');
+				expect(sx).toBeDefined();
+				expect(sx!.skipRedirectResolution).toBeFalsy();
+			});
+
 			test('短縮 URL を扱うプラグイン (amazon / branchio-deeplinks) は skipRedirectResolution を宣言していない (phase12.5)', () => {
 				// 短縮 URL 系プラグインで skipRedirectResolution = true にすると resolveRedirect されず、
 				// 初期 URL のままプラグインに渡って正しく動作しなくなるため、絶対に false 相当 (未宣言) にすべき。

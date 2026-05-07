@@ -20,7 +20,7 @@ compatibility_date = "2025-11-01"
 # 失敗した場合のフォールバックとして Worker が直接 `amzn.asia/d/xxx` を fetch できる。
 # Worker 内部の `redirect: 'follow'` で `www.amazon.co.jp/...` に到達 → W-1 修正で最終 URL も
 # allowlist 再検証されるため安全。
-ALLOWED_DOMAINS = "amazon.com,amazon.co.jp,amazon.co.uk,amazon.de,amazon.fr,amazon.it,amazon.es,amazon.ca,amazon.com.au,amazon.com.br,amazon.com.mx,amazon.in,amzn.asia,amzn.to,a.co,yodobashi.com"
+ALLOWED_DOMAINS = "amazon.com,amazon.co.jp,amazon.co.uk,amazon.de,amazon.fr,amazon.it,amazon.es,amazon.ca,amazon.com.au,amazon.com.br,amazon.com.mx,amazon.in,amzn.asia,amzn.to,a.co,yodobashi.com,store.jp.square-enix.com"
 
 # 受信ボディ上限（OGP 取得用途として 5 MiB）
 MAX_BODY_BYTES = "5242880"

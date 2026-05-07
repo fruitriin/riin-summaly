@@ -125,8 +125,11 @@ export async function getResponseWithProxyFallback(
  * - `rawBody`: Uint8Array (encoding 検出のため `scpaping` が必要とする)
  * - `statusCode`, `statusMessage`, `headers`, `url`
  * - `ip`: 透過 proxy なので未取得 (プライベート IP ガード判定はバイパスされる、proxy が信頼境界の役割)
+ *
+ * phase12.6 で `scpaping()` の `forceProxyFallback: true` 経路から直接呼ぶため export 化した。
+ * 通常経路 (`getResponseWithProxyFallback` のエラー発火型) でも内部的に同じ関数を使う。
  */
-async function viaProxyWorker(args: GotOptions, cfg: ProxyFallbackConfig): Promise<Got.Response<string>> {
+export async function viaProxyWorker(args: GotOptions, cfg: ProxyFallbackConfig): Promise<Got.Response<string>> {
 	const ts = Date.now();
 	const sig = generateHmacSignature(cfg.secret, args.url, ts);
 	const proxyUrl = `${cfg.url.replace(/\/$/, '')}/?url=${encodeURIComponent(args.url)}`;

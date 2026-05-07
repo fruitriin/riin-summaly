@@ -105,6 +105,14 @@ export const sampleGroups: SampleGroup[] = [
 		],
 	},
 	{
+		name: 'sqex (phase12.6 — SQEX e-STORE / proxy 直行)',
+		description: 'データセンター IP 全般を CDN 段で広く弾くため、Vultr 本番から直叩きすると HTTP 200 + 正規 404 ページボディが返る。エラーシグナル無しの IP block なので forceProxyFallback で最初から proxy 経由に行く',
+		urls: [
+			{ label: 'SQEX 商品ページ', url: 'https://store.jp.square-enix.com/item/MWFF140773_2.html', presets: { proxy: true }, note: '本番では Worker と summaly 両側 allowlist に store.jp.square-enix.com 必須' },
+			{ label: 'SQEX 短縮 URL (sqex.to)', url: 'https://sqex.to/ZjZdX', presets: { proxy: true }, note: 'HEAD で store.jp.square-enix.com に解決された後 sqex プラグインがマッチ' },
+		],
+	},
+	{
 		name: 'nintendo-store (phase12.3)',
 		description: 'Akamai Bot Manager 配下だが facebookexternalhit UA は allowlist されているので、UA 切り替えで OGP 取得',
 		urls: [

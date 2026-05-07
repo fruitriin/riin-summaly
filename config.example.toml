@@ -53,6 +53,7 @@ enabled = false
 # domains = [                                  # suffix-match。空配列禁止 (allowlist 必須)
 #   "amazon.co.jp", "amazon.com",               # Amazon 商品ページ (TLD ごとに列挙)
 #   "amzn.asia", "amzn.to", "a.co",             # Amazon 短縮 URL (resolveRedirect が失敗したときの fallback)
+#   "store.jp.square-enix.com",                  # Square Enix e-STORE (phase12.6 / sqex プラグインで forceProxyFallback)
 # ]                                             # ※ Worker 側 wrangler.toml の ALLOWED_DOMAINS と同期させること
 # timeoutMs = 30000                            # proxy リクエストのタイムアウト
 #
@@ -110,6 +111,7 @@ allowed = [
   "npmjs",
   "nintendo-store",
   "yodobashi",
+  "sqex",
   # 性的コンテンツを含むサイトの組み込みプラグイン。除外したい場合はコメントアウトのまま:
   # "dlsite",
   # "iwara",

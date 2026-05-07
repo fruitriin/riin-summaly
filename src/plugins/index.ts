@@ -12,6 +12,7 @@ import * as nijie from './nijie.js';
 import * as npmjs from './npmjs.js';
 import * as nintendoStore from './nintendo-store.js';
 import * as yodobashi from './yodobashi.js';
+import * as sqex from './sqex.js';
 import { SummalyPlugin } from '@/iplugin.js';
 
 export const plugins: SummalyPlugin[] = [
@@ -29,4 +30,5 @@ export const plugins: SummalyPlugin[] = [
 	npmjs,
 	nintendoStore,
 	yodobashi,
+	sqex,
 ];

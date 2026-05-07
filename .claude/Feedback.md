@@ -18,6 +18,9 @@
 
 ## 改善アクション
 
+- **2026-05-07 phase12.6 セッション**: skill `/url-preview-check` の Phase 1 (本番 pino ログ確認) より前段に「**ローカル MacOS から curl + 本番 Vultr から curl の黒箱比較**」を置くと診断が **1 分で確定** することを再確認。今回は ローカル → 200 + 完璧な OGP / 本番 → 200 + 正規 404 ページボディ の差から fail mode B' (エラーシグナルなし IP block) を即特定。skill 側に fail mode B' セクションを追記済み
+- **2026-05-07 phase12.6 セッション (レビュー agent の false positive)**: `addf-code-review-agent` が W-1 で「`matchesDomain` の export 確認が必要」と指摘したが、実は既に export 済み (proxy-fallback.ts L65) で `pnpm test` 405 件全パス状態だった。レビュー agent は **diff だけを見て元ファイル全体の状態を把握しきれない** ことがある (特に動的 import 経由のシンボル参照)。実害ゼロだが、ADDF レビュー agent プロンプトに「動的 import で参照しているシンボルは元ファイルを Read して export 状態を確認すること」を含めるとレビュー精度が上がる可能性 (ADDF テンプレート側への寄与候補)
+
 ## ADDF 推進エンジンに関する記録
 
 - **2026-05-03**: ADDF 導入直後のセッションでは `/addf-dev` slash コマンドおよび `addf-code-review-agent` / `addf-contribution-agent` などの subagent type が Claude Code の register 対象に**まだ載っていない**。`Skill` ツール経由でも、`Agent({ subagent_type: 'addf-*' })` でも認識されない。

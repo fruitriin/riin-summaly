@@ -177,6 +177,34 @@ export async function scpaping(
 				method: 'GET',
 			}, fallback, proxyCfg, curlCffiCfg);
 		}
+	} else if (
+		opts?.forceProxyFallback === true
+		&& proxyCfg != null
+		&& proxyCfg.enabled
+		&& proxyCfg.secret !== ''
+	) {
+		// **1〜2段目をスキップして CF Workers proxy 直行 (phase12.6)**:
+		// SQEX e-STORE のように **HTTP 200 + 正規 404 ページボディ** で IP block するサイトは、
+		// got レイヤではエラーが発生しないため `getResponseWithProxyFallback` のエラー発火型では
+		// 救援できない。最初から proxy 経由で取りに行く。allowlist / https: の二重防御は維持する
+		// (forceProxyFallback を許可するプラグインが test() で URL を絞っている前提だが
+		// defense-in-depth で domains / protocol を再検証)。
+		const targetUrl = new URL(args.url);
+		const { matchesDomain, viaProxyWorker } = await import('@/utils/proxy-fallback.js');
+		if (
+			targetUrl.protocol === 'https:'
+			&& matchesDomain(targetUrl.hostname, proxyCfg.domains)
+		) {
+			response = await viaProxyWorker({ ...args, method: 'GET' }, proxyCfg);
+		} else {
+			// allowlist / protocol を満たさない (= プラグインの想定外) → 通常段階に fallthrough
+			// (4 段カスケード default UA → fallback UA → proxy → curl_cffi がそのまま動く)
+			const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
+			response = await getResponseWithCurlCffiFallback({
+				...args,
+				method: 'GET',
+			}, fallback, proxyCfg, curlCffiCfg);
+		}
 	} else {
 		const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
 		response = await getResponseWithCurlCffiFallback({

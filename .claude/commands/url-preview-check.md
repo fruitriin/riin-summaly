@@ -158,6 +158,22 @@ curl 結果のパターンから **5 タイプ**に分類:
 - 対処: phase12.1 の proxy fallback。`[scraping.proxy].domains` allowlist にホスト追加 + Worker `wrangler.toml` の `ALLOWED_DOMAINS` も同期更新
 - 関連 knowhow: [cf-workers-outbound-proxy.md](../../docs/knowhow/cf-workers-outbound-proxy.md), [outbound-ip-reputation.md](../../docs/knowhow/outbound-ip-reputation.md)
 
+### B'. IP レピュテーション層の遮断・エラーシグナルなし版 (phase12.6 で対処済み)
+
+- **兆候**: 本番サーバから curl すると **HTTP 200 + `text/html;charset=utf-8` + 正規 404 ページボディ** が返る (`<title>404 NOT FOUND</title>`)。`got` レイヤでは何のエラーも発生しない。ローカル MacOS や CF Workers から curl すると 200 + 完璧な OGP が返る
+- **判定方法**: ローカル vs 本番の **黒箱比較** が最速。両方の `<title>` が違えば fail mode B' 確定:
+  ```bash
+  # ローカル
+  curl -sS -L "$URL" | grep -oE '<title[^>]*>[^<]+</title>'  # → 商品名等
+  # 本番
+  ssh summaly "curl -sS -L '$URL' | grep -oE '<title[^>]*>[^<]+</title>'"  # → 404 NOT FOUND
+  ```
+- **B との違い**: B はエラーシグナル (5xx / type filter undefined / connection_dropped) があるので `getResponseWithProxyFallback` のエラー発火型で救援できるが、B' は HTTP 層完全正常なので発火しない
+- **対処**: phase12.6 の `forceProxyFallback` フラグ。プラグイン側で `scpaping(url, { ...opts, forceProxyFallback: true })` を渡すと **1〜2段目をスキップして CF Workers proxy 直行**。`forceCurlCffiFallback` (TLS 切断対策) と並列構造、defense-in-depth (domains allowlist + `https:` プロトコル) は維持
+- **実例 (2026-05-07)**: `store.jp.square-enix.com` (Square Enix e-STORE / `sqex` プラグインで対処)
+- 関連 knowhow: [cf-workers-outbound-proxy.md](../../docs/knowhow/cf-workers-outbound-proxy.md) の「phase12.6 で発見: エラーシグナルなし IP block」セクション
+- 関連実装: [src/plugins/sqex.ts](../../src/plugins/sqex.ts), [docs/plans/phase12.6-sqex-store-proxy.md](../../docs/plans/phase12.6-sqex-store-proxy.md)
+
 ### C. 短縮 URL の preview HTML 詐欺 (phase12.1 followup #4)
 
 - 兆候: `amzn.asia` / `bit.ly` 等で 200 + 軽量 preview HTML、OG が汎用文字列 (`og:image=previewdoh.png` / `og:title="Amazon"` 等)

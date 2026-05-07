@@ -197,6 +197,28 @@ export type GeneralScrapingOptions = {
 	 * サイトのみ宣言する想定。yodobashi がその typical 例。
 	 */
 	forceCurlCffiFallback?: boolean;
+
+	/**
+	 * **1段目 〜 2段目をスキップして CF Workers proxy を最初に試す** (phase12.6)。
+	 *
+	 * SQEX e-STORE のように **HTTP 200 + 正規 404 ページボディ** で IP block する
+	 * (= got レイヤではエラーが何も発生せず、エラー発火型の `getResponseWithProxyFallback`
+	 * では救援不能な) サイト向けに、最初から proxy 経由で取りに行くフラグ。
+	 *
+	 * 発火条件:
+	 * - `proxyFallback?.enabled === true` かつ `secret !== ''` (proxy 自体が有効)
+	 * - `domains` allowlist + `https:` プロトコルが通る
+	 *
+	 * 上記を満たさない場合は通常の段階的フォールバックに戻る (proxy が未設定な dev 環境への保険)。
+	 *
+	 * プラグイン側で確実に proxy が正解 (= 通常 got 経路は IP レピュテーションで弾かれる) と
+	 * 判明しているサイトのみ宣言する想定。`forceCurlCffiFallback` と並列構造。
+	 *
+	 * **`forceCurlCffiFallback` との排他性**: 両方 `true` を指定した場合、`forceCurlCffiFallback`
+	 * (TLS layer 救援) が優先される。両方を同時に必要とするサイトは想定していない (TLS 切断する
+	 * サイトでは proxy 経由でも構造的に救えないため)。プラグインはどちらか 1 つだけ宣言すること。
+	 */
+	forceProxyFallback?: boolean;
 };
 
 export async function general(_url: URL | string, opts?: GeneralScrapingOptions): Promise<Summary | null> {
@@ -221,6 +243,7 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 		proxyFallback: opts?.proxyFallback,
 		curlCffiFallback: opts?.curlCffiFallback,
 		forceCurlCffiFallback: opts?.forceCurlCffiFallback,
+		forceProxyFallback: opts?.forceProxyFallback,
 	});
 
 	if (res.pdf != null) {

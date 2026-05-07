@@ -299,6 +299,72 @@ phase12.1 GO 判定 (Step 1.3) で `dp/B0C4LRBFX6` 1 件で GO したが、**実
 
 **4〜5 パターン全部叩いて動作確認**するのが正しい GO 判定。1 パターンだけだと本番で穴が残る。
 
+## phase12.6 で発見: エラーシグナルなし IP block (HTTP 200 + 404 ページボディ)
+
+**症状**: SQEX e-STORE (`store.jp.square-enix.com/item/MWFF140773_2.html`) を本番 (Vultr Tokyo) から取得すると、ステータスは `HTTP/200 OK`、`content-type: text/html;charset=utf-8` で完全に正常レスポンス。**だがボディは正規の 404 ページ HTML** (`<title>404 NOT FOUND</title>` 入り)。ローカル MacOS から curl すると同 URL で 200 + 完璧な OGP (`og:title` / `og:description` / `og:image` / `og:site_name`) が返る。
+
+**意味**: **データセンター IP レンジ全般を CDN 段で広く弾く** タイプ。SQEX は CloudFront 経由で配信していて、Vultr Tokyo の IP レンジを「悪い IP」として認識し、200 で 404 ページを返却する設計。HTTP 層では何のエラーシグナルも出ない (status code, content-type, content-length すべて妥当) ため、phase12.1 の `getResponseWithProxyFallback` (エラーカテゴリベース発火) では **救援できない**。
+
+### 救援パターン: `forceProxyFallback` フラグ (phase12.6)
+
+phase12.5 で `forceCurlCffiFallback` (1〜3段目スキップして curl_cffi 直行) を入れたのと並列構造で、`forceProxyFallback` (1〜2段目スキップして CF Workers proxy 直行) を新設:
+
+```typescript
+// src/general.ts の GeneralScrapingOptions に追加
+forceProxyFallback?: boolean;
+```
+
+```typescript
+// src/utils/got.ts の scpaping() で分岐 (forceCurlCffiFallback の else if として配置)
+} else if (
+    opts?.forceProxyFallback === true
+    && proxyCfg != null
+    && proxyCfg.enabled
+    && proxyCfg.secret !== ''
+) {
+    const { matchesDomain, viaProxyWorker } = await import('@/utils/proxy-fallback.js');
+    if (
+        targetUrl.protocol === 'https:'
+        && matchesDomain(targetUrl.hostname, proxyCfg.domains)
+    ) {
+        response = await viaProxyWorker({ ...args, method: 'GET' }, proxyCfg);
+    } else {
+        // allowlist / protocol 不一致 → 通常段階に fallthrough (4 段カスケードがそのまま動く)
+    }
+}
+```
+
+プラグイン側 (`src/plugins/sqex.ts`):
+
+```typescript
+export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
+    const res = await scpaping(url.href, {
+        ...opts,
+        forceProxyFallback: true,
+    });
+    return await parseGeneral(url, res);
+}
+```
+
+### `forceCurlCffiFallback` との排他性
+
+両方 `true` を指定した場合、`forceCurlCffiFallback` が優先される。ただし両方を必要とするサイトは想定していない (TLS 切断するサイトでは proxy 経由でも構造的に救えないため curl_cffi が正解; IP block するだけのサイトは proxy で十分)。プラグインはどちらか 1 つだけ宣言すること。`GeneralScrapingOptions.forceProxyFallback` の JSDoc にこのルールを明記している。
+
+### 教訓: 「黒箱比較」が切り分け早さを決める
+
+切り分けの最速ルートは、ローカルから curl + 本番から curl の **黒箱比較**:
+
+```bash
+# ローカル (我が家の IP) — 200 + OGP 完備
+curl -sS -L -A 'SummalyBot/...' "$URL" -o /tmp/local.html
+grep -oE '<title[^>]*>[^<]+</title>' /tmp/local.html  # → ファイナルファンタジーXIV...
+
+# 本番 (Vultr Tokyo IP) — 200 だがボディが 404 ページ
+ssh summaly "curl -sS -L ... | grep -oE '<title[^>]*>[^<]+</title>'"  # → 404 NOT FOUND
+```
+
+**1 分で fail mode 確定**できる。pino ログの段階的計測より黒箱比較の方が情報密度が高い。skill `/url-preview-check` の Phase 1 (本番ログ) より前段に「ローカル vs 本番の curl 比較」を置くと診断が速い (phase12.5 followup の `time curl` 比較セッションで得た教訓と同根)。
+
 ## 関連
 
 - [outbound-ip-reputation.md](outbound-ip-reputation.md) — 背景となる Vultr/Amazon 問題の実証データ
