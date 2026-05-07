@@ -25,4 +25,42 @@ export interface SummalyPlugin {
 	 * 終端 URL でないとプラグインが正しく動かない。
 	 */
 	skipRedirectResolution?: boolean;
+
+	/**
+	 * **`/embed` エンドポイント用 HTML 生成** (phase13.1)。
+	 *
+	 * 実装すると summaly Fastify モードが `GET /embed?url=<URL>` にマッチした URL に対して、
+	 * 本関数の HTML をレスポンスとして返すようになる。プラグインが `test(url) === true`
+	 * かつ `renderEmbed` を実装し、かつ `[embed].allowedPlugins` に含まれている場合のみ有効。
+	 *
+	 * **XSS / CSP 設計の契約**:
+	 * - 戻り値の `body` は **完全な HTML5 ドキュメント** (`<!DOCTYPE html>...</html>`)
+	 * - **すべてのユーザー入力は `escapeHtml` / `escapeAttr` でエスケープ済みである**こと
+	 *   (Fastify 側はエスケープしない、プラグイン側が責任を持つ契約)
+	 * - **`<script>` を含めてはならない** (CSP `default-src 'none'` で実行されないが、混入を許す設計にしない)
+	 * - 外部リソース (画像/フォント/外部 CSS) は CSP で制限される — `default-src 'none'`、
+	 *   `img-src https:`、`style-src 'unsafe-inline'`、`font-src 'none'`
+	 *
+	 * **width / height の意味**: Misskey は `padding-bottom: height/width * 100%` で
+	 * iframe のアスペクト比を計算する。絶対値ではなく **比率** として効く (例: `width: 3, height: 2`
+	 * で 3:2 アスペクト)。コンテナ幅にレスポンシブで伸縮する。
+	 */
+	renderEmbed?: (url: URL, opts?: GeneralScrapingOptions) => Promise<EmbedRenderResult>;
+}
+
+/**
+ * `SummalyPlugin.renderEmbed` の戻り値 (phase13.1)。
+ */
+export interface EmbedRenderResult {
+	/**
+	 * 完全な HTML5 ドキュメント (`<!DOCTYPE html>...`)。
+	 * **すべてのユーザー入力はエスケープ済みであること** (プラグイン側責任)。
+	 */
+	body: string;
+
+	/** プレイヤーの推奨幅 (アスペクト比計算用、絶対値は無視される) */
+	width: number;
+
+	/** プレイヤーの推奨高さ (アスペクト比計算用、絶対値は無視される) */
+	height: number;
 }

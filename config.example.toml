@@ -13,6 +13,10 @@
 # nginx などの前段プロキシから受ける運用では 127.0.0.1 のままで OK。
 host = "127.0.0.1"
 port = 3000
+# **自身が外部に公開されている URL** (phase13.1)。`/embed` エンドポイントを使うプラグインで
+# player.url を組み立てるのに使う。https: 必須 (browser から直接 iframe で読まれるため、平文 HTTP 不可)。
+# 未設定なら embed 機能は実質無効 (player.url が null になる)。
+# publicUrl = "https://summaly.example.com"
 
 [summaly]
 # 共通 SummalyOptions（リクエスト個別の挙動）
@@ -176,3 +180,16 @@ parseFailureLogSamplesPerGroup = 5       # 1 グループあたりの直近サ�
 # logrotate で運用すること。プライバシーの観点でファイルパーミッションを 600 に絞ること推奨。
 # parseFailureLogBlockedJsonlPath = "/var/log/summaly/parse-failures-blocked.jsonl"
 # parseFailureLogBlockedJsonlMaxBytes = 10485760  # 10 MiB（デフォルト）
+
+[embed]
+# `/embed` エンドポイント設定 (phase13.1)。renderEmbed を実装したプラグイン (現状は syosetu のみ予定)
+# が「JS なし HTML+CSS で iframe 用ページを返す」エンドポイント。Misskey の embed (player) で表示される。
+#
+# **運用要件**:
+# - `[server].publicUrl` が **必ず https: で設定されている** こと (browser から直接 iframe で読まれるため)
+# - 対応プラグインが `[plugins].allowed` に含まれていること (TOML 経由で有効化)
+# - 商用運用では `frameAncestors` を Misskey インスタンスのオリジンに明示制限すること
+#
+# enabled = true                        # false で /embed が 404、player.url も生成しない (完全無効化)
+# allowedPlugins = ["syosetu"]          # embed 対応プラグインの allowlist。空配列禁止 (fail-close)
+# frameAncestors = ["*"]                # iframe を読み込んで良いオリジン (CSP frame-ancestors)。商用運用は明示制限推奨

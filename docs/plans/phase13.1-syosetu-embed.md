@@ -1,6 +1,6 @@
 # phase13.1 — 小説家になろうプラグイン + `/embed` エンドポイント基盤
 
-> 状態: **未着手**
+> 状態: **進行中** (Step 1 + Step 2 完了 2026-05-08、Step 3 syosetu プラグイン本体 + Step 4〜8 残)
 > 種別: 機能追加 / プラグイン追加 / Fastify 新エンドポイント
 > サイズ: **M〜L**
 > 依存: [phase2.1](phase2.1-plugin-infrastructure.md)（プラグイン基盤）、[phase4.1](phase4.1-fastify-in-memory-cache.md)（Fastify LRU キャッシュ流用）、[phase8.1](phase8.1-toml-config.md)（TOML config）
@@ -284,6 +284,28 @@ Misskey browser ──iframe src=player.url──> summaly /embed
 ## 実装ステップ（チェックリスト）
 
 各ステップで `pnpm eslint && pnpm test` を通す。
+
+- [x] **Step 1 — embed エンドポイント基盤** (完了 2026-05-08)
+  - [x] `src/utils/escape-html.ts` を新設 (`escapeHtml(s)` / `escapeAttr(s)` で `& < > " '` の 5 文字を entity 化) + テスト 9 ケース
+  - [x] `src/iplugin.ts` に `renderEmbed?: (url, opts?) => Promise<EmbedRenderResult>` と `EmbedRenderResult { body, width, height }` を追加
+  - [x] `src/index.ts` の `SummalyOptions` に `embedBaseUrl?: string` と `embedConfig?: { enabled, allowedPlugins, frameAncestors }` を追加
+  - [x] Fastify plugin 本体に `GET /embed?url=<URL>` ルートを追加:
+    - URL バリデーション (https only、parse 失敗・javascript:/data:/http: は 400)
+    - `embedConfig` 未設定 / `enabled === false` で 404
+    - builtinPlugins から `test() && renderEmbed != null && allowedPlugins.includes(name)` の最初を採用、無ければ 404
+    - 未知クエリは静かに無視 (Misskey transformPlayerUrl の autoplay=1 注入対応)
+    - CSP `default-src 'none'` + `style-src 'unsafe-inline'` + `img-src https:` + `frame-ancestors <config>` + `X-Content-Type-Options: nosniff` + `Referrer-Policy: no-referrer` + `Cache-Control: public, max-age=600`
+    - エラー経路は plain text 400 / 404 / 500 (HTML 返さない)
+    - **defense-in-depth**: `<script>` sanity check (M-4) + body サイズ 512KB cap (L-2)
+
+- [x] **Step 2 — config と server エントリの拡張** (完了 2026-05-08)
+  - [x] `bin/config-loader.ts`:
+    - `ServerOptions.publicUrl?: string` を追加 (https only 検証、空文字列禁止)
+    - `[embed]` セクション parser を追加: `enabled?: boolean`、`allowedPlugins: string[]` (空配列禁止 fail-close)、`frameAncestors?: string[]` (各要素 `*` / `'self'` / `'none'` / origin only URL のみ許容、CSP インジェクション防御)
+    - `parseTomlConfigString` の `summaly` 出力に `embedBaseUrl` (publicUrl の origin+pathname を抜き出して末尾スラッシュ削除) と `embedConfig` を組み込む
+    - `frameAncestors` に `*` が含まれる場合は stderr に warning (商用運用は明示制限推奨)
+  - [x] `config.example.toml` と `docs/deploy-examples/summaly-config.example.toml` の **両方** に `[embed]` セクションのコメント例を追加
+  - [x] `test/config-loader.test.ts` に embed セクションパース + バリデーション + CSP インジェクション防御のテスト 14 ケース追加
 
 - [x] **Step 0 — Misskey フロントの iframe 許容範囲を調査**（完了 2026-05-07）
   - **調査結果**: Misskey フロント (`MkUrlPreview.vue`) は **iframe ドメイン allowlist 無し**。`player.url.startsWith('http://') || .startsWith('https://')` だけが条件。本フェーズの実装は **Misskey fork 側修正なしで動く** ことを確認

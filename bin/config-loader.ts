@@ -34,6 +34,12 @@ const VALID_ERROR_CATEGORIES: ReadonlySet<string> = new Set([
 export interface ServerOptions {
 	host?: string;
 	port?: number;
+	/**
+	 * **自身が外部に公開されている URL** (phase13.1)。例: `https://summaly.example.com`。
+	 * `[embed]` を有効化したプラグインの player.url を組み立てるのに使う。
+	 * 未設定なら embed 機能は実質無効 (`embedBaseUrl` が undefined のまま)。
+	 */
+	publicUrl?: string;
 }
 
 export interface ParsedConfig {
@@ -100,8 +106,94 @@ export function parseTomlConfigString(toml: string): ParsedConfig {
 	const server = parseServerSection(parsed.server);
 	const summaly = parseSummalySection(parsed.summaly, parsed.plugins, parsed.diagnostics);
 	parseScrapingSection(parsed.scraping, summaly);
+	parseEmbedSection(parsed.embed, server, summaly);
 
 	return { server, summaly };
+}
+
+/**
+ * `[embed]` セクションを処理し、`SummalyOptions.embedBaseUrl` / `embedConfig` にマップする (phase13.1)。
+ *
+ * - `enabled` が省略 / true で `[server].publicUrl` が設定済なら embed 有効化、`embedBaseUrl` を投入
+ * - `enabled = false` なら `embedConfig.enabled = false` で完全無効化 (= /embed が 404、player.url も生成しない)
+ * - `[server].publicUrl` 未設定なら embed は実質無効 (embedConfig は作るが embedBaseUrl は undefined のまま)
+ * - `allowedPlugins` 必須 (空配列禁止、fail-close で全プラグイン無効を防ぐ)
+ * - `frameAncestors` 省略時は `["*"]` (デフォルト全許可、商用は config で制限推奨)
+ */
+function parseEmbedSection(rawEmbed: Toml, server: ServerOptions, summaly: SummalyOptions): void {
+	if (rawEmbed === undefined) return;
+	if (!isObject(rawEmbed)) {
+		throw new TypeError('config: `[embed]` must be a table');
+	}
+	let enabled = true;
+	if (rawEmbed.enabled !== undefined) {
+		expectType(rawEmbed.enabled, 'boolean', 'embed.enabled');
+		enabled = rawEmbed.enabled as boolean;
+	}
+	if (!enabled) {
+		// 完全無効化: embedConfig.enabled = false で /embed が 404、player.url も組み立てられない
+		summaly.embedConfig = { enabled: false, allowedPlugins: [], frameAncestors: [] };
+		return;
+	}
+
+	// allowedPlugins は必須 (空配列禁止 — fail-close 維持)
+	if (rawEmbed.allowedPlugins === undefined) {
+		throw new RangeError('config: `embed.allowedPlugins` is required when embed.enabled = true');
+	}
+	expectStringArray(rawEmbed.allowedPlugins, 'embed.allowedPlugins');
+	const allowedPlugins = rawEmbed.allowedPlugins;
+	if (allowedPlugins.length === 0) {
+		throw new RangeError('config: `embed.allowedPlugins` must not be empty (fail-close)');
+	}
+
+	let frameAncestors: string[] = ['*'];
+	if (rawEmbed.frameAncestors !== undefined) {
+		expectStringArray(rawEmbed.frameAncestors, 'embed.frameAncestors');
+		const v = rawEmbed.frameAncestors;
+		if (v.length === 0) {
+			throw new RangeError('config: `embed.frameAncestors` must not be empty (use ["*"] explicitly for全許可)');
+		}
+		// **CSP ヘッダインジェクション防御 (security review M-1)**: 各要素は `https://hostname[:port]` /
+		// `*` / `'self'` / `'none'` のいずれかであることを厳格検証。`;` `,` 空白などを含むと
+		// CSP ディレクティブを上書きできてしまう (例: `https://x.com; script-src *` で script-src を緩める)。
+		for (const origin of v) {
+			if (origin === '*' || origin === "'self'" || origin === "'none'") continue;
+			let parsed: URL;
+			try {
+				parsed = new URL(origin);
+			} catch {
+				throw new RangeError(`config: \`embed.frameAncestors\` contains invalid value "${origin}" (must be a URL, "*", "'self'", or "'none'")`);
+			}
+			if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+				throw new RangeError(`config: \`embed.frameAncestors\` "${origin}" must use http(s): scheme`);
+			}
+			// pathname / query / hash がある = origin だけでない → ヘッダインジェクション疑いとして弾く
+			if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') {
+				throw new RangeError(`config: \`embed.frameAncestors\` "${origin}" must be origin only (no path / query / fragment)`);
+			}
+		}
+		frameAncestors = v;
+	}
+
+	// **`*` 利用時に warning** (security review M-3): 商用運用で全 origin 許可は事故元になりやすいため stderr に注意喚起
+	if (frameAncestors.includes('*')) {
+		process.stderr.write(
+			'[summaly][embed] frameAncestors = ["*"] が設定されています。' +
+			'商用運用では Misskey インスタンスのオリジンに明示制限することを推奨します\n',
+		);
+	}
+
+	summaly.embedConfig = { enabled: true, allowedPlugins, frameAncestors };
+
+	// `[server].publicUrl` が設定済なら `embedBaseUrl` を組み立てて投入
+	// (publicUrl 未設定でも embed エンドポイント自体は受け付けるが、プラグインが player.url を組み立てない)
+	if (server.publicUrl != null && server.publicUrl !== '') {
+		// **`URL` パースで origin + pathname だけを取る** (security review L-3): 末尾スラッシュ削除 +
+		// クエリ / フラグメントは除去 ( `https://x.com?debug=1/embed?url=...` のような不正 URL 生成を防ぐ)。
+		// publicUrl は parseServerSection で URL 検証済みのため new URL は throw しない
+		const parsed = new URL(server.publicUrl);
+		summaly.embedBaseUrl = `${parsed.origin}${parsed.pathname}`.replace(/\/$/, '');
+	}
 }
 
 /**
@@ -401,6 +493,25 @@ function parseServerSection(raw: Toml): ServerOptions {
 		expectType(raw.port, 'number', 'server.port');
 		expectPort(raw.port as number);
 		out.port = raw.port as number;
+	}
+	if (raw.publicUrl !== undefined) {
+		expectType(raw.publicUrl, 'string', 'server.publicUrl');
+		const v = (raw.publicUrl as string).trim();
+		if (v === '') {
+			throw new RangeError('config: `server.publicUrl` must not be empty when specified');
+		}
+		// `https:` only — `/embed` 機能は browser から直接アクセスされるため平文 HTTP は不可
+		// (= 中間者が iframe HTML を改竄してフィッシングや XSS の踏み台にする)
+		let parsed: URL;
+		try {
+			parsed = new URL(v);
+		} catch {
+			throw new RangeError(`config: \`server.publicUrl\` must be a valid URL, got "${v}"`);
+		}
+		if (parsed.protocol !== 'https:') {
+			throw new RangeError(`config: \`server.publicUrl\` must use https: scheme, got "${parsed.protocol}"`);
+		}
+		out.publicUrl = v;
 	}
 	return out;
 }

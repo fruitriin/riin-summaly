@@ -598,4 +598,174 @@ describe('parseTomlConfigString', () => {
 			`)).toThrow(/scraping\.strategy_cache.*must be a table/);
 		});
 	});
+
+	describe('[server].publicUrl + [embed] (phase13.1 Step 2)', () => {
+		test('publicUrl + [embed] enabled で embedBaseUrl + embedConfig が両方設定される', () => {
+			const cfg = parseTomlConfigString(`
+				[server]
+				publicUrl = "https://summaly.example.com"
+
+				[embed]
+				enabled = true
+				allowedPlugins = ["syosetu"]
+				frameAncestors = ["https://misskey.example.com"]
+			`);
+			expect(cfg.server.publicUrl).toBe('https://summaly.example.com');
+			expect(cfg.summaly.embedBaseUrl).toBe('https://summaly.example.com');
+			expect(cfg.summaly.embedConfig).toEqual({
+				enabled: true,
+				allowedPlugins: ['syosetu'],
+				frameAncestors: ['https://misskey.example.com'],
+			});
+		});
+
+		test('publicUrl の末尾スラッシュは embedBaseUrl で削られる', () => {
+			const cfg = parseTomlConfigString(`
+				[server]
+				publicUrl = "https://summaly.example.com/"
+
+				[embed]
+				allowedPlugins = ["syosetu"]
+			`);
+			expect(cfg.summaly.embedBaseUrl).toBe('https://summaly.example.com');
+		});
+
+		test('publicUrl 未設定でも [embed] は設定可能 (embedBaseUrl は undefined)', () => {
+			// 開発環境で publicUrl 設定なしでも embed config だけ書いてエラー耐性を確認できる用途
+			const cfg = parseTomlConfigString(`
+				[embed]
+				allowedPlugins = ["syosetu"]
+			`);
+			expect(cfg.summaly.embedBaseUrl).toBeUndefined();
+			expect(cfg.summaly.embedConfig?.enabled).toBe(true);
+		});
+
+		test('[embed] enabled = false で embedConfig.enabled = false (完全無効化)', () => {
+			const cfg = parseTomlConfigString(`
+				[server]
+				publicUrl = "https://summaly.example.com"
+
+				[embed]
+				enabled = false
+			`);
+			expect(cfg.summaly.embedConfig).toEqual({
+				enabled: false,
+				allowedPlugins: [],
+				frameAncestors: [],
+			});
+			// embedBaseUrl も生成しない (player.url 組み立てを防ぐ)
+			expect(cfg.summaly.embedBaseUrl).toBeUndefined();
+		});
+
+		test('[embed] 未指定なら embedConfig も embedBaseUrl も undefined', () => {
+			const cfg = parseTomlConfigString(`
+				[server]
+				publicUrl = "https://summaly.example.com"
+			`);
+			expect(cfg.summaly.embedConfig).toBeUndefined();
+			expect(cfg.summaly.embedBaseUrl).toBeUndefined();
+		});
+
+		test('frameAncestors 省略時はデフォルト ["*"]', () => {
+			const cfg = parseTomlConfigString(`
+				[embed]
+				allowedPlugins = ["syosetu"]
+			`);
+			expect(cfg.summaly.embedConfig?.frameAncestors).toEqual(['*']);
+		});
+
+		test('publicUrl が http: なら RangeError (https only)', () => {
+			expect(() => parseTomlConfigString(`
+				[server]
+				publicUrl = "http://summaly.example.com"
+			`)).toThrow(/server\.publicUrl.*https/);
+		});
+
+		test('publicUrl が不正 URL なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[server]
+				publicUrl = "not a url"
+			`)).toThrow(/server\.publicUrl.*valid URL/);
+		});
+
+		test('publicUrl 空文字列なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[server]
+				publicUrl = ""
+			`)).toThrow(/server\.publicUrl.*must not be empty/);
+		});
+
+		test('[embed] enabled = true で allowedPlugins 未指定なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[embed]
+				enabled = true
+			`)).toThrow(/embed\.allowedPlugins.*required/);
+		});
+
+		test('[embed] allowedPlugins 空配列なら RangeError (fail-close)', () => {
+			expect(() => parseTomlConfigString(`
+				[embed]
+				allowedPlugins = []
+			`)).toThrow(/embed\.allowedPlugins.*must not be empty/);
+		});
+
+		test('[embed] frameAncestors 空配列なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[embed]
+				allowedPlugins = ["syosetu"]
+				frameAncestors = []
+			`)).toThrow(/embed\.frameAncestors.*must not be empty/);
+		});
+
+		test('[embed] frameAncestors に CSP インジェクション (`;`) があると RangeError (M-1)', () => {
+			expect(() => parseTomlConfigString(`
+				[embed]
+				allowedPlugins = ["syosetu"]
+				frameAncestors = ["https://misskey.example.com; script-src *"]
+			`)).toThrow(/embed\.frameAncestors.*invalid value/);
+		});
+
+		test('[embed] frameAncestors に path / query / fragment があると RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[embed]
+				allowedPlugins = ["syosetu"]
+				frameAncestors = ["https://misskey.example.com/path"]
+			`)).toThrow(/embed\.frameAncestors.*origin only/);
+		});
+
+		test('[embed] frameAncestors に "*" / "https://x.com" / "\'self\'" / "\'none\'" は許容される', () => {
+			const cfg = parseTomlConfigString(`
+				[embed]
+				allowedPlugins = ["syosetu"]
+				frameAncestors = ["*", "https://misskey.example.com", "'self'", "'none'"]
+			`);
+			expect(cfg.summaly.embedConfig?.frameAncestors).toEqual(
+				["*", "https://misskey.example.com", "'self'", "'none'"],
+			);
+		});
+
+		test('publicUrl にクエリ / フラグメントがあっても embedBaseUrl は origin + path のみ (L-3)', () => {
+			const cfg = parseTomlConfigString(`
+				[server]
+				publicUrl = "https://summaly.example.com?debug=1#hash"
+
+				[embed]
+				allowedPlugins = ["syosetu"]
+			`);
+			expect(cfg.summaly.embedBaseUrl).toBe('https://summaly.example.com');
+		});
+
+		test('[embed] enabled の型違いは TypeError', () => {
+			expect(() => parseTomlConfigString(`
+				[embed]
+				enabled = "yes"
+			`)).toThrow(/embed\.enabled.*boolean/);
+		});
+
+		test('[embed] がテーブルでないと TypeError', () => {
+			expect(() => parseTomlConfigString(`
+				embed = "not a table"
+			`)).toThrow(/\[embed\].*must be a table/);
+		});
+	});
 });

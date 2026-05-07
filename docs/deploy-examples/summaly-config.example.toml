@@ -5,6 +5,8 @@
 [server]
 host = "127.0.0.1"
 port = 3000
+# 自身が外部に公開されている URL (https: 必須、phase13.1)。/embed エンドポイントの player.url 組み立てに使う。
+# publicUrl = "https://summaly.example.com"
 
 [summaly]
 responseTimeout = 20000
@@ -91,3 +93,11 @@ allowed = [
   # "komiflo",
   # "nijie",
 ]
+
+# `/embed` エンドポイント設定 (phase13.1)。renderEmbed を実装したプラグインで iframe HTML を返す。
+# **必須**: [server].publicUrl が https: で設定されていること。
+# 商用運用では frameAncestors を Misskey インスタンスのオリジンに明示制限すること。
+# [embed]
+# enabled = true
+# allowedPlugins = ["syosetu"]
+# frameAncestors = ["*"]                # 商用運用は ["https://misskey.example.com"] 等で制限

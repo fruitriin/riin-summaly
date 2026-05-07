@@ -269,6 +269,36 @@ export type SummalyOptions = {
 	 * `scpaping()` への統合は Step 2 で行う。
 	 */
 	domainStrategyCache?: import('@/utils/domain-strategy-cache.js').DomainStrategyCacheOptions;
+
+	/**
+	 * **Fastify モードの自身が公開されている URL ベース** (phase13.1)。
+	 * 例: `https://summaly.example.com`
+	 *
+	 * 設定すると、`renderEmbed` を実装したプラグイン (現在は `syosetu` のみ) が
+	 * Summary の `player.url` を `<embedBaseUrl>/embed?url=<encoded>` として組み立てる。
+	 * 未設定の場合は player は無効化 (library mode のデフォルト挙動と同じ)。
+	 *
+	 * Fastify モードでは `[server].publicUrl` から自動投入される。
+	 *
+	 * @see embedConfig
+	 */
+	embedBaseUrl?: string;
+
+	/**
+	 * **`/embed` エンドポイント設定** (phase13.1、Fastify モード専用)。
+	 *
+	 * `[embed]` TOML セクションから自動投入される。`enabled === false` なら `/embed` は 404 を返し、
+	 * 対応プラグインが `renderEmbed` を実装していても player.url は組み立てられない (= 機能完全無効)。
+	 * library mode (`summaly()` 関数直接呼び出し) では参照されない。
+	 */
+	embedConfig?: {
+		/** embed エンドポイントを有効化するか。`false` で `/embed` が 404、player.url も生成しない */
+		enabled: boolean;
+		/** embed 対応プラグインの allowlist。空 / 未設定は **fail-close で無効** (= 全プラグインで embed 不可) */
+		allowedPlugins: string[];
+		/** CSP `frame-ancestors` 値の配列。`['*']` で任意 origin 許可、商用は明示制限推奨 */
+		frameAncestors: string[];
+	};
 };
 
 const DEFAULT_CACHE_MAX_AGE = 604800;
@@ -776,6 +806,138 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 			commit: _GIT_COMMIT_,
 			message: _GIT_MESSAGE_,
 		};
+	});
+
+	// **`/embed?url=<URL>` エンドポイント** (phase13.1):
+	// 対応プラグインが `renderEmbed` を実装している URL に対して、JS なし HTML+CSS で
+	// プレイヤー iframe 用のページを返す。Misskey の embed 表示に直接埋め込まれる前提。
+	//
+	// 設計詳細は `docs/plans/phase13.1-syosetu-embed.md` 参照。
+	//
+	// **CSP / セキュリティ**:
+	// - `Content-Security-Policy: default-src 'none'` で script を構造的にブロック
+	// - `style-src 'unsafe-inline'` のみ許容 (`<style>` ブロック 1 つ)
+	// - `img-src https:` で外部画像許可 (icon / thumbnail 表示)
+	// - `frame-ancestors` は config の `frameAncestors` で制御
+	// - `X-Content-Type-Options: nosniff` / `Referrer-Policy: no-referrer`
+	//
+	// **未知クエリは無視する設計** (Misskey の `transformPlayerUrl` が `autoplay=1` /
+	// `auto_play=1` を勝手に追加するため、厳密 query 検証で 400 を返さない)。`url` クエリ以外は読み捨て。
+	fastify.get<{
+		Querystring: { url?: string };
+	}>('/embed', async (req, reply) => {
+		const embedConfig = options.embedConfig;
+		// `[embed].enabled = false` または embedConfig 未設定 (= library mode 直接呼び出しの誤用) なら 404
+		if (embedConfig == null || !embedConfig.enabled) {
+			reply.code(404);
+			reply.type('text/plain; charset=utf-8');
+			return 'embed disabled';
+		}
+
+		const rawUrl = req.query.url;
+		if (rawUrl == null || rawUrl === '') {
+			reply.code(400);
+			reply.type('text/plain; charset=utf-8');
+			return 'url query required';
+		}
+
+		// URL バリデーション: `https:` only (`http:` / `data:` / `javascript:` 等は弾く、SSRF / XSS 防御)
+		let parsedUrl: URL;
+		try {
+			parsedUrl = new URL(rawUrl);
+		} catch {
+			reply.code(400);
+			reply.type('text/plain; charset=utf-8');
+			return 'invalid url';
+		}
+		if (parsedUrl.protocol !== 'https:') {
+			reply.code(400);
+			reply.type('text/plain; charset=utf-8');
+			return 'https only';
+		}
+
+		// プラグイン dispatch: `test() === true` かつ `renderEmbed != null` の **最初の** プラグインを採用。
+		// allowedPlugins (= config の `[embed].allowedPlugins`) に **明示的に含まれている** プラグインのみ許可
+		// (fail-close: 空配列なら 1 つも対応しない)
+		const plugin = builtinPlugins.find(p =>
+			p.name != null
+			&& embedConfig.allowedPlugins.includes(p.name)
+			&& p.renderEmbed != null
+			&& p.test(parsedUrl),
+		);
+		if (plugin?.renderEmbed == null) {
+			reply.code(404);
+			reply.type('text/plain; charset=utf-8');
+			return 'no plugin matched';
+		}
+
+		// プラグインの renderEmbed を呼ぶ。エラーは 500 で plain text (HTML を出さない、CSP も同様)。
+		// **opts 伝達 (security review M-2)**: timeout / userAgent 等の設定をプラグインの API 呼び出しに反映する。
+		// embedBaseUrl は player.url 組み立てで使われない (renderEmbed 内では既に embed 自身の HTML を生成中) ため
+		// 渡さなくてよいが、scrapingOptions の他フィールドは renderEmbed 内の getJson 等で必要になりうる。
+		const renderOpts: GeneralScrapingOptions = {
+			lang: options.lang,
+			userAgent: options.userAgent,
+			responseTimeout: options.responseTimeout,
+			operationTimeout: options.operationTimeout,
+			contentLengthLimit: options.contentLengthLimit,
+			contentLengthRequired: options.contentLengthRequired,
+			useRange: options.useRange,
+			fallbackUserAgent: options.fallbackUserAgent,
+			fallbackRetryCategories: options.fallbackRetryCategories,
+			proxyFallback: options.proxyFallback,
+			curlCffiFallback: options.curlCffiFallback,
+		};
+		let result;
+		try {
+			result = await plugin.renderEmbed(parsedUrl, renderOpts);
+		} catch (err) {
+			req.log.error({ err: err instanceof Error ? { name: err.name, message: err.message, stack: err.stack } : { message: String(err) } }, 'embed renderEmbed failed');
+			reply.code(500);
+			reply.type('text/plain; charset=utf-8');
+			return 'render failed';
+		}
+
+		// **defense-in-depth: `<script>` sanity check (security review M-4)**: プラグイン側のエスケープ
+		// 契約だけに依存せず、Fastify 側でも `<script` の混入を構造的にブロックする。CSP `default-src 'none'`
+		// が第一防衛、本チェックは契約違反 (実装ミス) の早期検出 + ファーストライン guard。
+		// 大文字小文字どちらの `<script` でも検出する (HTML パーサは case-insensitive)。
+		if (/<script[\s>/]/i.test(result.body)) {
+			req.log.error('embed: renderEmbed returned body containing <script>, rejecting (defense-in-depth)');
+			reply.code(500);
+			reply.type('text/plain; charset=utf-8');
+			return 'render failed';
+		}
+
+		// **defense-in-depth: body サイズ cap (security review L-2)**: プラグインの実装ミスや
+		// 異常 API レスポンスで巨大 HTML が返るケースを防ぐ。512 KB を超えたら 500 で reject。
+		const EMBED_BODY_MAX_BYTES = 512 * 1024;
+		if (Buffer.byteLength(result.body, 'utf8') > EMBED_BODY_MAX_BYTES) {
+			req.log.error({ size: Buffer.byteLength(result.body, 'utf8') }, 'embed: renderEmbed body too large');
+			reply.code(500);
+			reply.type('text/plain; charset=utf-8');
+			return 'render failed';
+		}
+
+		// CSP / セキュリティヘッダ + Cache-Control を付けて HTML を返す
+		const frameAncestors = embedConfig.frameAncestors.length > 0
+			? embedConfig.frameAncestors.join(' ')
+			: '*'; // 空配列は防衛的に `*` に (config-loader 側でも検証されるが二重防御)
+		const cspParts = [
+			'default-src \'none\'',
+			'img-src https:',
+			'style-src \'unsafe-inline\'',
+			'font-src \'none\'',
+			'base-uri \'none\'',
+			'form-action \'none\'',
+			`frame-ancestors ${frameAncestors}`,
+		];
+		reply.header('Content-Security-Policy', cspParts.join('; '));
+		reply.header('X-Content-Type-Options', 'nosniff');
+		reply.header('Referrer-Policy', 'no-referrer');
+		reply.header('Cache-Control', 'public, max-age=600');
+		reply.type('text/html; charset=utf-8');
+		return result.body;
 	});
 
 	done();
