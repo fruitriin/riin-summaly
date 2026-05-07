@@ -196,25 +196,23 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 
 	const url = typeof _url === 'string' ? new URL(_url) : _url;
 
-	// `followRedirects` は scpaping には伝播させない (phase11.3): summaly レイヤの初期 HEAD 解決
-	// オプションであって、scrape 中のリダイレクト追跡を無効化するためのものではない。
+	// **`{ ...opts, lang, followRedirects }` spread パターン (post-phase14)**: 以前は opts の
+	// フィールドを明示列挙していたが、`GeneralScrapingOptions` 拡張時に伝搬漏れが発生する構造
+	// リスクがあった (phase14 Step 2b 後半 で `_cacheRecording` の伝搬漏れを発見、phase14 Step 4
+	// review で構造リスクとして指摘)。spread で全フィールドを構造的に伝搬する。
+	//
+	// 個別の上書き:
+	// - `lang`: regex 検証後の値で上書き (string|null|undefined → string|undefined に正規化)
+	// - `followRedirects: undefined`: scpaping には伝播させない (phase11.3)。summaly レイヤの
+	//   初期 HEAD 解決オプションであって、scrape 中のリダイレクト追跡を無効化するためのもの
+	//   ではない。型上は `GeneralScrapingOptions` に含まれるが、現状すべての呼出経路で undefined
+	//   になっている (`src/index.ts` の `scrapingOptions` 構築で除外)。spread 経由で将来別の
+	//   呼出経路が `followRedirects: false` を渡したときに phase11.3 の bug が再発しないよう、
+	//   明示 override で構造的に防衛する。
 	const res = await scpaping(url.href, {
+		...opts,
 		lang: lang || undefined,
-		userAgent: opts?.userAgent,
-		responseTimeout: opts?.responseTimeout,
-		operationTimeout: opts?.operationTimeout,
-		contentLengthLimit: opts?.contentLengthLimit,
-		contentLengthRequired: opts?.contentLengthRequired,
-		useRange: opts?.useRange,
-		enablePdf: opts?.enablePdf,
-		fallbackUserAgent: opts?.fallbackUserAgent,
-		fallbackRetryCategories: opts?.fallbackRetryCategories,
-		proxyFallback: opts?.proxyFallback,
-		curlCffiFallback: opts?.curlCffiFallback,
-		// 経路学習キャッシュの記録 context を伝搬させる (phase14 Step 2b 後半)。
-		// summaly() が `{}` を渡してきた参照をそのまま scpaping に渡すと、scpaping で書かれた
-		// 内容を summaly() 側から読める (mutable side-channel)。
-		_cacheRecording: opts?._cacheRecording,
+		followRedirects: undefined,
 	});
 
 	if (res.pdf != null) {

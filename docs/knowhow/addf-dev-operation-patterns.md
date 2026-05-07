@@ -163,6 +163,34 @@ phase14 / phase13.1 が両方ほぼ完了状態で、TODO 上の残作業が手�
 - knowhow 化はコンテキスト消費が大きい場合のみ実施 (15 ターン経過 system reminder 等)
 - PushNotification は **3 サイクル連続で auto-runnable タスクなし** が続いたら検討
 
+## 既存負債修正 (option 3) の落とし穴: spread refactor 適用範囲
+
+`/addf-dev` で auto-runnable 候補が尽きたときの「既存負債修正」(option 3) パターンで、`general.ts` の opts 個別列挙を spread に refactor した。次回類似 refactor を検討するときの判断材料:
+
+### spread 化が安全な条件
+
+- 呼出元と呼出先の型が **同一 (or 完全互換)**: `general()` は `GeneralScrapingOptions` を受け取り `scpaping()` も `GeneralScrapingOptions` を受け取る → `...opts` で安全
+- 内部 / 危険フィールド (`_cacheRecording` 等) は **意図的に伝搬する設計** であることを JSDoc で明示済み
+
+### spread 化できない条件
+
+- 呼出元の型が呼出先より **広い** (例: `SummalyOptions` → `GeneralScrapingOptions` は `embedBaseUrl` / `embedConfig` / `parseFailureLogJsonlPath` 等が存在し、spread すると scpaping に余計なフィールドが伝わる)
+- この場合は **手動列挙が正解**。ADDF テンプレートの「opts 伝搬チェック」項目で人間 (or レビュー agent) に同期義務を課す
+
+### defensive override パターン
+
+spread 後に意図的除外したいフィールドがあるなら、明示 override で構造的防衛:
+
+```typescript
+const res = await scpaping(url.href, {
+  ...opts,
+  lang: lang || undefined,
+  followRedirects: undefined,  // phase11.3 bug 再発防止 (defense-in-depth)
+});
+```
+
+`followRedirects` は型上 `GeneralScrapingOptions` に含まれるが現状すべての呼出経路で undefined。将来別経路が `followRedirects: false` を渡すリスクに対する明示 override。コメントで意図を明示すれば許容。
+
 ## 関連
 
 - [.claude/templates/ProgressTemplate.addf.md](../../.claude/templates/ProgressTemplate.addf.md) — 4.6 ステップ実装版

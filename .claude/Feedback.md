@@ -29,7 +29,7 @@
 
 ### 個別技術負債 (将来対処)
 
-- **`general.ts` の opts 再構築を spread ベースにリファクタリング**: 現状は明示列挙で `GeneralScrapingOptions` 拡張時に伝搬漏れリスクがある。`{ ...stripInternalFields(opts) }` ベースに変更すれば構造的に解決。次回 `GeneralScrapingOptions` 拡張時に検討
+- **2026-05-08 完了 / 派生課題 1 件**: `general.ts` の opts 再構築を spread ベース (`{ ...opts, lang, followRedirects: undefined }`) に refactor 完了。`GeneralScrapingOptions` 拡張時の伝搬漏れリスクを構造的に解消。`followRedirects: undefined` を明示 override で phase11.3 bug 再発を防衛 (型上は含まれるが現状すべての呼出経路で undefined のため実害なし、defense-in-depth)。レビューで Medium Warning が出た「`src/index.ts` L525-539 の `scrapingOptions: GeneralScrapingOptions` 構築は明示列挙のまま」については、`SummalyOptions` 型が `GeneralScrapingOptions` より広く `embedBaseUrl` 等が存在するため spread refactor 不可。**手動列挙での維持が正解**で、ADDF テンプレート寄与候補に「opts 伝搬チェック」を残すことで対処
 - **2026-05-07 phase12.6 セッション**: skill `/url-preview-check` の Phase 1 (本番 pino ログ確認) より前段に「**ローカル MacOS から curl + 本番 Vultr から curl の黒箱比較**」を置くと診断が **1 分で確定** することを再確認。今回は ローカル → 200 + 完璧な OGP / 本番 → 200 + 正規 404 ページボディ の差から fail mode B' (エラーシグナルなし IP block) を即特定。skill 側に fail mode B' セクションを追記済み
 - **2026-05-07 phase12.6 セッション (レビュー agent の false positive)**: `addf-code-review-agent` が W-1 で「`matchesDomain` の export 確認が必要」と指摘したが、実は既に export 済み (proxy-fallback.ts L65) で `pnpm test` 405 件全パス状態だった。レビュー agent は **diff だけを見て元ファイル全体の状態を把握しきれない** ことがある (特に動的 import 経由のシンボル参照)。実害ゼロだが、ADDF レビュー agent プロンプトに「動的 import で参照しているシンボルは元ファイルを Read して export 状態を確認すること」を含めるとレビュー精度が上がる可能性 (ADDF テンプレート側への寄与候補)
 
