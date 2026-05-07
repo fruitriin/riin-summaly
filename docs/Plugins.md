@@ -275,6 +275,22 @@ interface SummalyPlugin {
 | 短縮 URL | `sqex.to/<id>` は HEAD で `store.jp.square-enix.com/...` に正常解決可能 (CloudFront 経由)。`summaly()` 冒頭の resolveRedirect で展開 → このプラグインがマッチ |
 | 運用要件 | `[scraping.proxy]` で `enabled = true` + `domains` に `store.jp.square-enix.com` を含む。CF Worker (`tools/cf-proxy-worker/wrangler.toml`) の `ALLOWED_DOMAINS` にも同 host 必須。`[scraping.strategy_cache]` で `enabled = true` (デフォルト)。proxy が未設定な環境では cache fast path がゲート不通過で通常段階に fallthrough (= 404 ページが返る) |
 
+### syosetu (小説家になろう)
+
+実装: [src/plugins/syosetu.ts](../src/plugins/syosetu.ts) / [src/utils/syosetu-genres.ts](../src/utils/syosetu-genres.ts)
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `(?:ncode|novel18)\.syosetu\.com` (anchored) + path に ncode (`n[0-9]+[a-z][0-9a-z]*` 形式)。chapter URL `/<ncode>/<chapter>/` も作品レベルの ncode に集約してマッチ |
+| 取得方法 | なろう公式 API (`api.syosetu.com/{novelapi|novel18api}/api/?ncode=<ncode>&out=json&of=t-w-s-bg-g-nt-e-ir15-izk-ibl-igl-k`) を `getJson` で直叩き。HTML スクレイプを使わない (= PV カウント影響無し、UA 偽装不要) |
+| 抽出フィールド | API レスポンス `[{allcount}, novelData]` から title / writer / story / biggenre / genre / novel_type / end / isr15 / iszankoku / isbl / isgl / keyword を抽出 |
+| card style description | `composeDescription`: `作者: <writer> / <ジャンル名> / <連載中\|完結\|短編> / [R-15] [残酷描写] [BL] [GL] / あらすじ: <story 80 文字 clip>` を 1 行整形 |
+| embed (renderEmbed) | `composeEmbedHtml`: 完全な HTML5 ドキュメント (タイトル / 作者 / ジャンル + 状態 / マーカー / タグ上位 5 件 / あらすじ 300 文字 clip) を返す。**全フィールド `escapeHtml` で entity 化** + CSP `default-src 'none'` (Step 1) で二重 XSS 防御 |
+| R-18 | `novel18.syosetu.com` ドメインで `sensitive: true` + sitename `'ノクターンノベルズ / ムーンライトノベルズ'` に切替。API も `/novel18api/` に切替 |
+| ジャンル ID | `src/utils/syosetu-genres.ts` の `BIG_GENRE_NAMES` / `GENRE_NAMES` で大ジャンル + ジャンル ID → 表示名を変換。未知 ID は `'その他'` フォールバック |
+| 運用要件 | Fastify モードで `[plugins].allowed` に `"syosetu"`、embed 機能を使う場合は `[server].publicUrl` (https only) + `[embed].enabled = true` + `allowedPlugins = ["syosetu"]` 設定。library mode では player.url=null で card style のみ動作 |
+| 実装メモ | `n[0-9]+[a-z][0-9a-z]*` の正規表現で `/novelview/` `/ncode/` 等の他パスを構造的に除外 (phase13.1 W-1)。chapter URL の本文取得は API に存在しないため作品見出しと同じ Summary を返す (Plan で割り切り) |
+
 カスタムプラグインの書き方
 ----------------------------------------------------------------
 
@@ -305,6 +321,45 @@ const summary = await summaly('https://mysite.example.com/article/123', {
   plugins: [myPlugin],
 });
 ```
+
+### `renderEmbed` (オプション、phase13.1)
+
+Fastify モードで `/embed?url=<URL>` 経由の iframe 用 HTML を返したい場合、`renderEmbed` を実装する。
+
+```typescript
+import { escapeHtml } from '@misskey-dev/summaly/built/utils/escape-html.js'; // 内部 utility
+
+const myPlugin: SummalyPlugin = {
+  name: 'mysite',
+  test: (url) => url.hostname === 'mysite.example.com',
+  summarize: async (url, opts) => { /* ... */ },
+  renderEmbed: async (url, opts) => {
+    // API call 等で取得したデータから HTML を組み立て
+    const data = await fetchMyApi(url);
+    // **必ず escapeHtml で全ユーザー入力を entity 化**
+    const titleSafe = escapeHtml(data.title);
+    const bodySafe = escapeHtml(data.body);
+    return {
+      body: `<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8"><title>${titleSafe}</title></head>
+<body><h1>${titleSafe}</h1><p>${bodySafe}</p></body></html>`,
+      width: 3,   // アスペクト比 (絶対値ではなく比率として扱われる)
+      height: 2,
+    };
+  },
+};
+```
+
+**契約**:
+- 戻り値の `body` は完全な HTML5 ドキュメント
+- **すべてのユーザー入力 (API 由来 / DOM 由来) は `escapeHtml` で entity 化済みであること** (Fastify 側はエスケープしない)
+- `<script>` を含めてはならない (Fastify の sanity check で検出されると 500 になる)
+- 外部リソース読み込みは CSP `default-src 'none'` + `img-src https:` + `style-src 'unsafe-inline'` の制約下
+- `body` のサイズは 512KB 上限 (越えると 500)
+
+**運用**:
+- Fastify モードの `[embed].enabled = true` + `allowedPlugins` に plugin name を含める必要あり
+- カスタムプラグイン (opts.plugins 経由) は **`/embed` 経由では呼ばれない** (組み込みプラグインのみ dispatch 対象)。カスタムサイトで embed が必要なら fork でビルドすること
 
 ### 設計指針
 

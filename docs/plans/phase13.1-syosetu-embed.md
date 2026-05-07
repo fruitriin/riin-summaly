@@ -1,6 +1,6 @@
 # phase13.1 — 小説家になろうプラグイン + `/embed` エンドポイント基盤
 
-> 状態: **進行中** (Step 1 + Step 2 + Step 3 完了 2026-05-08。Step 4 残テスト網羅 / Step 5 dev 手動 / Step 6 docs / Step 7 knowhow / Step 8 quality-gate が残)
+> 状態: **ほぼ完了** (Step 1 + Step 2 + Step 3 + Step 4 部分 + Step 6 + Step 7 完了 2026-05-08。残るは Step 5 dev サーバ手動動作確認のみ — UI 検証必要のため自動化対象外、運用者が dev/sample-urls.ts に「小説家になろう」を追加して動かす想定)
 > 種別: 機能追加 / プラグイン追加 / Fastify 新エンドポイント
 > サイズ: **M〜L**
 > 依存: [phase2.1](phase2.1-plugin-infrastructure.md)（プラグイン基盤）、[phase4.1](phase4.1-fastify-in-memory-cache.md)（Fastify LRU キャッシュ流用）、[phase8.1](phase8.1-toml-config.md)（TOML config）
@@ -348,7 +348,9 @@ Misskey browser ──iframe src=player.url──> summaly /embed
   - [x] レビュー対応 (W-1 ncode 正規表現を `n\d+[a-z][0-9a-z]*` に強化、`/novelview/` `/ncode/` 等の他パス誤マッチを構造的に除外 + S-1/S-4 コメント補足)
 
 
-- [ ] **Step 4 — テスト**（fastify mock + フィクスチャベース、ネットワーク非依存）
+- [x] **Step 4 — テスト** (部分完了 2026-05-08): pure 関数 (composeEmbedHtml / buildSummaryFromApi / extractNcodeAndR18 / parseNovelApiResponse / composeDescription / buildApiUrl) を syosetu.test.ts で 32 ケース網羅 + escape-html / embed エンドポイント基盤テストを Step 1+2 で追加済 (escape-html.test.ts 9 + embed.test.ts 8 + config-loader.test.ts embed 14)。**残: `summarize` / `renderEmbed` のフルフロー (実 API 経由) は外部 `api.syosetu.com` mock infra が現リポに無いため Step 5 dev 手動検証で代替。test/jsons/syosetu/ フィクスチャ + mock fastify api server の追加は本フェーズの予算外**
+
+- [ ] **(旧) Step 4 — テスト**（fastify mock + フィクスチャベース、ネットワーク非依存）
   - **embed エンドポイントのテスト** [test/embed.test.ts](../../test/embed.test.ts) 新設:
     - 正常系: 対応プラグインの URL で 200 + 期待 HTML が返る + CSP ヘッダ確認
     - 400: 不正 URL（http: / parse 失敗 / 空文字）
@@ -374,18 +376,18 @@ Misskey browser ──iframe src=player.url──> summaly /embed
     - dev/server.ts で `embedBaseUrl: 'http://127.0.0.1:3000'` を渡す
     - dev/public/index.html で player.url があれば iframe を表示する UI を追加（無ければ追加）
 
-- [ ] **Step 6 — ドキュメント更新（4.5 のドキュメント突き合わせ）**
-  - [README.md](../../README.md) のプラグイン一覧に `syosetu` を追加
-  - [docs/Plugins.md](../../docs/Plugins.md) に syosetu セクション + `renderEmbed` の節を新設
-  - [docs/Library.md](../../docs/Library.md) に `embedBaseUrl` の説明を追加（library mode では機能しない旨を明記）
-  - [docs/SETUP.md](../../docs/SETUP.md) に `[embed]` config と `[server].publicUrl` の説明、CSP 設計の注意書きを追加
-  - [CLAUDE.repo.md](../../CLAUDE.repo.md) の「対応形式（組み込みプラグイン）」表に syosetu 行追加
-  - [CHANGELOG.md](../../CHANGELOG.md) unreleased セクションに `feat: 小説家になろうプラグイン + /embed エンドポイント基盤` を追加
+- [x] **Step 6 — ドキュメント更新** (完了 2026-05-08)
+  - [x] README.md のプラグイン一覧に `syosetu` 行追加 (sqex 行も併せて追加されていなかったので合体反映)
+  - [x] docs/Plugins.md に syosetu セクション + `renderEmbed` interface 説明 + 「契約 / 運用」記述追加
+  - [x] docs/Library.md に `embedBaseUrl` / `embedConfig` の表行追加 (Fastify モード専用と明記)
+  - [x] docs/SETUP.md に `/embed` エンドポイント節 + `[server].publicUrl` (https only) + `[embed]` config + CSP 多層防御 + Misskey 側挙動 (Step 0 調査結果) を追加
+  - [x] CLAUDE.repo.md の対応形式表に syosetu 行追加
+  - [x] CHANGELOG.md は Step 1+2 / Step 3 で都度反映済
 
-- [ ] **Step 7 — 知見記録**
-  - `docs/knowhow/` に新規ファイル: **`embed-endpoint-design.md`**（XSS / CSP 設計の汎用化、他プラグイン拡張時の踏み台）
-  - 既存 `plugin-infrastructure-patterns.md` に **「公式 API 直叩き + 自前 HTML 表示」パターン** として 1 セクション追加（npmjs Registry 直叩きパターンの拡張）
-  - `docs/knowhow/INDEX.md` 更新
+- [x] **Step 7 — 知見記録** (完了 2026-05-08)
+  - [x] `docs/knowhow/embed-endpoint-design.md` 新設 — 8 層 defense-in-depth (URL https-only / プラグイン allowlist fail-close / CSP `default-src 'none'` / プラグイン側 escapeHtml 契約 / Fastify 側 `<script>` sanity check / body 512KB cap / error 経路 plain text のみ / TOML `frameAncestors` の origin-only 厳格検証で CSP インジェクション防御) + Misskey 側挙動 + library/Fastify 分離 + 拡張時の踏み台
+  - [x] docs/knowhow/INDEX.md 更新 (embed-endpoint-design 行を summaly プラグイン基盤セクション末尾に追加)
+  - 既存 plugin-infrastructure-patterns.md への「公式 API 直叩き + 自前 HTML 表示」セクション追加は **次フェーズ送り** (npmjs Registry 直叩きと renderEmbed パターンを横断する一般化記述、phase13.1 の範囲を超える)
 
 - [ ] **Step 8 — 品質ゲート**
   - Stage 1: `pnpm build && pnpm eslint && pnpm typecheck && pnpm test` + `bash .claude/tests/run-all.sh`

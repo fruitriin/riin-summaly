@@ -410,6 +410,62 @@ compactionThreshold = 1000
 - bootstrap (リポ同梱で横断共有) と runtime (環境固有) を分離する設計。bootstrap は `data/domain-strategy-bootstrap.jsonl` に集約予定 (Step 3 で配備)
 - 連続失敗で破棄されたエントリは「閾値到達状態」を JSONL に append する形で記録。次回起動時のロードで bootstrap の値があっても「破棄済み」として打ち消す
 
+`/embed` エンドポイント (phase13.1)
+----------------------------------------------------------------
+
+プレイヤー iframe として読まれる **JS なし HTML+CSS** を返すエンドポイント。Misskey の URL preview の player iframe で表示される前提。`renderEmbed` を実装したプラグイン (現状は `syosetu` のみ) が対象 URL に対して当該 HTML を返す。
+
+### 設定 (`config.toml`)
+
+```toml
+[server]
+publicUrl = "https://summaly.example.com"   # https: 必須 (browser から直接 iframe で読まれるため)
+
+[embed]
+enabled = true                              # /embed エンドポイントを有効化
+allowedPlugins = ["syosetu"]                # embed 対応プラグインの allowlist (空配列禁止 = fail-close)
+frameAncestors = ["https://misskey.example.com"]   # 商用は明示制限推奨。["*"] でも可だが stderr 警告
+```
+
+| 設定キー | 説明 | デフォルト |
+|:--|:--|:--|
+| `[server].publicUrl` | summaly 自身の公開 URL ベース。**https: 必須** (中間者攻撃で iframe HTML を改竄されてフィッシング・XSS 経路化されるリスク) | （指定必須、未設定で embed 機能は実質無効）|
+| `[embed].enabled` | embed エンドポイントを有効化 | `true` (セクション省略時は `embedConfig` 自体が `undefined` になり実質無効) |
+| `[embed].allowedPlugins` | embed 対応プラグインの allowlist。空配列禁止 (fail-close) | （指定必須） |
+| `[embed].frameAncestors` | iframe を読み込んで良いオリジン (CSP `frame-ancestors`) | `["*"]` (stderr に警告、商用は明示制限) |
+
+### CSP / セキュリティ設計
+
+`/embed` レスポンスは以下の固定ヘッダ構成で防御:
+
+```
+Content-Security-Policy: default-src 'none'; img-src https:; style-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors <config>
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+Cache-Control: public, max-age=600
+```
+
+**多層防御**:
+1. URL バリデーション: `https:` only (404 で `javascript:` / `data:` / `http:` を弾く)
+2. CSP `default-src 'none'` で script を構造的にブロック (CSS injection は `style-src 'unsafe-inline'` で残るが `<style>` ブロックは静的)
+3. プラグイン側で `escapeHtml` を契約として通す (Fastify 側はエスケープしない)
+4. Fastify 側 `<script>` sanity check (defense-in-depth、契約違反の早期検出)
+5. `body` 512KB cap (DoS 防御)
+6. `frameAncestors` の各要素を origin-only に厳格検証 (CSP インジェクション防御)
+
+### 運用上の注意
+
+- `publicUrl` 未設定 (Fastify サーバが閉域 / VPC 内など browser から到達不可) では embed は使えない。`[embed].enabled = false` で完全無効化を推奨
+- `frameAncestors = ["*"]` のまま運用すると stderr に警告。商用運用では Misskey インスタンスのオリジンに明示制限すること
+- カスタムプラグイン (`opts.plugins` 経由) は `/embed` から呼ばれない (組み込みプラグインのみ dispatch)。カスタムサイトで embed を使いたい場合は fork でビルド必要
+
+### Misskey 側の挙動 (Step 0 調査結果)
+
+- Misskey フロント (`MkUrlPreview.vue`) は **iframe ドメイン allowlist 無し** (`http(s)://` プロトコルチェックのみ)。Misskey fork 修正不要で動く
+- **デフォルト `playerEnabled = false`**: 初回表示は card style のみ、ユーザーが「enable player」を押した時に iframe が出る → `summarize()` の card 用 description / thumbnail も embed と同じくらい大事
+- アスペクト比は `padding: height/width * 100%` で計算される (絶対値ではなく **比率**)
+- `transformPlayerUrl` が `autoplay=1` / `auto_play=1` を勝手に追加するため、`/embed` は未知クエリを静かに無視する設計
+
 パース失敗ドメインのログ蓄積 (phase10.1)
 ----------------------------------------------------------------
 

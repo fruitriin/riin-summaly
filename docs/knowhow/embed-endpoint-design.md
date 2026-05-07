@@ -1,0 +1,169 @@
+# embed エンドポイントの XSS / CSP 設計
+
+> phase13.1 で導入。「summaly が外部から直接 iframe で読まれる HTML を返す」エンドポイントを新設するときの汎用設計知見。
+
+## 課題
+
+Misskey のカードスタイル制約 (1 行 title / 1 行 description / 1 行 sitename) では情報が収まらないサイト (なろう / 商品ページ詳細 / その他リッチ表示が必要なサイト) に対して、**プレイヤー iframe** で表示できる JS なし HTML+CSS を返したい。
+
+しかし「外部に直接 iframe で読まれる HTML を返す」 = **新しい攻撃面の追加**:
+
+| 攻撃ベクター | リスク |
+|---|---|
+| XSS (`<script>` インジェクション) | プラグインがエスケープし忘れたユーザー入力で任意 JS 実行 |
+| 属性破壊 (`"` で `onerror` 仕込み) | エスケープ漏れで属性経由の JS 実行 |
+| CSS injection (`expression()` 等) | 古 IE 等で CSS 経由の JS 実行 |
+| iframe sandbox bypass | 親フレームから JS 経由で操作される |
+| open redirect (`<a href=javascript:...>`) | クリック誘導で別サイト遷移 |
+| SSRF (任意 URL を summaly が fetch する経路化) | 内部リソースへの不正アクセス |
+| CSRF | GET only / cookie 不要なら影響無し |
+| DoS (巨大 URL / 巨大 HTML) | レスポンス cap 無しで帯域・メモリ食潰し |
+| CSP ヘッダインジェクション | TOML 設定値の `;` で CSP ディレクティブを上書き |
+
+## 設計原則 (8 層 defense-in-depth)
+
+### 1. URL バリデーション (`https:` only)
+
+```typescript
+if (parsedUrl.protocol !== 'https:') return reply.code(400).send('https only');
+```
+
+`http:` / `javascript:` / `data:` / `file:` を全て弾く。`http:` も弾く理由は「中間者攻撃で iframe HTML を改竄されてフィッシング・XSS 経路化されるリスク」。
+
+### 2. プラグイン allowlist (TOML `[embed].allowedPlugins`、fail-close)
+
+```typescript
+const plugin = builtinPlugins.find(p =>
+  p.name != null
+  && embedConfig.allowedPlugins.includes(p.name)
+  && p.renderEmbed != null
+  && p.test(parsedUrl),
+);
+```
+
+**fail-close**: 空配列 / 未設定なら全プラグインで embed 不可。新サイトを足すときに明示的に allowlist 追加が必要 → 「うっかり全プラグイン許可」を構造的に防ぐ。
+
+### 3. CSP `default-src 'none'` で script を構造的にブロック
+
+```
+Content-Security-Policy: default-src 'none'; img-src https:; style-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors <config>
+```
+
+- `script-src` は `default-src 'none'` に吸収されて全ブロック (インライン / external 両方)
+- `style-src 'unsafe-inline'` のみ許容 (`<style>` ブロック 1 つ書く前提)
+- `img-src https:` で外部画像許可 (icon / thumbnail 用)
+- `frame-ancestors` は config 経由で動的、各要素は origin-only に厳格検証
+
+### 4. プラグイン側のエスケープ契約 (`escapeHtml` / `escapeAttr`)
+
+`src/utils/escape-html.ts`:
+
+```typescript
+export function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+export function escapeAttr(s: string): string { return escapeHtml(s); }
+```
+
+**契約**: プラグインの `renderEmbed` が返す `body` 内のすべてのユーザー入力 (API 由来 / DOM 由来) は `escapeHtml` を通すこと。Fastify 側はエスケープしない (= プラグイン側責任)。
+
+`escapeAttr` は別名で提供 (現実装は同じ) — 呼出側が「ここは属性値」と意識する設計、URL 属性 (`href` / `src`) には別途スキーム検証 (`https:` / `http:` 限定) が必要。
+
+### 5. Fastify 側 `<script>` sanity check (defense-in-depth)
+
+```typescript
+if (/<script[\s>/]/i.test(result.body)) {
+  reply.code(500).send('render failed'); // 契約違反の早期検出
+}
+```
+
+プラグイン側の契約を信用せず、Fastify 側でも `<script` の混入を構造的にブロック。**契約違反 (実装ミス) の早期検出 + ファーストライン guard**。
+
+### 6. body サイズ cap (DoS 防御)
+
+```typescript
+const EMBED_BODY_MAX_BYTES = 512 * 1024;
+if (Buffer.byteLength(result.body, 'utf8') > EMBED_BODY_MAX_BYTES) reply.code(500).send(...);
+```
+
+プラグインの実装ミスや異常 API レスポンスで巨大 HTML が返るケースを防ぐ。
+
+### 7. error 経路は plain text のみ (HTML 返さない)
+
+400 / 404 / 500 のエラーレスポンスは `text/plain` のみ:
+
+```typescript
+reply.code(400);
+reply.type('text/plain; charset=utf-8');
+return 'invalid url';
+```
+
+HTML を返すと将来の悪意ある CSP 緩和でリスク化する原則。CSP ヘッダはエラーレスポンスでも `default-src 'none'` を維持。
+
+### 8. CSP ヘッダインジェクション防御 (TOML 値の厳格検証)
+
+`bin/config-loader.ts` で `[embed].frameAncestors` の各要素を origin-only に検証:
+
+```typescript
+for (const origin of v) {
+  if (origin === '*' || origin === "'self'" || origin === "'none'") continue;
+  const parsed = new URL(origin); // throw → RangeError
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw RangeError;
+  // pathname / query / hash がある = origin だけでない → ヘッダインジェクション疑い
+  if (parsed.pathname !== '/' || parsed.search !== '' || parsed.hash !== '') throw RangeError;
+}
+```
+
+**攻撃シナリオ**: `frameAncestors = ["https://x.com; script-src *"]` で CSP の `script-src 'none'` を `script-src *` に上書き (CSP インジェクション、phase13.1 security-review M-1 で発見)。`;` を含む TOML 値が CSP ディレクティブ分離として機能する。
+
+**防御**: TOML パース段階で URL.origin / pathname / query / hash 全て検証して `;` を構造的に弾く。
+
+## 補助的な設計
+
+### CORS と iframe の混同回避
+
+iframe 許可は **CSP `frame-ancestors`** (旧 `X-Frame-Options`)。**CORS (`Access-Control-Allow-Origin`)** は fetch 用で iframe には無関係。embed エンドポイントには CORS ヘッダを出さない (誤って出すと「埋め込み許可したつもり」の混乱招く)。
+
+### `frame-ancestors *` のデフォルト + warning
+
+開発初期は `*` で全許可だが、商用は `https://misskey.example.com` 等で明示制限すべき。config-loader で `*` を含む場合は **stderr に warning** を出す:
+
+```typescript
+if (frameAncestors.includes('*')) {
+  process.stderr.write('[summaly][embed] frameAncestors = ["*"] が設定されています。商用運用では明示制限を推奨\n');
+}
+```
+
+### Misskey 側の挙動への対応 (phase13.1 Step 0 調査結果)
+
+- **デフォルト `playerEnabled = false`**: 初回は card style のみ、ユーザーが「enable player」を押した時に iframe が出る → **`summarize()` の card 用 description / thumbnail も embed と同じくらい大事**
+- **アスペクト比指定**: `width` / `height` は `padding-bottom: height/width * 100%` で計算される (絶対値ではなく **比率**)。`width: 3, height: 2` で 3:2 アスペクト
+- **`transformPlayerUrl` のクエリ汚染**: Misskey が embed URL に `autoplay=1` / `auto_play=1` を勝手に追加するため、embed エンドポイントは **未知クエリを静かに無視** する設計が必須 (厳密 query 検証で 400 を返さない)
+
+### library mode と Fastify mode の分離
+
+`embedBaseUrl` / `embedConfig` は **Fastify モード専用**。library mode (`summaly()` 関数直接呼び出し) で `/embed` エンドポイントは存在しないため、これらの設定は無視される (= player.url は null になる)。これは既存の `parseFailureLog` / `inMemoryCache` 等と同じ運用モデル。
+
+## 拡張時の踏み台
+
+新しいサイトに renderEmbed を実装するとき:
+
+1. プラグインに `renderEmbed: (url, opts) => Promise<EmbedRenderResult>` を実装
+2. `body` を組み立てる際 **すべてのユーザー入力を `escapeHtml` で entity 化**
+3. `<style>` ブロックは静的に書く (動的に値を流し込まない、CSS injection 経路を作らない)
+4. `<a href="...">` は **基本書かない** (iframe 内クリックは Misskey 側の挙動が読めない)。テキストオンリーで確定する
+5. config の `[embed].allowedPlugins` にプラグイン名を追加
+6. テスト: `composeEmbedHtml` の単体テストで XSS 攻撃 (`<script>` / 属性破壊 / `onerror=`) を **少なくとも 3 ケース** 含める (phase13.1 syosetu の踏襲)
+
+## 参考
+
+- [docs/plans/phase13.1-syosetu-embed.md](../plans/phase13.1-syosetu-embed.md) — 設計起点
+- [src/index.ts](../../src/index.ts) — Fastify `/embed` ルート実装
+- [src/utils/escape-html.ts](../../src/utils/escape-html.ts) — `escapeHtml` / `escapeAttr` 純関数
+- [src/iplugin.ts](../../src/iplugin.ts) — `renderEmbed` interface
+- [src/plugins/syosetu.ts](../../src/plugins/syosetu.ts) — 第 1 号実装 (なろう小説 API + composeEmbedHtml)
+- [bin/config-loader.ts](../../bin/config-loader.ts) — `[server].publicUrl` (https only) / `[embed]` セクション
+- [test/embed.test.ts](../../test/embed.test.ts) — エンドポイント基盤テスト (config gating / URL validation)
+- [test/escape-html.test.ts](../../test/escape-html.test.ts) — escape utility テスト
+- [test/syosetu.test.ts](../../test/syosetu.test.ts) — composeEmbedHtml の XSS テスト 3 ケース

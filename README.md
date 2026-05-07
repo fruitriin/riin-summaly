@@ -123,6 +123,8 @@ allowed = ["amazon", "bluesky", "wikipedia", "branchio-deeplinks", "youtube", "s
 | `npmjs` | `(www.)?npmjs.com/package/...` | Cloudflare 配下の HTML を諦め `registry.npmjs.org` を直叩き、`dist-tags.latest` から title / description を組み立てる |
 | `nintendo-store` | `store(-<TLD>)?.nintendo.com` | Akamai JS challenge 回避: UA を `facebookexternalhit/1.1` に固定して OGP 取得 (Nintendo が SNS bot UA を allowlist している事実を利用) |
 | `yodobashi` | `(www.)?yodobashi.com` | TLS/HTTP2 層で bot 切断される厳しい WAF。proxy fallback の categories を timeout / connection_dropped も含めるよう拡張し、CF Workers の TLS フィンガープリント経由で OGP 取得を試みる |
+| `sqex` | `(www.)?store.jp.square-enix.com` (短縮 `sqex.to/<id>`) | データセンター IP を CDN 段で広く弾く新パターン (HTTP 200 + 正規 404 ページボディ)。経路学習キャッシュ + bootstrap で proxy 直行 |
+| `syosetu` | `(ncode\|novel18).syosetu.com/n<id>/` | 小説家になろう公式 API 直叩き → 作品名 / 作者 / ジャンル / 連載状態 / あらすじを取得。`/embed` で iframe 用 HTML を返す (phase13.1)。R-18 ドメインで `sensitive: true` |
 
 各プラグインの詳細仕様、カスタムプラグインの書き方、共通ユーティリティは **[docs/Plugins.md](docs/Plugins.md)** にあります。
 
