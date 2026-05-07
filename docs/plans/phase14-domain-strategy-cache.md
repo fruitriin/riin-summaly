@@ -180,12 +180,29 @@ scpaping(url, opts)
 - [x] Step 2a の test 1 件 (cache hit + fast path 失敗 → cascade で成功) を Step 2b 仕様 (cascade success で consecutiveFailures が 0 にリセット) に更新
 - [x] レビュー対応 (W-1 / W-2 / W-3 / S-1 / S-3 全て修正、S-2 はコメントのみ対応)
 
-### Step 2b 後半 — Summary レイヤ override + Fastify auto-init (未着手)
+### Step 2b 後半 — Summary レイヤ override (完了 2026-05-08)
 
-- [ ] `parseGeneral` 後の Summary で「成功 / 失敗」を判定 → cache に通知
-  - 設計判断: 「成功判定」は scpaping 完了後 (HTTP 層) ではなく Summary 確定後 (= general() の最後 / プラグインの summarize() の最後) に行う
-  - これは scpaping のスコープ外 (`parseGeneral` で thin な Summary が返るケースを失敗扱いにしたい) → `summaly()` レイヤで record する
-  - 注: 現状 cache miss 時の cascade 失敗は cache に何も記録されない (= 連続失敗による invalidate が機能しない経路が残る)。Summary レイヤ override で recordFailure を統合
+- [x] `src/utils/domain-strategy-cache.ts` に `CacheRecordingState` 型を追加 (mutable side-channel)
+- [x] `src/general.ts` の `GeneralScrapingOptions._cacheRecording` フィールド追加 (`@internal`)、`general()` で scpaping 呼出時に opts spread に伝搬
+- [x] `src/utils/got.ts` の `fetchResponse` から `cache.recordSuccess` / `cache.recordFailure` 呼出を全削除、`opts._cacheRecording` に context 埋める形に refactor
+  - `recordKey` を lookup 直後に決定 (cache hit なら hitKey、miss なら 1-seg pathKey)
+  - fast path 成功 → `state.strategy = hit.entry.strategy`
+  - ゲート不通過 (null) → `state.gateFailedNeutral = true`
+  - cascade 成功 → `state.strategy = tracker.value`
+  - **fast path 失敗そのものは recordFailure しない** (transient とみなし、cascade 結果が支配する)
+- [x] `src/index.ts` で `summaly()` トップレベルの try/catch wrapping + Summary 確定後の `isThinSummary` 判定 + `recordCacheSuccess` / `recordCacheFailure` ヘルパ呼出
+- [x] テスト 3 件追加 (Summary thin → recordFailure / 連続 thin で閾値到達 invalidate / HTTP throw → recordFailure)
+- [x] 既存テスト 2 件のコメント整合性更新 (Step 2b 前半時代の挙動コメントを Step 2b 後半挙動に追従)
+- [x] レビュー対応 (W-1 / W-2 / S-1 / S-3 / S-4 全てコメント・JSDoc 更新で対応、S-2 は意図通りで記載のみ)
+
+#### 設計判断
+
+- **HTTP 層 recordSuccess を廃止 → Summary 層に集約**: HTTP 200 + Summary thin の振動で連続失敗カウンタが閾値に達せず invalidate が機能しない構造的バグを解消
+- **fast path 失敗は記録しない (transient とみなす)**: cascade で同 strategy が成功すれば一過性の失敗、別 strategy で成功すれば新 strategy が hitKey に上書き (recordSuccess) されるため、いずれにせよ最終的な cache 状態は cascade 結果が支配する。fast path 失敗を別途 recordFailure すると、cascade success の recordSuccess でリセットされて結局意味がない
+- **`forceX` 経路では `_cacheRecording` を触らない**: phase14 Step 4 で `forceX` 廃止予定のため、移行期で cache に記録すると `forceX` を消した瞬間に矛盾する経路情報が残る恐れがある。`forceX` 経路は cache 管理対象外で運用
+
+### Step 2b-4 — Fastify auto-init (未着手)
+
 - [ ] Fastify モードで `[scraping.strategy_cache].enabled = true` を読み取って `DomainStrategyCache` インスタンスを自動生成 + `setActiveCache` する
 
 ### Step 3 — bootstrap JSONL 同梱
@@ -275,4 +292,4 @@ scpaping(url, opts)
 
 ## 完了状況
 
-Step 1 完了 (2026-05-07)。Step 2a 完了 (2026-05-07、cache hit fast path)。Step 2b 前半完了 (2026-05-07、cascade tracking + cache miss recordSuccess)。Step 2b 後半 (Summary レイヤ override + Fastify auto-init) と Step 3〜7 は次サイクル以降。
+Step 1 完了 (2026-05-07)。Step 2a 完了 (2026-05-07)。Step 2b 前半完了 (2026-05-07)。Step 2b 後半完了 (2026-05-08、Summary レイヤ override)。Step 2b-4 (Fastify auto-init) と Step 3〜7 は次サイクル以降。

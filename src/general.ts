@@ -219,6 +219,15 @@ export type GeneralScrapingOptions = {
 	 * サイトでは proxy 経由でも構造的に救えないため)。プラグインはどちらか 1 つだけ宣言すること。
 	 */
 	forceProxyFallback?: boolean;
+
+	/**
+	 * @internal
+	 * 経路学習キャッシュの記録 context を伝達する mutable side-channel (phase14 Step 2b 後半)。
+	 * `summaly()` が `{}` を渡し、`scpaping()` が読み書きする。`summaly()` が Summary 確定後に
+	 * 値を読んで `cache.recordSuccess` / `recordFailure` を呼ぶ。
+	 * library 利用者は触らない (型シグネチャ上は optional だが運用上は内部専用)。
+	 */
+	_cacheRecording?: import('@/utils/domain-strategy-cache.js').CacheRecordingState;
 };
 
 export async function general(_url: URL | string, opts?: GeneralScrapingOptions): Promise<Summary | null> {
@@ -244,6 +253,10 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 		curlCffiFallback: opts?.curlCffiFallback,
 		forceCurlCffiFallback: opts?.forceCurlCffiFallback,
 		forceProxyFallback: opts?.forceProxyFallback,
+		// 経路学習キャッシュの記録 context を伝搬させる (phase14 Step 2b 後半)。
+		// summaly() が `{}` を渡してきた参照をそのまま scpaping に渡すと、scpaping で書かれた
+		// 内容を summaly() 側から読める (mutable side-channel)。
+		_cacheRecording: opts?._cacheRecording,
 	});
 
 	if (res.pdf != null) {

@@ -162,8 +162,9 @@ export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, mes
  * を満たさない場合は `null` を返し、呼出側が cache 値を無視してカスケードに fallthrough する。
  *
  * **戻り値の意味区別 (W-1 review feedback)**:
- * - `null` = ゲート不通過 (config 上使えない、中立)。`recordFailure` は呼ばない (失敗ではないため)
- * - `throw` = 実行時失敗。呼出側で `recordFailure` を呼ぶ (連続失敗カウント対象)
+ * - `null` = ゲート不通過 (config 上使えない、中立)。`fetchResponse` で `gateFailedNeutral = true` 化、cache 操作スキップ
+ * - `throw` = 実行時失敗。`fetchResponse` の catch で吸収して cascade に fallthrough。
+ *   cascade も失敗なら fetchResponse が throw → summaly() catch が `recordFailure(recordKey)` を呼ぶ (Step 2b 後半)
  *
  * **設計意図 (W-1 review feedback)**: `'default'` strategy は通常カスケードの 1 段目
  * (`getResponseWithFallback`) ではなく `getResponse` を直接呼ぶ (= UA リトライしない)。
@@ -210,23 +211,38 @@ async function fetchByStrategy(
 }
 
 /**
- * `scpaping()` 内のレスポンス取得部分を切り出した内部関数 (phase14 Step 2a + Step 2b)。
+ * `scpaping()` 内のレスポンス取得部分を切り出した内部関数 (phase14 Step 2a + Step 2b 前半 + Step 2b 後半)。
+ *
+ * **設計**: scpaping は `cache.recordX` を直接呼ばず、`opts._cacheRecording` (mutable side-channel)
+ * に context を埋めて `summaly()` レイヤに伝達する。`summaly()` が Summary 確定後に thin 判定して
+ * `recordSuccess` / `recordFailure` を一括判定する設計に統合済み (Step 2b 後半)。
  *
  * 優先順位:
- * 1. `forceCurlCffiFallback` / `forceProxyFallback` フラグが立っていればそちらを優先 (Step 4 で廃止予定)
+ * 1. `forceCurlCffiFallback` / `forceProxyFallback` フラグが立っていればそちらを優先 (Step 4 で廃止予定)。
+ *    - **設計判断 (S-1 review feedback)**: `forceX` 経路では `_cacheRecording` に何も書かない。
+ *      これにより summaly() が record をスキップする (cache 管理対象外)。phase14 Step 4 で
+ *      `forceX` フラグを廃止して経路学習キャッシュに統合する移行期設計のため、現状で
+ *      cache に記録すると `forceX` を消した瞬間に矛盾する経路情報が残る恐れがあるのを回避
  * 2. 経路学習キャッシュにヒットがあれば fast path で該当 strategy を直接呼ぶ (Step 2a)
- *    - 成功 → `recordSuccess(hitKey)` で更新して return
- *    - throw 失敗 → `recordFailure(hitKey)` で連続失敗カウントを進めて通常カスケードに fallthrough
- *    - ゲート不通過 (null) → recordFailure 呼ばず、cascade success の record も skip して中立性維持
- * 3. 通常 4 段カスケード (default UA → fallback UA → proxy → curl_cffi) (Step 2b)
- *    - cache miss 時は `tracker` 経由でどの段が成功したかを捕捉
- *    - cascade 成功 → 状況別に pathKey を選定して `recordSuccess` 呼出
- *      - cache hit が throw で失敗していたら `hitKey` を上書き (= 失敗していた strategy を新 strategy に置換)
- *      - cache miss なら 1-seg pathKey に新規記録 (host のみ URL は host)
- *      - cache hit gate-fail なら record せず (entry は config 復帰時の再利用候補として温存)
+ *    - 成功 → `recState.strategy = hit.entry.strategy` をセット
+ *    - throw 失敗 → そのまま fallthrough (recState.strategy 未設定のまま、cascade で上書きされる)。
+ *      **注**: fast path 失敗そのものを `recordFailure` には記録しない (Step 2b 後半 設計)。
+ *      理由: cascade で同 strategy が成功すれば実質 transient 失敗、別 strategy で成功すれば
+ *      新 strategy が hitKey に上書きされる (recordSuccess) ため、いずれにせよ最終的な
+ *      cache 状態は cascade 結果が支配する
+ *    - ゲート不通過 (null) → `recState.gateFailedNeutral = true`、cache hit エントリを温存
+ * 3. 通常 4 段カスケード (default UA → fallback UA → proxy → curl_cffi) (Step 2b 前半)
+ *    - cache が active なら `tracker` を作成し cascade に渡す。各段の成功時に
+ *      `tracker.value = '<strategy>'` がセットされる。
+ *    - cascade 成功 → `recState.strategy = tracker.value` をセット
+ *    - cascade 失敗 (throw) → そのまま伝播。summaly() catch が `recordFailure` を呼ぶ
  *
- * **注**: cascade 失敗時の recordFailure と Summary レイヤでの thin 判定は Step 2b 後半で実装予定。
- * 現状 cache miss 時の cascade 失敗は cache に何も記録されない。
+ * `recordKey` の選定 (lookup 直後に決定):
+ * - cache hit があれば `hit.hitKey`
+ * - cache miss なら 1-seg pathKey (host のみ URL は host)
+ *
+ * 早期に `recordKey` を設定する理由: cascade 失敗 (throw) で fetchResponse 自体が throw する経路でも、
+ * summaly() catch が recordFailure(recordKey) を呼べるよう context を残しておく必要があるため。
  */
 async function fetchResponse(
 	args: ReturnType<typeof getGotOptions>,
@@ -295,38 +311,50 @@ async function fetchResponse(
 		}, fallback, proxyCfg, curlCffiCfg);
 	}
 
-	// 経路学習キャッシュ fast path (phase14 Step 2a)
+	// 経路学習キャッシュ fast path (phase14 Step 2a + Step 2b 後半)
+	//
+	// **設計**: scpaping は `cache.recordX` を直接呼ばず、`opts._cacheRecording` に context を埋めて
+	// summaly() に伝達する。summaly() が Summary 確定後 (thin 判定込みで) 一括判定して record する。
+	// 理由: HTTP 層 recordSuccess + Summary 層 recordFailure の重複で連続失敗カウンタが
+	// 閾値到達できない問題を解消するため (Step 2b 後半 設計修正)。
+	//
 	// 注: `pathKeysOf` は `URL.hostname` を使うため **port は pathKey に含まれない**
 	// (`localhost:3060` と `localhost:3061` は同じ `'localhost'` キーを共有する)。
-	// ローカルテストでは `setActiveCache(undefined)` で test 間の cache 汚染を防ぐ責任が呼出側にある (W-3 review feedback)。
+	// ローカルテストでは `setActiveCache(undefined)` で test 間の cache 汚染を防ぐ責任が呼出側にある。
 	const cache = getActiveCache();
 	const hit = cache?.lookup(args.url);
-	// 以下 2 つのフラグは **排他的**: 同時に true になることはない (try ブロック内で先に return するか、
-	// 後段の null branch / catch branch のいずれかしか実行されない)。`cacheHitFailed === true` なら必ず
-	// `hit != null` でもある (catch は `hit != null` ガード内のため)。W-1 review feedback。
-	let cacheHitFailed = false; // cache hit が throw で失敗 (recordFailure 済み)
-	let cacheHitGateFailed = false; // cache hit がゲート不通過 (config が現在のセッションで使えない)
+	const recState = opts?._cacheRecording;
+
+	// 記録先 pathKey を早期に決定 (throw が起きても summaly() catch が record できるように)
+	if (cache != null && recState != null) {
+		if (hit != null) {
+			recState.recordKey = hit.hitKey;
+		} else {
+			const keys = pathKeysOf(args.url);
+			if (keys.length > 0) {
+				recState.recordKey = keys[Math.max(0, keys.length - 2)];
+			}
+		}
+	}
+
 	if (cache != null && hit != null) {
 		try {
 			const response = await fetchByStrategy(args, hit.entry.strategy, fallback, proxyCfg, curlCffiCfg);
 			if (response != null) {
-				cache.recordSuccess(hit.hitKey, hit.entry.strategy);
+				// fast path 成功: strategy を context に埋めて返す。実際の record は summaly() で Summary 判定後
+				if (recState != null) recState.strategy = hit.entry.strategy;
 				return response;
 			}
-			// strategy ゲート不通過 (config が変わった等) → fallthrough。recordFailure はしない
-			// (失敗ではなく「現環境で使えない」だけなので連続失敗カウントを進めるのは不適切)。
-			// cascade success 後の record も skip して、entry を「config 復帰時の再利用候補」として温存
-			cacheHitGateFailed = true;
+			// strategy ゲート不通過 (config が現在のセッションで使えない) → fallthrough。
+			// summaly() レイヤでは record しない (entry を「config 復帰時の再利用候補」として温存、neutrality)
+			if (recState != null) recState.gateFailedNeutral = true;
 		} catch {
-			// fast path 失敗 → 連続失敗カウントを進める。N 連続失敗で破棄される
-			cache.recordFailure(hit.hitKey);
-			cacheHitFailed = true;
-			// fallthrough して通常カスケードを試す。一時障害なら別経路で取れる可能性、
-			// 取れたら下記 cascade-success ブロックで hit.hitKey に新 strategy を上書き記録する
+			// fast path 失敗 → cascade に fallthrough。summaly() catch が recordFailure(hitKey) を呼ぶ。
+			// cascade が成功すれば下のブロックで strategy が更新され、summaly() success 経路で hitKey が上書きされる。
 		}
 	}
 
-	// 通常 4 段カスケード (phase14 Step 2b: tracker で成功 strategy を捕捉して recordSuccess)
+	// 通常 4 段カスケード (phase14 Step 2b: tracker で成功 strategy を捕捉して context に埋める)
 	const tracker: StrategyTracker | undefined = cache != null ? {} : undefined;
 	const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
 	const response = await getResponseWithCurlCffiFallback({
@@ -334,29 +362,11 @@ async function fetchResponse(
 		method: 'GET',
 	}, fallback, proxyCfg, curlCffiCfg, tracker);
 
-	if (cache != null && tracker?.value != null && !cacheHitGateFailed) {
-		// 記録先キーの選定:
-		// - cache hit が throw で失敗していたら、その hitKey を上書き (= 失敗していた strategy を
-		//   今回成功した strategy に書き換える。次回からは新 strategy で fast path に乗る)
-		// - cache miss なら、1 セグメント prefix (host + path 1 段) に記録。
-		//   1-seg は「同じパス配下の他 URL でも再利用される generalize 度」と「過剰一般化リスク」の
-		//   バランス。bootstrap JSONL も 1-seg を主流にする予定 (Step 3)。`pathKeysOf` の戻り値は
-		//   specific → general 順なので、length >= 2 なら index = length - 2 が 1-seg、length == 1
-		//   (host のみ) なら index = 0
-		// - cache hit ゲート不通過は上記 if ガードで弾く (entry 上書きで「config 復帰時の再利用候補」が
-		//   失われるのを防ぐ neutrality 維持)
-		let recordKey: string | undefined;
-		if (cacheHitFailed && hit != null) {
-			recordKey = hit.hitKey;
-		} else {
-			const keys = pathKeysOf(args.url);
-			if (keys.length > 0) {
-				recordKey = keys[Math.max(0, keys.length - 2)];
-			}
-		}
-		if (recordKey != null) {
-			cache.recordSuccess(recordKey, tracker.value);
-		}
+	if (cache != null && tracker?.value != null && recState != null) {
+		// gateFailedNeutral が立っていてもこの strategy 上書きは行われるが、summaly() レイヤで neutrality
+		// ガードがあるので最終的に record はされない (神経質に skip する必要はない、無害な上書き)。
+		// recordKey は既に上で設定済み (cache hit なら hitKey、cache miss なら 1-seg)。
+		recState.strategy = tracker.value;
 	}
 
 	return response;

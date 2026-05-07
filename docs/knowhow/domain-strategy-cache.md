@@ -236,6 +236,93 @@ Step 2a の 1 テスト (cache hit + fast path 失敗 → cascade で成功) は
 
 **設計判断**: 「fast path 失敗 → cascade 成功」は「strategy が今回も使えた = 一時障害」と解釈するため、failure カウントをリセットして hit entry を温存するのが正しい。Step 2a の expectation は HTTP 層のシグナルしか見ていなかったため、Step 2b の cascade success による「strategy 再確認」の意味を反映できていなかった。
 
+## phase14 Step 2b 後半 統合パターン (2026-05-08)
+
+### HTTP 層 recordSuccess を廃止し、Summary 層に集約する設計
+
+Step 2b 前半までは scpaping レイヤで `cache.recordSuccess` を呼んでいたが、**HTTP 200 + Summary thin の振動** で連続失敗カウンタが閾値に達しない構造的バグが発覚:
+
+```
+1 回目: HTTP 200 → recordSuccess (cf=0, count=2) → Summary thin → recordFailure (cf=1, count=2)
+2 回目: HTTP 200 → recordSuccess (cf=0, count=3) → Summary thin → recordFailure (cf=1, count=3)
+...
+```
+
+`recordSuccess` が呼ばれるたびに `consecutiveFailures` が 0 にリセットされるため、invalidate (N 連続失敗で破棄) が永久に発火しない。これは yodobashi / sqex の **bot-block 200 + 正規 404 ページボディ** パターンで致命的。
+
+**解決**: scpaping は `cache.recordX` を一切呼ばず、`opts._cacheRecording` に context を埋めて summaly() に伝達。summaly() が Summary 確定後に thin 判定して `recordSuccess` / `recordFailure` を一括判定する。これにより:
+
+```
+1 回目: HTTP 200 → state.strategy='default' → Summary thin → recordFailure (cf=1)
+2 回目: HTTP 200 → state.strategy='default' → Summary thin → recordFailure (cf=2)
+3 回目: HTTP 200 → state.strategy='default' → Summary thin → recordFailure (cf=3 = threshold) → 破棄
+```
+
+連続失敗が正しく蓄積される。
+
+### `opts._cacheRecording` mutable side-channel パターン
+
+scpaping → summaly の context 伝達手段として **opts への mutable side-channel** を採用。
+
+```typescript
+// SummalyOptions 拡張 (internal)
+type GeneralScrapingOptions = {
+  ...,
+  /** @internal */ _cacheRecording?: CacheRecordingState;
+};
+
+// summaly() トップで作成
+const cacheRecording: CacheRecordingState = {};
+const scrapingOptions = { ..., _cacheRecording: cacheRecording };
+
+// scpaping は opts._cacheRecording を mutate
+const recState = opts?._cacheRecording;
+if (cache != null && recState != null) {
+  recState.recordKey = ...;
+  recState.strategy = ...;
+}
+
+// summaly() で読み取って record
+if (isThinSummary(result)) recordCacheFailure(cacheRecording);
+else recordCacheSuccess(cacheRecording);
+```
+
+**設計のポイント**:
+- per-summaly-call で新規作成 (= 並行リクエスト混線無し)
+- 各 plugin / `general()` が opts を再構築する際は `_cacheRecording: opts?._cacheRecording` で参照伝搬が必要
+  - 落とし穴: `general.ts` で `_cacheRecording` を漏らしていた → Step 2b 後半 実装で発見・修正
+  - opts spread (`...opts`) の場合は自動的に伝搬する (sqex / yodobashi / nintendo-store のパターン)
+- `getJson` / `getResponse` 直接呼び出し系プラグイン (bluesky / youtube / spotify / twitter / npmjs) は scpaping 経由しないため cache 非関与 (現状仕様、将来拡張余地)
+
+### fast path 失敗を recordFailure しない設計
+
+Step 2b 前半までは `cache hit fast path 失敗 → recordFailure(hitKey)` を即座に呼んでいたが、Step 2b 後半では呼ばない設計に変更。
+
+理由:
+- cascade で同 strategy が成功すれば一過性の失敗 (transient) → recordSuccess でリセットされる
+- 別 strategy で成功すれば新 strategy が hitKey に上書き (recordSuccess) されて consecutiveFailures = 0
+- いずれにせよ最終的な cache 状態は cascade 結果が支配する
+- recordFailure を別途呼んでも cascade success の recordSuccess でリセットされるため意味がない
+
+これは「**HTTP 層の即時シグナルを Summary 層の最終判定で吸収する**」という Step 2b 後半 の中心設計と一致。
+
+### `forceX` 経路では `_cacheRecording` を触らない
+
+`forceCurlCffiFallback` / `forceProxyFallback` フラグが立っているサイトは cache 管理対象外。phase14 Step 4 で `forceX` 廃止予定のため、移行期で cache に記録すると `forceX` を消した瞬間に矛盾する経路情報が残る恐れがある。
+
+`forceX` 経路は `_cacheRecording` を一切触らない → summaly() レイヤの record は recordKey 未設定で no-op → cache に何も記録されない。
+
+### `isThinSummary` の url 依存
+
+`isThinSummary` は `summary.url` を `URL.hostname` として参照して `title === host` の判定を行う。
+
+```typescript
+const result = Object.assign(summary, { url: actualUrl });
+if (isThinSummary(result)) recordCacheFailure(...);
+```
+
+順序が重要 — `summary` (url が undefined) を直接渡すと thin 判定が壊れる。コメントで明示すべき箇所。
+
 ## 参考
 
 - [docs/plans/phase14-domain-strategy-cache.md](../plans/phase14-domain-strategy-cache.md)

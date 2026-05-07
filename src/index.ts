@@ -22,6 +22,10 @@ import {
 	type SummalyErrorCategory,
 } from '@/utils/parse-failure-log.js';
 import { chooseLogLevel } from '@/utils/log-level.js';
+import {
+	getActiveCache,
+	type CacheRecordingState,
+} from '@/utils/domain-strategy-cache.js';
 
 // 公開型として再 export（消費者が SerializableError['category'] でなく直接の名前で参照できるよう）
 export type { SummalyErrorCategory };
@@ -399,6 +403,32 @@ export const summalyDefaultOptions = {
 } as SummalyOptions;
 
 /**
+ * 経路学習キャッシュへ record する内部ヘルパ (phase14 Step 2b 後半)。
+ * `cache != null && recordKey != null && !gateFailedNeutral` のときだけ動作する。
+ *
+ * - `recordCacheSuccess`: strategy も必須 (= cache hit success / cascade success のいずれかを経由した)
+ * - `recordCacheFailure`: strategy 不要 (= 既存 entry の連続失敗カウントを増やすだけ)
+ *
+ * gate-fail neutrality: cache hit がゲート不通過だった場合は entry を「config 復帰時の再利用候補」
+ * として温存するため両 record をスキップする。
+ */
+function recordCacheSuccess(state: CacheRecordingState): void {
+	if (state.gateFailedNeutral === true) return;
+	if (state.recordKey == null || state.strategy == null) return;
+	const cache = getActiveCache();
+	if (cache == null) return;
+	cache.recordSuccess(state.recordKey, state.strategy);
+}
+
+function recordCacheFailure(state: CacheRecordingState): void {
+	if (state.gateFailedNeutral === true) return;
+	if (state.recordKey == null) return;
+	const cache = getActiveCache();
+	if (cache == null) return;
+	cache.recordFailure(state.recordKey);
+}
+
+/**
  * Summarize an web page
  */
 export const summaly = async (url: string, options?: SummalyOptions): Promise<SummalyResult> => {
@@ -454,6 +484,11 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 	// 中間レスポンス（content-type 無し）が typeFilter で reject されて落ちる (phase11.3)。
 	// scrape 中のリダイレクト追跡は got のデフォルト (true) に任せる。SSRF チェインは
 	// `maxRedirects: 5` とプライベート IP ガードで別途抑制している。
+	// 経路学習キャッシュの記録 context (phase14 Step 2b 後半)。
+	// scpaping が読み書きし、summaly() が Summary 確定後にこの値を見て recordX を実行する。
+	// 設計詳細は `CacheRecordingState` の JSDoc 参照。
+	const cacheRecording: CacheRecordingState = {};
+
 	const scrapingOptions: GeneralScrapingOptions = {
 		lang: opts.lang,
 		userAgent: opts.userAgent,
@@ -467,12 +502,24 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		fallbackRetryCategories: opts.fallbackRetryCategories,
 		proxyFallback: opts.proxyFallback,
 		curlCffiFallback: opts.curlCffiFallback,
+		_cacheRecording: cacheRecording,
 	};
 
-	// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-	const summary = await (match ? match.summarize : general)(_url, scrapingOptions);
+	let summary: Awaited<ReturnType<typeof general>>;
+	try {
+		// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+		summary = await (match ? match.summarize : general)(_url, scrapingOptions);
+	} catch (err) {
+		// summaly() レイヤの try/catch: scpaping や parseGeneral から throw されたエラーを catch して
+		// cache.recordFailure を呼び出してから再 throw する。HTTP 完全失敗 (cache hit fail + cascade fail) は
+		// ここに到達するため、N 連続失敗で entry が破棄される動線が成立する。
+		recordCacheFailure(cacheRecording);
+		throw err;
+	}
 
 	if (summary == null) {
+		// プラグイン dispatcher が `null` を返したケース。HTTP は成功したが summarize 不能 → failure 扱い。
+		recordCacheFailure(cacheRecording);
 		throw new Error('failed summarize');
 	}
 
@@ -495,9 +542,23 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 			.filter((u): u is string => u != null);
 	}
 
-	return Object.assign(summary, {
+	const result = Object.assign(summary, {
 		url: actualUrl,
 	});
+
+	// 経路学習キャッシュ記録 (phase14 Step 2b 後半):
+	// Summary が thin (= OG/Twitter Card/<title> いずれも取れず) なら strategy が不適切 → recordFailure。
+	// Summary が good なら recordSuccess。gate-fail neutrality は recordCacheSuccess / Failure の中で守られる。
+	// **重要 (S-4 review feedback)**: `isThinSummary` 内部は `summary.url` を `URL.hostname` として参照して
+	// `title === host` の判定を行うため、`result` (= summary に actualUrl を含めた) を渡す必要がある。
+	// 順序を入れ替えて `summary` を直接渡すと `summary.url` が undefined で thin 判定が壊れる。
+	if (isThinSummary(result)) {
+		recordCacheFailure(cacheRecording);
+	} else {
+		recordCacheSuccess(cacheRecording);
+	}
+
+	return result;
 };
 
 // eslint-disable-next-line import/no-default-export

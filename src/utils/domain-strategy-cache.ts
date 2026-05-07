@@ -444,3 +444,30 @@ export function setActiveCache(cache: DomainStrategyCache | undefined): void {
 export function getActiveCache(): DomainStrategyCache | undefined {
 	return activeCache;
 }
+
+/**
+ * `summaly()` レイヤと `scpaping()` レイヤ間で cache 記録 context を伝達する mutable side-channel
+ * (phase14 Step 2b 後半)。
+ *
+ * 設計理由: Summary の良し悪し判定 (`isThinSummary`) は `summaly()` の最後で行うが、
+ * 記録すべき pathKey と成功 strategy は `scpaping()` レイヤでしか分からない。
+ * そこで scpaping は cache.recordX を呼ばず、本オブジェクトに必要 context を埋めて summaly() に渡す。
+ * summaly() は Summary 確定後に context を読んで適切に recordSuccess / recordFailure を呼ぶ。
+ *
+ * フィールド:
+ * - `recordKey`: 記録対象の pathKey (cache hit があれば hitKey、cache miss なら 1-seg pathKey)
+ * - `strategy`: cascade で成功した strategy (cache hit success / fast path success / cascade success)
+ * - `gateFailedNeutral`: cache hit がゲート不通過だった場合 true。summaly() は record をスキップし
+ *   entry を「config 復帰時の再利用候補」として温存する (neutrality 維持)
+ *
+ * **HTTP-layer recordSuccess を scpaping から外した理由 (Step 2b 後半 設計修正)**: HTTP success
+ * → recordSuccess (consecutiveFailures=0) → Summary thin → recordFailure (consecutiveFailures=1)
+ * → 次回 HTTP success → recordSuccess (consecutiveFailures=0) ... の循環で連続失敗カウンタが
+ * 閾値に達せず invalidate が機能しない問題があった。Summary 層で一括判定すれば bot-block 200+thin
+ * パターンも正しく N 回で破棄される。
+ */
+export type CacheRecordingState = {
+	recordKey?: string;
+	strategy?: DomainStrategy;
+	gateFailedNeutral?: boolean;
+};
