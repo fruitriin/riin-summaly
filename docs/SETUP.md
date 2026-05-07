@@ -381,7 +381,7 @@ uv sync
 
 ドメイン (host + path prefix 1〜2 段) ごとに「成功した取得経路」(`default` / `fallback_ua` / `proxy` / `curl_cffi`) を学習し、JSONL で永続化する仕組みです。次回以降のリクエストでは学習した経路を第一選択肢として使うことで「初回 default UA で 20 秒空回り → fallback で成功」のような時間損失を回避します。
 
-> **注**: phase14 Step 1 では **ストレージ層と TOML 設定パスのみ** が導入されています。`scpaping()` への統合は Step 2 で実施するため、現時点ではこのセクションを設定しても挙動は変わりません (将来互換のため明示しておくのは可)。
+> Step 2a/2b で `scpaping()` 統合済 (cache hit fast path → cache miss cascade tracking → Summary 層 thin 判定 → N 連続失敗で entry 破棄)。Step 2b-4 で Fastify モードの自動インスタンス化済。Step 3 で `data/domain-strategy-bootstrap.jsonl` の同梱予定 (yodobashi → curl_cffi 等の初期データ)、Step 4 で `forceCurlCffiFallback` / `forceProxyFallback` フラグ廃止予定。
 
 ### 設定 (`config.toml`)
 

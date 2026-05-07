@@ -11,7 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import fastify, { type FastifyInstance } from 'fastify';
-import { summaly } from '@/index.js';
+import Summaly, { summaly } from '@/index.js';
 import {
 	DomainStrategyCache,
 	getActiveCache,
@@ -379,5 +379,80 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 		// 3 回目はキャッシュなしなので cascade 1 段のみ実行される (= +1 リクエスト)
 		// 1〜2 回目はそれぞれ fast path + cascade 1 段で +2 リクエストずつ
 		expect(requestCount - before).toBe(1);
+	});
+});
+
+describe('Fastify モードでの cache 自動インスタンス化 (phase14 Step 2b-4)', () => {
+	test('domainStrategyCache.enabled = true で cache が自動生成される', async () => {
+		// W-2 review feedback: 全テストで明示的に setActiveCache(undefined) してから始める (対称性)。
+		// 外側 afterEach でも reset されているが、テスト読者が前提を直感的に把握できるよう冒頭に置く
+		setActiveCache(undefined);
+		const fastifyApp = fastify();
+		const opts = { domainStrategyCache: { enabled: true } };
+		await new Promise<void>((resolve, reject) => {
+			Summaly(fastifyApp, opts, (err) => err != null ? reject(err) : resolve());
+		});
+		try {
+			expect(getActiveCache()).toBeDefined();
+		} finally {
+			await fastifyApp.close();
+		}
+	});
+
+	test('domainStrategyCache 未指定なら cache 生成されない (既存挙動維持)', async () => {
+		setActiveCache(undefined);
+		const fastifyApp = fastify();
+		await new Promise<void>((resolve, reject) => {
+			Summaly(fastifyApp, {}, (err) => err != null ? reject(err) : resolve());
+		});
+		try {
+			expect(getActiveCache()).toBeUndefined();
+		} finally {
+			await fastifyApp.close();
+		}
+	});
+
+	test('domainStrategyCache.enabled = false なら cache 生成されない', async () => {
+		setActiveCache(undefined);
+		const fastifyApp = fastify();
+		const opts = { domainStrategyCache: { enabled: false } };
+		await new Promise<void>((resolve, reject) => {
+			Summaly(fastifyApp, opts, (err) => err != null ? reject(err) : resolve());
+		});
+		try {
+			expect(getActiveCache()).toBeUndefined();
+		} finally {
+			await fastifyApp.close();
+		}
+	});
+
+	test('domainStrategyCache の各オプションが DomainStrategyCache に渡される (path 系含む)', async () => {
+		// W-3 review feedback: `bootstrapPath` / `runtimePath` も含めて全フィールドの伝搬を網羅する
+		setActiveCache(undefined);
+		const fastifyApp = fastify();
+		const opts = {
+			domainStrategyCache: {
+				enabled: true,
+				maxEntries: 1234,
+				bootstrapPath: '/tmp/bootstrap-test.jsonl', // ファイル不在でもコンストラクタは error にしない (ENOENT 受容)
+				runtimePath: '/tmp/runtime-test.jsonl',
+				consecutiveFailureThreshold: 7,
+				compactionThreshold: 500,
+			},
+		};
+		await new Promise<void>((resolve, reject) => {
+			Summaly(fastifyApp, opts, (err) => err != null ? reject(err) : resolve());
+		});
+		try {
+			const cache = getActiveCache();
+			expect(cache).toBeDefined();
+			expect(cache?.maxEntries).toBe(1234);
+			expect(cache?.bootstrapPath).toBe('/tmp/bootstrap-test.jsonl');
+			expect(cache?.runtimePath).toBe('/tmp/runtime-test.jsonl');
+			expect(cache?.consecutiveFailureThreshold).toBe(7);
+			expect(cache?.compactionThreshold).toBe(500);
+		} finally {
+			await fastifyApp.close();
+		}
 	});
 });

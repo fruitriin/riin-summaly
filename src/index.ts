@@ -23,7 +23,9 @@ import {
 } from '@/utils/parse-failure-log.js';
 import { chooseLogLevel } from '@/utils/log-level.js';
 import {
+	DomainStrategyCache,
 	getActiveCache,
+	setActiveCache,
 	type CacheRecordingState,
 } from '@/utils/domain-strategy-cache.js';
 
@@ -606,6 +608,29 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 			blockedJsonlMaxBytes: options.parseFailureLogBlockedJsonlMaxBytes,
 		})
 		: null;
+
+	// 経路学習キャッシュの自動インスタンス化 (phase14 Step 2b-4)。
+	// `[scraping.strategy_cache].enabled = true` を読み取って `DomainStrategyCache` を作成し、
+	// モジュールレベル singleton (`setActiveCache`) に登録する。`scpaping()` は `getActiveCache()` で
+	// 取得して lookup する。Fastify サーバ起動時に 1 回だけ実行される (プラグインスコープ singleton)。
+	//
+	// **設計判断**: `setActiveCache` はモジュールレベル singleton のため、複数 Fastify インスタンスを
+	// 同一プロセスで起動すると **後勝ち** になる。本ユースケースは想定していない (1 プロセス 1 Fastify)。
+	// 既存の `setAgent` パターンと同じ前提。
+	const strategyCacheOpts = options.domainStrategyCache;
+	if (strategyCacheOpts != null && strategyCacheOpts.enabled) {
+		// `bootstrapPath` / `runtimePath` 未指定時 (`undefined`) は `DomainStrategyCache` 内で
+		// 「bootstrap なし」「永続化なし、in-memory のみ」として解釈される。Step 3 で bootstrap.jsonl
+		// を同梱したらデフォルトのパス解決を入れる予定。
+		// W-1 review feedback: `cache` の中間変数を省いてシャドーイング (Fastify cache LRU との衝突) を回避
+		setActiveCache(new DomainStrategyCache({
+			maxEntries: strategyCacheOpts.maxEntries,
+			bootstrapPath: strategyCacheOpts.bootstrapPath,
+			runtimePath: strategyCacheOpts.runtimePath,
+			consecutiveFailureThreshold: strategyCacheOpts.consecutiveFailureThreshold,
+			compactionThreshold: strategyCacheOpts.compactionThreshold,
+		}));
+	}
 
 	function respondWithEntry(reply: FastifyReply, entry: CacheEntry) {
 		if (entry.kind === 'success') {

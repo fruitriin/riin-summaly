@@ -201,9 +201,17 @@ scpaping(url, opts)
 - **fast path 失敗は記録しない (transient とみなす)**: cascade で同 strategy が成功すれば一過性の失敗、別 strategy で成功すれば新 strategy が hitKey に上書き (recordSuccess) されるため、いずれにせよ最終的な cache 状態は cascade 結果が支配する。fast path 失敗を別途 recordFailure すると、cascade success の recordSuccess でリセットされて結局意味がない
 - **`forceX` 経路では `_cacheRecording` を触らない**: phase14 Step 4 で `forceX` 廃止予定のため、移行期で cache に記録すると `forceX` を消した瞬間に矛盾する経路情報が残る恐れがある。`forceX` 経路は cache 管理対象外で運用
 
-### Step 2b-4 — Fastify auto-init (未着手)
+### Step 2b-4 — Fastify auto-init (完了 2026-05-08)
 
-- [ ] Fastify モードで `[scraping.strategy_cache].enabled = true` を読み取って `DomainStrategyCache` インスタンスを自動生成 + `setActiveCache` する
+- [x] `src/index.ts` の Fastify plugin setup で `options.domainStrategyCache?.enabled === true` のとき `DomainStrategyCache` インスタンス化 + `setActiveCache(cache)`
+- [x] テスト 4 件追加 (auto-init / 未指定 / enabled=false / 全オプション伝搬 path 系含む)
+- [x] レビュー対応 (W-1 シャドーイング解消 / W-2 テスト対称性 / W-3 path オプション伝搬テスト)
+
+#### 設計判断
+
+- モジュールレベル singleton (既存 `setAgent` パターン踏襲): 1 プロセス 1 Fastify 想定で複数インスタンスは「後勝ち」
+- Fastify close 時の cleanup なし: 既存 `setAgent` も同様で、ライブラリ利用時のテスト責任で reset
+- `bootstrapPath` / `runtimePath` 未指定時 (`undefined`) は `DomainStrategyCache` 内で「bootstrap なし / 永続化なし」として解釈される。Step 3 で bootstrap.jsonl 同梱したらデフォルトのパス解決を入れる予定
 
 ### Step 3 — bootstrap JSONL 同梱
 
@@ -292,4 +300,4 @@ scpaping(url, opts)
 
 ## 完了状況
 
-Step 1 完了 (2026-05-07)。Step 2a 完了 (2026-05-07)。Step 2b 前半完了 (2026-05-07)。Step 2b 後半完了 (2026-05-08、Summary レイヤ override)。Step 2b-4 (Fastify auto-init) と Step 3〜7 は次サイクル以降。
+Step 1 完了 (2026-05-07)。Step 2a 完了 (2026-05-07)。Step 2b 前半完了 (2026-05-07)。Step 2b 後半完了 (2026-05-08)。Step 2b-4 完了 (2026-05-08、Fastify auto-init)。Step 3〜7 は次サイクル以降。

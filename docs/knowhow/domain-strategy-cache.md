@@ -323,6 +323,34 @@ if (isThinSummary(result)) recordCacheFailure(...);
 
 順序が重要 — `summary` (url が undefined) を直接渡すと thin 判定が壊れる。コメントで明示すべき箇所。
 
+## phase14 Step 2b-4 統合パターン (2026-05-08)
+
+### Fastify モードでの cache 自動インスタンス化
+
+Fastify plugin の setup フェーズで `options.domainStrategyCache?.enabled` を読み、true なら `DomainStrategyCache` を作成して `setActiveCache(cache)` で singleton 登録する。`parseFailureLog` の自動生成パターンと同一構造。
+
+```typescript
+// src/index.ts (Fastify plugin)
+const strategyCacheOpts = options.domainStrategyCache;
+if (strategyCacheOpts != null && strategyCacheOpts.enabled) {
+  setActiveCache(new DomainStrategyCache({
+    maxEntries: strategyCacheOpts.maxEntries,
+    bootstrapPath: strategyCacheOpts.bootstrapPath,
+    runtimePath: strategyCacheOpts.runtimePath,
+    consecutiveFailureThreshold: strategyCacheOpts.consecutiveFailureThreshold,
+    compactionThreshold: strategyCacheOpts.compactionThreshold,
+  }));
+}
+```
+
+**設計判断**:
+- モジュールレベル singleton (既存 `setAgent` パターン): 1 プロセス 1 Fastify 想定で複数インスタンスは「後勝ち」
+- Fastify close 時の cleanup なし (= 既存 `setAgent` も同様)
+- `bootstrapPath` / `runtimePath` 未指定時 (`undefined`) は `DomainStrategyCache` 内で「bootstrap なし」「永続化なし」として解釈される
+- 中間変数 `const cache = new ...` を避けて `setActiveCache(new ...)` で書く (Fastify 内の LRU `cache` 変数とのシャドーイングを回避)
+
+これで `[scraping.strategy_cache]` TOML を書くだけで cache が有効化される (運用者向け簡素な API)。
+
 ## 参考
 
 - [docs/plans/phase14-domain-strategy-cache.md](../plans/phase14-domain-strategy-cache.md)
