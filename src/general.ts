@@ -275,11 +275,15 @@ export async function parseGeneral(_url: URL | string, res: Awaited<ReturnType<t
 	// Property attribute is used for open graph.
 	// See https://ogp.me/
 
+	// `head > title` で head の正規タイトル要素だけに限定する。`$('title')` だと SVG icon の
+	// アクセシビリティ用 `<title>` (e.g. `<svg><title>Caret Down</title></svg>`) もマッチして
+	// 連結されるため、Amazon Prime Video のように SVG icon が大量に埋まるサイトで title 末尾に
+	// "Caret DownChannelsCaret RightChannelsSearch..." が貼り付く。
 	let title: string | null | undefined =
 		$('meta[property="og:title"]').attr('content') ||
 		$('meta[name="twitter:title"]').attr('content') ||
 		$('meta[property="twitter:title"]').attr('content') ||
-		$('title').text();
+		$('head > title').first().text();
 
 	// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
 	if (title === undefined || title === null) {

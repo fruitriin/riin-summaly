@@ -6,8 +6,14 @@
  * （referral tracking の query は商品ページに影響しないため削る）。
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, test } from 'vitest';
-import { normalizeAmazonUrl, test as amazonTest } from '@/plugins/amazon.js';
+import { normalizeAmazonUrl, parseAmazonHtml, test as amazonTest } from '@/plugins/amazon.js';
+
+const _dirname = path.dirname(fileURLToPath(import.meta.url));
 
 describe('normalizeAmazonUrl', () => {
 	test('短い /dp/<asin> はそのまま', () => {
@@ -147,6 +153,66 @@ describe('parseAmazonHtml title fallback chain (phase12.1 followup #5)', () => {
 			|| $('title').text().trim()
 			|| '';
 		expect(title).toBe('実商品名');
+	});
+});
+
+describe('parseAmazonHtml thumbnail extraction', () => {
+	test('Prime Video ページ (`/gp/video/detail/`) では og:image も #landingImage も無いので hero `<img data-testid="base-image" loading="eager">` を fallback として採用', async () => {
+		const cheerio = await import('cheerio');
+		const html = fs.readFileSync(_dirname + '/htmls/amazon-prime-video.html', 'utf-8');
+		const $ = cheerio.load(html);
+		const summary = parseAmazonHtml($);
+		expect(summary.thumbnail).toBe(
+			'https://m.media-amazon.com/images/S/pv-target-images/421ec0770c22abb767b4abb8667e3d623b2ce708bb4776ddcb5f2f1b8032aedf._SX1080_FMjpg_.jpg',
+		);
+		// title は <head><title>...</title></head> が fallback として採用される。
+		// SVG icon の <title>Caret Down</title> 等が body に大量にあっても汚染されない
+		// (`head > title` で head 限定にしたため)。
+		expect(summary.title).toBe('Amazon.co.jp: ポケットモンスター（2023）を観る | Prime Video');
+		// icon は amazon プラグイン共通でハードコード
+		expect(summary.icon).toBe('https://www.amazon.com/favicon.ico');
+	});
+
+	test('og:image があるとき eager hero よりも og:image が優先', async () => {
+		const cheerio = await import('cheerio');
+		const html = `<html><head>
+			<meta property="og:image" content="https://example.com/og.jpg">
+			<title>X</title>
+		</head><body>
+			<img data-testid="base-image" loading="eager" src="https://example.com/hero.jpg">
+		</body></html>`;
+		const $ = cheerio.load(html);
+		expect(parseAmazonHtml($).thumbnail).toBe('https://example.com/og.jpg');
+	});
+
+	test('#landingImage があれば最優先 (通常の商品ページ)', async () => {
+		const cheerio = await import('cheerio');
+		const html = `<html><head>
+			<meta property="og:image" content="https://example.com/og.jpg">
+			<title>X</title>
+		</head><body>
+			<img id="landingImage" src="https://example.com/landing.jpg">
+			<img data-testid="base-image" loading="eager" src="https://example.com/hero.jpg">
+		</body></html>`;
+		const $ = cheerio.load(html);
+		expect(parseAmazonHtml($).thumbnail).toBe('https://example.com/landing.jpg');
+	});
+
+	test('画像が一切無いときは null', async () => {
+		const cheerio = await import('cheerio');
+		const html = `<html><head><title>X</title></head><body></body></html>`;
+		const $ = cheerio.load(html);
+		expect(parseAmazonHtml($).thumbnail).toBeNull();
+	});
+
+	test('lazy 読み込みのサムネイル群 (data-testid="base-image" loading="lazy") は採用しない', async () => {
+		const cheerio = await import('cheerio');
+		const html = `<html><head><title>X</title></head><body>
+			<img data-testid="base-image" loading="lazy" src="https://example.com/lazy1.jpg">
+			<img data-testid="base-image" loading="lazy" src="https://example.com/lazy2.jpg">
+		</body></html>`;
+		const $ = cheerio.load(html);
+		expect(parseAmazonHtml($).thumbnail).toBeNull();
 	});
 });
 

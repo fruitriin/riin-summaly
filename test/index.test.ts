@@ -260,6 +260,21 @@ describe('local tests', () => {
 		expect(summary.title).toBe('Strawberry Pasta');
 	});
 
+	test('SVG icon の <title> (e.g. <svg><title>Caret Down</title></svg>) は title に混入しない', async () => {
+		app = fastify();
+		app.get('/', (request, reply) => {
+			const content = fs.readFileSync(_dirname + '/htmls/svg-titles-pollution.html');
+			reply.header('content-length', content.length);
+			reply.header('content-type', 'text/html');
+			return reply.send(content);
+		});
+		app.get('/favicon.ico', (_req, reply) => reply.status(404).send());
+		await app.listen({ port });
+
+		const summary = await summaly(host);
+		expect(summary.title).toBe('正規タイトル');
+	});
+
 	describe('Private IP blocking', () => {
 		beforeEach(() => {
 			process.env.SUMMALY_ALLOW_PRIVATE_IP = 'false';

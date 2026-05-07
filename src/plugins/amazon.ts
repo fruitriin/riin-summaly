@@ -127,11 +127,15 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
  * `<title>` HTML タグを最終 fallback として見る。`<title>` には「機動戦士ガンダム 水星の魔女
  * シーズン1を観る | Prime Video」のような可読タイトルが入っている。
  */
-function parseAmazonHtml($: import('cheerio').CheerioAPI): summary {
+export function parseAmazonHtml($: import('cheerio').CheerioAPI): summary {
+	// `<title>` は cheerio で `head > title` を明示しないと SVG 内のアクセシビリティ用 `<title>`
+	// (e.g. `<svg><title>Caret Down</title></svg>`) も全部マッチして連結される。
+	// Prime Video ページは SVG icon が大量に埋まっており `<title>` が 100 件超返ってくるので、
+	// `head > title` で head の正規タイトル要素だけに限定する。
 	const title = $('#title').text().trim()
 		|| $('meta[property="og:title"]').attr('content')
 		|| $('meta[name="twitter:title"]').attr('content')
-		|| $('title').text().trim()
+		|| $('head > title').first().text().trim()
 		|| '';
 
 	const description =
@@ -139,9 +143,14 @@ function parseAmazonHtml($: import('cheerio').CheerioAPI): summary {
 		$('meta[property="og:description"]').attr('content') ||
 		$('meta[name="description"]').attr('content');
 
+	// Prime Video (`/gp/video/detail/<asin>`) は商品ページ DOM (`#landingImage`) も OGP も持たず、
+	// hero 画像が `<img data-testid="base-image" loading="eager" alt="...">` として埋まっている。
+	// `loading="eager"` のものが ATF (above-the-fold) の hero で、`loading="lazy"` のサムネイル群と
+	// 区別できる。`elementtiming="dv-web-timing-atfVisible"` も同義だが selector は短い方を採用。
 	const thumbnail: string | undefined =
 		$('#landingImage').attr('src') ||
-		$('meta[property="og:image"]').attr('content');
+		$('meta[property="og:image"]').attr('content') ||
+		$('img[data-testid="base-image"][loading="eager"]').first().attr('src');
 
 	const playerUrl =
 		$('meta[property="twitter:player"]').attr('content') ||
