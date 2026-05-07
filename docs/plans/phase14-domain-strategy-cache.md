@@ -236,11 +236,11 @@ scpaping(url, opts)
 - [x] docs 更新 (Plugins.md / SETUP.md / cf-workers-outbound-proxy / domain-strategy-cache knowhow / CHANGELOG)
 - [x] レビュー対応 (W-1 sqex JSDoc strategy_cache 前提明示 / W-2 yodobashi JSDoc 同上 + デグレ警告 / I-1 「プラグイン残す意味」明示)
 
-### Step 5 — dev サーバ UI 統合
+### Step 5 — dev サーバ UI 統合 (部分完了 2026-05-08)
 
-- [ ] `pnpm dev` の UI で「現在のドメイン経路マッピング」を表示するパネル追加
-- [ ] `/api/strategy-cache` エンドポイント (dev 専用) で in-memory cache の中身を JSON で返す
-- [ ] サンプル URL から取得すると経路マッピングが学習される動作確認
+- [x] **`/api/strategy-cache` エンドポイント (dev 専用)** — `dev/server.ts` で `DomainStrategyCache` を `getDefaultBootstrapPath()` 自動ロード付きでインスタンス化 + `setActiveCache` で singleton 登録。`GET /api/strategy-cache` が cache 中身 (size + bootstrapPath + entries `lastAttemptAt` 降順) を JSON で返す。本番には載せない (機密データ漏洩経路化を防ぐため dev 限定)
+- [ ] **`pnpm dev` UI に「現在のドメイン経路マッピング」表示パネル** — UI work、手動検証必要のため自動化対象外
+- [ ] **サンプル URL から取得すると経路マッピングが学習される動作確認** — UI 操作 + 目視検証必要のため手動
 
 ### Step 6 — ドキュメント (完了 2026-05-08)
 
@@ -306,4 +306,4 @@ scpaping(url, opts)
 
 ## 完了状況
 
-Step 1 + Step 2 系 + Step 3 + Step 4 + Step 6 (docs 仕上げ) + Step 7 (skill 更新) 完了 (2026-05-08)。**残るは Step 5 (dev UI) のみ** — UI 動作確認が必要なため自動化困難、運用者が手動で着手判断する想定。
+Step 1 + Step 2 系 + Step 3 + Step 4 + Step 6 (docs 仕上げ) + Step 7 (skill 更新) + Step 5 部分 (`/api/strategy-cache` API) 完了 (2026-05-08)。**残るは Step 5 の UI パネル + 目視検証のみ** — UI work と動作確認は手動範囲。

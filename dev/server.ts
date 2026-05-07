@@ -24,6 +24,12 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { summaly, type SummalyOptions, type SummalyResult } from '../src/index.js';
 import { plugins as builtinPlugins } from '../src/plugins/index.js';
+import {
+	DomainStrategyCache,
+	getActiveCache,
+	getDefaultBootstrapPath,
+	setActiveCache,
+} from '../src/utils/domain-strategy-cache.js';
 import { sampleGroups } from './sample-urls.js';
 
 const builtinPluginNames = builtinPlugins
@@ -56,6 +62,22 @@ if (proxyAvailable) {
 		'proxy fallback unavailable (set SUMMALY_PROXY_URL + SUMMALY_PROXY_SECRET env vars to enable)',
 	);
 }
+
+// **経路学習キャッシュを dev サーバでも有効化** (phase14 Step 5)。
+// 同梱 `data/domain-strategy-bootstrap.jsonl` を自動ロードして、yodobashi / sqex / amazon
+// 等のサイトに対する初期経路 (curl_cffi / proxy) を `summaly()` の cache fast path で適用できる。
+// runtimePath は未指定 = 永続化なし (in-memory のみ、dev 再起動でリセット)。
+//
+// `/api/strategy-cache` エンドポイントで cache の中身を JSON で返す → UI で経路マッピングを観察。
+const devBootstrapPath = getDefaultBootstrapPath();
+const devCache = new DomainStrategyCache({
+	bootstrapPath: devBootstrapPath,
+});
+setActiveCache(devCache);
+app.log.info(
+	{ bootstrapPath: devBootstrapPath ?? '(not found)', size: devCache.size },
+	'domain strategy cache initialized for dev server',
+);
 
 interface SummalyQuery {
 	url?: string;
@@ -156,6 +178,27 @@ app.get('/v', async (_req, reply) => {
 		version: _VERSION_,
 		commit: _GIT_COMMIT_,
 		message: _GIT_MESSAGE_,
+	};
+});
+
+// **経路学習キャッシュ観測エンドポイント** (phase14 Step 5、dev 専用)。
+// in-memory cache の現在の中身を JSON で返す。サンプル URL から取得 → 経路マッピング学習 →
+// 本エンドポイントで確認、というフローで cache 動作を視覚化できる。本番には載せない
+// (機密データ = 過去 preview 試行 URL の漏洩経路になりうるため、dev 限定)。
+app.get('/api/strategy-cache', async (_req, reply) => {
+	reply.header('Cache-Control', 'no-store');
+	const cache = getActiveCache();
+	if (cache == null) {
+		return { active: false, size: 0, entries: [], bootstrapPath: null };
+	}
+	return {
+		active: true,
+		size: cache.size,
+		bootstrapPath: cache.bootstrapPath ?? null,
+		runtimePath: cache.runtimePath ?? null,
+		consecutiveFailureThreshold: cache.consecutiveFailureThreshold,
+		// `lastAttemptAt` 降順 (最新利用 entry が先頭) → UI で「直近に学習した経路」が見やすい
+		entries: cache.snapshot(),
 	};
 });
 
