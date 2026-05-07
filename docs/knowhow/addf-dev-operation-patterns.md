@@ -163,6 +163,21 @@ phase14 / phase13.1 が両方ほぼ完了状態で、TODO 上の残作業が手�
 - knowhow 化はコンテキスト消費が大きい場合のみ実施 (15 ターン経過 system reminder 等)
 - PushNotification は **3 サイクル連続で auto-runnable タスクなし** が続いたら検討
 
+### 実運用ログ (2026-05-08)
+
+phase14 / phase13.1 ほぼ完了後の 3 サイクルで以下のように消化:
+
+- **サイクル N**: option 2 (knowhow 化) — `addf-dev-operation-patterns.md` 新設、Feedback 整理
+- **サイクル N+1**: option 3 (既存負債修正) — `general.ts` spread refactor + `followRedirects: undefined` 防衛
+- **サイクル N+2**: option 4 (将来検討メモから Plan 起票) — Playwright モードを `phase15.1-playwright-fallback.md` に昇格
+- **サイクル N+3**: option 1〜4 すべて消化済 → option 5 (PushNotification + CronDelete) 実行
+
+オーナー通知時のメッセージは「残作業の中で AI が判断できないもの」を要約する形が良い (例: 手動 UI 検証範囲 / 着手トリガー待ちの Plan / 外部リポ連携)。Mobile push が `Remote Control inactive` で送れない場合もあるが、本セッション側のログには残るのでオーナーが session 復帰時に把握できる。
+
+### Plan 起票時に「着手トリガー」を明記する重要性
+
+phase15.1 (Playwright モード) のような **発生頻度トリガー型 Plan** は、Plan ファイル自体を起票するのは AI 範囲だが、Step 1 (実機検証) 以降は「fail mode I 月 N 件 / preview したい SPA EC が増えた時」というオーナー判断トリガーが介在する。Plan 起票時にこの「着手トリガー」を明記しておくと、後続 `/addf-dev` サイクルで AI が誤って Step 1 に着手するのを防げる。option 4 で Plan 起票 → option 5 でオーナー通知、という連続消化パターンが綺麗に成立した。
+
 ## 既存負債修正 (option 3) の落とし穴: spread refactor 適用範囲
 
 `/addf-dev` で auto-runnable 候補が尽きたときの「既存負債修正」(option 3) パターンで、`general.ts` の opts 個別列挙を spread に refactor した。次回類似 refactor を検討するときの判断材料:
