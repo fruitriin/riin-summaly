@@ -1,0 +1,236 @@
+# phase14 — 経路学習キャッシュ (domain strategy cache) で forceX 廃止 + 汎用最適化
+
+## 背景
+
+phase11.9 / 12.1 / 12.5 / 12.6 で **段階的フォールバック** (default UA → fallback UA → CF Workers proxy → curl_cffi) を整備し、各層を強制スキップする `forceCurlCffiFallback` (yodobashi) / `forceProxyFallback` (sqex) フラグも追加した。
+
+これは **「人間が観測した最適経路をプラグインに焼き付ける」** 形であり、以下の課題がある:
+
+1. **新サイト追加コストが高い**: プラグイン書く → 経路フラグを宣言 → デプロイのサイクル
+2. **汎用パスでも同じ問題が起こる**: プラグイン無しのサイトも IP block / TLS 切断に遭遇するが救援できない
+3. **「初回は default で 20 秒空回り」が学習機構なら不要だった**: 観察を毎回するのは無駄
+
+オーナーからの提案:
+
+> フォールバックは探索的な動作だけど、一度正解を引いたら、そのドメインに対して前段をスキップする、というより、第一選択肢として使うために成功した方法を記録するっていうふうにあらかじめ組み込んでおいたほうが、色々柔軟になる
+
+## ゴール
+
+- ドメイン (host + path prefix 1〜2 段) ごとに **「成功した取得経路」を学習** して JSONL で永続化
+- 次回以降のリクエストでは **学習した経路を第一選択肢** として使い、失敗したら通常カスケードに fallback
+- bootstrap JSONL をリポに同梱 (yodobashi → curl_cffi、sqex → proxy 等の主要サイト) して新規環境でも初回 20 秒待ちを回避
+- `forceCurlCffiFallback` / `forceProxyFallback` フラグを削除 (プラグインから外す、TypeScript 型からも削除)
+- プラグインは **「引き出し方の自在性」** (DOM 直読み・API 直叩き・URL 正規化等) のためだけに残す
+
+## 設計詳細
+
+### キャッシュエントリ
+
+```typescript
+interface DomainStrategyEntry {
+  /** lookup key: 例 "amazon.co.jp" / "amazon.co.jp/dp" / "amazon.co.jp/gp/video" */
+  pathKey: string;
+  /** 成功した経路名 */
+  strategy: 'default' | 'fallback_ua' | 'proxy' | 'curl_cffi';
+  /** 連続成功回数 (= 信頼度) */
+  successCount: number;
+  /** 連続失敗回数 (これが N 以上で破棄) */
+  consecutiveFailures: number;
+  /** 最後に成功した unix ms */
+  lastSuccessAt: number;
+  /** 最後に試行した unix ms */
+  lastAttemptAt: number;
+}
+```
+
+### lookup 順序 (specific → general)
+
+リクエスト URL `https://amazon.co.jp/dp/B0XXXXXXXX/?ref=...` の場合:
+
+1. `amazon.co.jp/dp/...` (path 2 段) — 完全一致
+2. `amazon.co.jp/dp` (path 1 段) — prefix 一致
+3. `amazon.co.jp` (host のみ) — host 一致
+
+**最初にヒットしたエントリの `strategy` を第一選択肢** として使う。
+
+`amazon.co.jp/gp/video` を default UA で取れているとき、`amazon.co.jp/dp` だけ proxy 経由が必要、というケースが綺麗に表現できる。
+
+### 成功 / 失敗の判定
+
+**成功**:
+- HTTP 取得が throw せず、最終的な `Summary` で:
+  - `title != null && title !== url.hostname` (host と一致するのは thin の典型)
+  - `description != null` (or `image != null` でも可)
+
+**失敗**:
+- `getResponseWithCurlCffiFallback` が throw する (= 全段失敗)
+- もしくは Summary の `title` が host と一致 / 全フィールド null
+
+**N 連続失敗で破棄** (一時的なサイト障害でエントリを破棄しないため、デフォルト N=3)。連続失敗中は学習した経路を引き続き第一選択肢として使う (= 一時障害なら次回成功で `consecutiveFailures` リセット)。N 回連続失敗したらエントリ破棄、次回から default 経路に戻る。
+
+### 永続化
+
+```
+data/domain-strategy-bootstrap.jsonl    (リポに commit、初期データ)
+~/.cache/summaly/domain-strategy.jsonl  (runtime、gitignored、append-only)
+```
+
+- 起動時に **bootstrap → runtime の順でロード**、runtime 優先 (上書き)
+- 学習更新は **runtime ファイルに append**
+- 定期的に compaction (重複エントリを最新だけ残してファイル書き換え) — 例: 1000 行超えたら BG で実施
+- ファイルパスは `[scraping.strategy_cache]` TOML セクションで設定可能
+
+### bootstrap 同梱内容 (リポ管理)
+
+```jsonl
+{"pathKey":"yodobashi.com","strategy":"curl_cffi","successCount":1,...}
+{"pathKey":"www.yodobashi.com","strategy":"curl_cffi","successCount":1,...}
+{"pathKey":"store.jp.square-enix.com","strategy":"proxy","successCount":1,...}
+{"pathKey":"www.amazon.co.jp/dp","strategy":"proxy","successCount":1,...}
+{"pathKey":"amazon.co.jp/dp","strategy":"proxy","successCount":1,...}
+```
+
+bootstrap は **「どこが詰まる経験則」** を集約したリポ知見の表現。新サイト追加時に `force*` を書く代わりにここに 1 行追加する形に進化。
+
+### `scpaping()` への統合
+
+```
+scpaping(url, opts)
+  ↓
+  lookup domain-strategy-cache (specific → general)
+  ↓
+  ヒット → 該当 strategy を最初に試す
+       ↓
+       成功 → 結果返却 + cache.recordSuccess(pathKey)
+       失敗 → 通常カスケードで他経路を試行
+                成功 → 結果返却 + cache.upsert(pathKey, 成功した strategy)
+                全失敗 → throw + cache.recordFailure(pathKey)
+  ヒットなし → 通常カスケード (= default UA から)
+```
+
+### `forceCurlCffiFallback` / `forceProxyFallback` の削除
+
+1. **準備フェーズ**: 学習機構を実装、bootstrap に yodobashi / sqex を入れる
+2. **検証フェーズ**: 学習機構を有効化した dev サーバで `forceX` フラグを外しても yodobashi / sqex が取れることを確認
+3. **削除フェーズ**: `GeneralScrapingOptions.forceCurlCffiFallback` / `forceProxyFallback` を削除、プラグインから対応コード削除、テスト削除
+4. **互換性**: `forceX` フラグ削除は **internal API change** (npm 公開の `SummalyOptions` には含まれていないので外部互換性影響なし)
+
+## 実装ステップ
+
+### Step 1 — ストレージ層 (S〜M)
+
+- [ ] `src/utils/domain-strategy-cache.ts`:
+  - `DomainStrategyEntry` 型定義
+  - in-memory LRU (上限 5000 entries) + JSONL persistence
+  - `lookup(host, path)` で specific → general 順に探索
+  - `recordSuccess(pathKey, strategy)` / `recordFailure(pathKey)`
+  - bootstrap JSONL ロード (起動時 1 回)
+  - runtime JSONL append (`fs.appendFile` 非同期)
+  - compaction (1000 行超えたら BG で書き換え)
+- [ ] `bin/config-loader.ts` に `[scraping.strategy_cache]` セクション追加:
+  - `enabled = true` (デフォルト ON)
+  - `bootstrapPath` (省略時: パッケージ同梱の `data/domain-strategy-bootstrap.jsonl`)
+  - `runtimePath` (省略時: `~/.cache/summaly/domain-strategy.jsonl`)
+  - `consecutiveFailureThreshold = 3`
+  - `compactionThreshold = 1000`
+- [ ] テスト: lookup 順序 / append / compaction / 連続失敗破棄
+
+### Step 2 — `scpaping()` への統合
+
+- [ ] `src/utils/got.ts` の `scpaping()` で:
+  - 開始時に cache lookup
+  - ヒット → 該当 strategy で取得試行 (= `getResponseWithFallback` / `viaProxyWorker` / `viaCurlCffi` を直接呼ぶ)
+  - 失敗 → 通常カスケード
+  - 成功した経路を `recordSuccess` で記録
+- [ ] `parseGeneral` 後の Summary で「成功 / 失敗」を判定 → cache に通知
+  - 設計判断: 「成功判定」は scpaping 完了後 (HTTP 層) ではなく Summary 確定後 (= general() の最後 / プラグインの summarize() の最後) に行う
+  - これは scpaping のスコープ外 (`parseGeneral` で thin な Summary が返るケースを失敗扱いにしたい) → `summaly()` レイヤで record する
+
+### Step 3 — bootstrap JSONL 同梱
+
+- [ ] `data/domain-strategy-bootstrap.jsonl` を作成 (yodobashi / sqex / amazon.co.jp/dp / amazon.com/dp 等)
+- [ ] `package.json` の `files` に `data/` を追加 (npm publish に含める)
+- [ ] tsdown 設定で `data/` をビルド出力に copy する設定 or 起動時に解決パスを `node_modules/@misskey-dev/summaly/data/...` 経由で参照
+- [ ] `data/README.md` で bootstrap の役割を説明
+
+### Step 4 — `forceX` 廃止 + プラグイン整理
+
+- [ ] `src/plugins/yodobashi.ts` から `forceCurlCffiFallback: true` / `proxyFallback: undefined` 削除
+- [ ] `src/plugins/sqex.ts` から `forceProxyFallback: true` 削除
+- [ ] `src/general.ts` の `GeneralScrapingOptions` から `forceCurlCffiFallback?` / `forceProxyFallback?` 削除
+- [ ] `src/utils/got.ts` の scpaping 分岐から該当ブロック削除
+- [ ] `src/utils/proxy-fallback.ts` の `viaProxyWorker` は引き続き export (cache lookup から呼ぶため)
+- [ ] テスト更新 (forceX テスト削除、cache 経由テスト追加)
+- [ ] `skipRedirectResolution` は **残す**: HEAD probe スキップは経路学習とは独立した最適化 (yodobashi のように TLS 切断する HEAD のスキップ)
+
+### Step 5 — dev サーバ UI 統合
+
+- [ ] `pnpm dev` の UI で「現在のドメイン経路マッピング」を表示するパネル追加
+- [ ] `/api/strategy-cache` エンドポイント (dev 専用) で in-memory cache の中身を JSON で返す
+- [ ] サンプル URL から取得すると経路マッピングが学習される動作確認
+
+### Step 6 — ドキュメント
+
+- [ ] `docs/Library.md` に `[scraping.strategy_cache]` 設定説明
+- [ ] `docs/SETUP.md` に bootstrap / runtime path の運用説明
+- [ ] `docs/Plugins.md` の sqex / yodobashi セクションを更新 (forceX フラグ削除 → bootstrap で初期値設定の説明に)
+- [ ] `docs/knowhow/` に `domain-strategy-cache.md` を新設 (設計思想と運用)
+- [ ] `CLAUDE.repo.md` の「対応形式」表は変更なし (プラグインの test() 条件は同じ)
+- [ ] `CHANGELOG.md` に **breaking** で記載 (scpaping options から forceX 削除、ライブラリ利用者がカスタムプラグインで使っている場合は影響あり)
+
+### Step 7 — skill 更新
+
+- [ ] `/url-preview-check` の Phase 4 「修正レイヤの選定」表を更新:
+  - 「特殊な救援が必要な host を発見」→ **`bootstrap.jsonl` に 1 行追加** が第一選択肢に
+  - プラグイン作成は引き続き「引き出し方の自在性」が必要なケースのみ
+
+## 設計判断
+
+### なぜ静的 TTL を使わないか
+
+オーナー意見: 「経路情報は時間経過でほぼ変わらない」 (= サイトが新たに WAF を入れることは年に何度もない)。
+
+→ **静的 TTL より失敗ベース invalidate** のほうが運用上シンプル。N 連続失敗 (デフォルト 3) で破棄するだけで、サイト側のポリシー変更にも自然に追従する。一時的な障害 (たまたま 5xx) で経路が破棄されないように N>1 で連続性を担保。
+
+### なぜ host のみ + path prefix 2 段で打ち切るか
+
+実例: `amazon.co.jp/dp/*` だけ proxy / `amazon.co.jp/gp/video/*` は default UA / `amazon.co.jp/exec/...` は別経路、というように **同一サイトでパス別に挙動が違うケース** は実在する (Amazon が典型)。
+
+ただし path 3 段以上の細分化はオーバーフィットのリスク (= キャッシュサイズ爆発、ヒット率低下)。2 段で経験則上十分という判断 (拡張可能性は残す)。
+
+### なぜ runtime cache を gitignored にするか
+
+- 個人運用情報 (どのサイトをよく見ているか) が含まれる
+- 環境ごとに学習結果が違う (本番 Vultr Tokyo IP と dev MacOS で経路が違う) ので commit できない
+- bootstrap (= 横断的に共有できる知見) と runtime (= 環境固有の学習) の分離
+
+### bootstrap JSONL の運用
+
+新サイトで「経路詰まり」を発見したら:
+
+1. (これまで) プラグインに `forceX` フラグ追加 → コミット → デプロイ
+2. (今後) `data/domain-strategy-bootstrap.jsonl` に 1 行追加 → コミット → デプロイ
+
+プラグインを書く必要は **「独自 DOM パース」「URL 正規化」「API 直叩き」** の場合のみ。経路選択は学習機構に任せる。
+
+### マイグレーション戦略 (Step 4 の安全性)
+
+- `forceX` 削除前に Step 1〜3 を完了 + bootstrap に yodobashi / sqex 入れる
+- Step 4 で `forceX` を削除する直前に **bootstrap が効いている確認** を取る (dev で `force*` を消した状態で yodobashi / sqex が取れるテストを追加)
+- 削除後に本番デプロイ + 動作確認
+
+## 関連
+
+- [docs/plans/phase12.6-sqex-store-proxy.md](phase12.6-sqex-store-proxy.md) — `forceProxyFallback` 導入元 (本フェーズで廃止対象)
+- [docs/plans/phase12.5-curl-cffi-fetcher.md](phase12.5-curl-cffi-fetcher.md) — `forceCurlCffiFallback` 導入元 (同上)
+- [docs/knowhow/cf-workers-outbound-proxy.md](../knowhow/cf-workers-outbound-proxy.md) — proxy fallback 設計
+- [docs/knowhow/curl-cffi-tls-impersonation.md](../knowhow/curl-cffi-tls-impersonation.md) — curl_cffi 設計
+- [docs/knowhow/inflight-dedup-pattern.md](../knowhow/inflight-dedup-pattern.md) — phase4.2 で実装した類似 in-memory cache パターンの参考
+
+## 想定サイズ
+
+**M〜L**: ストレージ層 + scpaping 統合 + bootstrap 同梱 + forceX 廃止 + dev UI + ドキュメントで広範囲の変更だが、各 Step は独立性が高く逐次着手可能。AI 実装で 4〜6 セッション (Step 1, Step 2+3, Step 4, Step 5+6+7) 程度の見積もり。
+
+## 完了状況
+
+未着手。

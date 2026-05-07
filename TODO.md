@@ -23,6 +23,8 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 12.1 | [docs/plans/phase12.1-cf-workers-proxy-fallback.md](docs/plans/phase12.1-cf-workers-proxy-fallback.md) — Cloudflare Workers Free を outbound proxy として使い、Amazon class の IP block を救援。実験ステップ (Step 1.3) で GO/NO-GO 判定する設計 | M〜L | 完了 (2026-05-05 GO 確定 → 2026-05-06 followup #1〜#4 で `Rejected by type filter undefined` / 長 query / bare hostname / amzn.asia 短縮 URL すべて本番救援動作確認済み。Step 5 pino fallback フィールドのみ phase11.6 deferral と合流予定) |
 | 高 | 12.5 | [docs/plans/phase12.5-curl-cffi-fetcher.md](docs/plans/phase12.5-curl-cffi-fetcher.md) — `curl_cffi` (libcurl-impersonate) で Chrome TLS フィンガープリントを偽装し、yodobashi 級の TLS layer bot block を救援。Step 1 実験 GO 確定 (2026-05-06)、Step 2 Node IPC 統合は次サイクル | M〜L | 進行中 (Step 1 完了、Step 2/3 残) |
 | — | 12.6 | [docs/plans/phase12.6-sqex-store-proxy.md](docs/plans/phase12.6-sqex-store-proxy.md) — Square Enix e-STORE (`store.jp.square-enix.com`) 救援。`forceProxyFallback` フラグ新設 + sqex プラグイン追加。データセンター IP を CDN 段で広く弾く新パターン (HTTP 200 + 正規 404 ページボディ、エラーシグナル無し) を救援 | S〜M | 完了 (2026-05-07、本番デプロイ + 動作確認は運用者側) |
+| 中 | 13.1 | [docs/plans/phase13.1-syosetu-embed.md](docs/plans/phase13.1-syosetu-embed.md) — 小説家になろうプラグイン + `/embed` エンドポイント基盤。プレイヤー iframe で作者・ジャンル・あらすじを表示（JS 一切なしのバニラ HTML+CSS、CSP `default-src 'none'`、XSS 全エスケープ）。なろう公式 API 直叩き、R-18 ドメインで `sensitive: true` | M〜L | 未着手 |
+| 高 | 14 | [docs/plans/phase14-domain-strategy-cache.md](docs/plans/phase14-domain-strategy-cache.md) — 経路学習キャッシュ (host + path prefix 2段、JSONL 永続化、N 連続失敗で invalidate)。bootstrap JSONL 同梱で初回コスト回避。`forceCurlCffiFallback` / `forceProxyFallback` を廃止し、プラグインは「引き出し方の自在性」専用に整理。汎用パスでも自動最適化される | M〜L | 未着手 |
 
 ### 将来検討メモ (Plan は未起票)
 
@@ -37,6 +39,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | Misskey fork: UrlPreview の `lang` を localStorage 生値ベースに変更 | `frontend-shared/js/config.ts` の `?? 'en-US'` ハードコードで未設定ユーザーが `lang=en-US` を summaly に送り続ける問題の根本対策 | 計画のみ（Misskey fork 側で実施） |
 | Misskey fork: summaly の `error.category` を受け取って分岐表示 | phase11.2 が完了したら受け側を実装。「プレビューできませんでした」を timeout / bot block / 404 等に細分化 | 計画のみ（phase11.2 完了後に着手） |
 | Misskey fork: Amazon プレビュー失敗の切り分け（[riin-summaly#1](https://github.com/fruitriin/riin-summaly/issues/1)） | summaly 単体では取れる URL (`amzn.asia/d/07Bh8rNE`) が Misskey 上で失敗する原因を Misskey クライアント・サーバのどこで弾いているか特定 | 調査タスク（Misskey fork 側） |
+| Misskey fork: `MkUrlPreview` の iframe ドメイン allowlist に summaly embed ホストを追加 | phase13.1 Step 0 の調査で **ホワイトリスト方式と判明した場合のみ発火**。Misskey フロントが `player.url` を無条件 iframe 化していなければ、`summaly.riinswork.space` 等の embed ホストを許可リストに追加する fork 修正が必要 | phase13.1 Step 0 の結果待ち |
 
 > 上記 3 件すべての詳細は [docs/plans/external-misskey-fork-urlpreview-lang.md](docs/plans/external-misskey-fork-urlpreview-lang.md) に集約。
 
@@ -74,6 +77,9 @@ phase12.3 完了（nintendo-store プラグイン、facebookexternalhit UA 固�
 phase12.4 完了（yodobashi プラグイン、proxy categories 拡張パターン）
 phase12.5 進行中（curl_cffi TLS impersonation、Step 1 GO 確定、Step 2 Node IPC 統合は次サイクル）
 phase12.6 完了（sqex プラグイン + forceProxyFallback 新設、エラーシグナルなし IP block 新パターン救援）
+   ↓
+phase13.1 未着手（小説家になろう + /embed エンドポイント基盤、JS なし HTML+CSS player iframe）
+phase14   未着手（経路学習キャッシュ、forceX 廃止、bootstrap JSONL 同梱、汎用パスも自動最適化）
 ```
 
 ---
