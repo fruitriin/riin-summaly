@@ -172,6 +172,70 @@ cache hit より forceX (forceProxyFallback / forceCurlCffiFallback) を優先�
 - リトライ前提のラッパは不要
 - fast path で失敗したら recordFailure → cascade で改めて UA リトライを試す形になる (二重リトライにならない)
 
+## phase14 Step 2b 前半 統合パターン (2026-05-07)
+
+### `StrategyTracker` mutable side-channel
+
+cascade 関数群 (getResponseWithFallback / Proxy / CurlCffi) に **どの段で成功したかを伝える** 必要があるが、既存シグネチャ (`Promise<Got.Response<string>>`) を変えると下流の呼出側 (`scpaping()` / 直接利用テスト等) に幅広い影響が出る。
+
+そこで **optional `tracker?: StrategyTracker` 引数** を追加して mutable side-channel で値を渡す:
+
+```typescript
+export type StrategyTracker = { value?: DomainStrategy };
+
+// 各層の関数末尾で:
+const r = await innerFetch(...);
+if (tracker != null) tracker.value = '<strategy>';
+return r;
+```
+
+**設計の利点**:
+- 既存シグネチャ変更なし → tracker 未渡しの呼出側 (テスト含む) は完全互換
+- 関数スコープ内で都度作成 (`const tracker = cache != null ? {} : undefined`) → 並行 summaly() 呼出間で混線無し
+- カスケードチェーン (`Outer → Inner → Innermost`) で tracker を pass-through するだけで全層の情報を集約
+
+**設計の妥協点**:
+- mutable parameter は読みづらい (Promise の resolve に値を埋め込むパターンに比べて、状態がいつ確定するか不明瞭)
+- 並行アクセスがある場合は危険 (本実装は関数スコープで完結なので影響無し)
+
+### gate-fail neutrality (entry 温存設計)
+
+Cache hit が `null` を返した = **「ゲート不通過」** ケースは entry が現環境で使えないだけで、過去成功した実績は残しておきたい。理由:
+
+- ユーザーが proxy config を一時的に無効化して再有効化するワークフロー
+- フィーチャーフラグの ON/OFF サイクル
+- bootstrap の安定エントリが運用環境でたまたま無効になっているとき
+
+そこで `cacheHitGateFailed` フラグで cascade success の record を **skip** し、entry を「config 復帰時の再利用候補」として温存する。
+
+**実装ポイント**:
+- `cacheHitFailed` (throw 失敗) と `cacheHitGateFailed` (null 返却) を **排他的フラグ** で分離
+- recordSuccess 判定: `cache != null && tracker?.value != null && !cacheHitGateFailed`
+- gate-fail 時は entry が次回 lookup で hit 続けるが、fast path で再び null 返却 → cascade fallthrough → 同様に neutral 維持
+
+**テストでの落とし穴**: short URL (`http://host/`) では hitKey と 1-seg pathKey が同じ `host` に collide する。Step 2a で書いた「proxy gate-fail entry が変わらない」テストが Step 2b で破綻する可能性があったが、`!cacheHitGateFailed` ガードで救済。
+
+### 1-seg pathKey 選定の境界処理
+
+cache miss 時の record 先は `keys[Math.max(0, keys.length - 2)]`:
+
+| URL | pathKeysOf | length | index | recordKey |
+|---|---|---|---|---|
+| `https://example.com/` | `['example.com']` | 1 | 0 | `example.com` |
+| `https://example.com/foo` | `['example.com/foo', 'example.com']` | 2 | 0 | `example.com/foo` |
+| `https://example.com/foo/bar` | `['example.com/foo/bar', 'example.com/foo', 'example.com']` | 3 | 1 | `example.com/foo` |
+
+**選定理由**:
+- 「同パス配下の他 URL でも再利用される generalize 度」と「過剰一般化リスク」のバランス
+- bootstrap JSONL も 1-seg を主流にする予定 (Step 3)
+- length が 1 (host のみ) のときは index = 0 が host を返すため、`Math.max(0, keys.length - 2)` で境界も自然に処理される
+
+### 既存仕様の挙動変化管理
+
+Step 2a の 1 テスト (cache hit + fast path 失敗 → cascade で成功) は、Step 2b で **`consecutiveFailures` が 0 にリセットされる** 挙動になる (cascade success の recordSuccess が呼ばれて entry が更新されるため)。テスト expectation を `consecutiveFailures: 1` から `0` に変更した。
+
+**設計判断**: 「fast path 失敗 → cascade 成功」は「strategy が今回も使えた = 一時障害」と解釈するため、failure カウントをリセットして hit entry を温存するのが正しい。Step 2a の expectation は HTTP 層のシグナルしか見ていなかったため、Step 2b の cascade success による「strategy 再確認」の意味を反映できていなかった。
+
 ## 参考
 
 - [docs/plans/phase14-domain-strategy-cache.md](../plans/phase14-domain-strategy-cache.md)

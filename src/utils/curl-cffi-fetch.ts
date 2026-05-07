@@ -31,6 +31,7 @@ import {
 import {
 	type GotOptions,
 	type FallbackUaConfig,
+	type StrategyTracker,
 	DEFAULT_RESPONSE_TIMEOUT,
 	DEFAULT_MAX_RESPONSE_SIZE,
 } from '@/utils/got.js';
@@ -89,9 +90,10 @@ export async function getResponseWithCurlCffiFallback(
 	uaFallback: FallbackUaConfig | undefined,
 	proxyConfig: ProxyFallbackConfig | undefined,
 	curlCffiConfig: CurlCffiFallbackConfig | undefined,
+	tracker?: StrategyTracker,
 ): Promise<Got.Response<string>> {
 	try {
-		return await getResponseWithProxyFallback(args, uaFallback, proxyConfig);
+		return await getResponseWithProxyFallback(args, uaFallback, proxyConfig, tracker);
 	} catch (err) {
 		if (curlCffiConfig == null || !curlCffiConfig.enabled) {
 			throw err;
@@ -116,7 +118,9 @@ export async function getResponseWithCurlCffiFallback(
 		if (targetUrl.protocol !== 'https:') {
 			throw err;
 		}
-		return await viaCurlCffi(args, curlCffiConfig);
+		const r = await viaCurlCffi(args, curlCffiConfig);
+		if (tracker != null) tracker.value = 'curl_cffi';
+		return r;
 	}
 }
 

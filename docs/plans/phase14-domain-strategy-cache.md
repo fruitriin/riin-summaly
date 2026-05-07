@@ -169,13 +169,23 @@ scpaping(url, opts)
 - [x] テスト 7 ケース: cache 未設定回帰 / default 成功 / default 失敗 → throw / default 失敗 → cascade 救援 / fallback_ua ゲート不通過 / proxy ゲート不通過 / 閾値到達破棄
 - [x] レビュー対応 (W-1 / W-2 / S-1 / S-2 / S-3 全て修正)
 
-### Step 2b — cascade tracking + Summary レイヤ override (未着手)
+### Step 2b 前半 — cascade tracking + cache miss 時の recordSuccess (完了 2026-05-07)
 
-- [ ] `src/utils/got.ts` の cascade 関数群 (`getResponseWithFallback` / `getResponseWithProxyFallback` / `getResponseWithCurlCffiFallback`) に **strategy tracker** を追加し、cache miss 時にどの strategy で成功したかを記録できるようにする
-- [ ] `src/utils/got.ts` で cascade 成功時に `recordSuccess` を呼ぶ (cache miss 経路でも学習が積み上がるように)
+- [x] `src/utils/got.ts` の cascade 関数群 (`getResponseWithFallback` / `getResponseWithProxyFallback` / `getResponseWithCurlCffiFallback`) に optional **`StrategyTracker`** ({ value?: DomainStrategy }) 引数を追加し、各段成功時に `tracker.value` を該当 strategy にセット
+- [x] `src/utils/got.ts` の `fetchResponse` で cache miss 時に tracker を作成 + cascade に渡し、成功時に状況別に pathKey を選定して `recordSuccess` 呼出
+  - cache hit が throw で失敗 → `hit.hitKey` 上書き
+  - cache miss → 1-seg pathKey (host のみ URL は host)
+  - cache hit gate-fail → record せず (entry を「config 復帰時の再利用候補」として温存、neutrality)
+- [x] テスト 4 件追加 (cache miss + cascade default 成功 / host のみ URL / cache hit fail + cascade success → hitKey 上書き / cache miss + cascade fail → 何も記録しない)
+- [x] Step 2a の test 1 件 (cache hit + fast path 失敗 → cascade で成功) を Step 2b 仕様 (cascade success で consecutiveFailures が 0 にリセット) に更新
+- [x] レビュー対応 (W-1 / W-2 / W-3 / S-1 / S-3 全て修正、S-2 はコメントのみ対応)
+
+### Step 2b 後半 — Summary レイヤ override + Fastify auto-init (未着手)
+
 - [ ] `parseGeneral` 後の Summary で「成功 / 失敗」を判定 → cache に通知
   - 設計判断: 「成功判定」は scpaping 完了後 (HTTP 層) ではなく Summary 確定後 (= general() の最後 / プラグインの summarize() の最後) に行う
   - これは scpaping のスコープ外 (`parseGeneral` で thin な Summary が返るケースを失敗扱いにしたい) → `summaly()` レイヤで record する
+  - 注: 現状 cache miss 時の cascade 失敗は cache に何も記録されない (= 連続失敗による invalidate が機能しない経路が残る)。Summary レイヤ override で recordFailure を統合
 - [ ] Fastify モードで `[scraping.strategy_cache].enabled = true` を読み取って `DomainStrategyCache` インスタンスを自動生成 + `setActiveCache` する
 
 ### Step 3 — bootstrap JSONL 同梱
@@ -265,4 +275,4 @@ scpaping(url, opts)
 
 ## 完了状況
 
-Step 1 完了 (2026-05-07)。Step 2a 完了 (2026-05-07、cache hit fast path のみ)。Step 2b〜7 は次サイクル以降。
+Step 1 完了 (2026-05-07)。Step 2a 完了 (2026-05-07、cache hit fast path)。Step 2b 前半完了 (2026-05-07、cascade tracking + cache miss recordSuccess)。Step 2b 後半 (Summary レイヤ override + Fastify auto-init) と Step 3〜7 は次サイクル以降。

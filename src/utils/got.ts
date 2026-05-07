@@ -7,7 +7,20 @@ import { StatusError } from '@/utils/status-error.js';
 import { detectEncoding, toUtf8 } from '@/utils/encoding.js';
 import { defaultHttpAgent, defaultHttpsAgent } from '@/utils/agent.js';
 import { categorizeError, type SummalyErrorCategory } from '@/utils/parse-failure-log.js';
-import { getActiveCache, type DomainStrategy } from '@/utils/domain-strategy-cache.js';
+import { getActiveCache, pathKeysOf, type DomainStrategy } from '@/utils/domain-strategy-cache.js';
+
+/**
+ * cascade 内で「どの段で成功したか」を呼出側に伝えるための mutable holder (phase14 Step 2b)。
+ *
+ * cache miss 時に `scpaping()` が `cache.recordSuccess(pathKey, strategy)` を呼ぶために、
+ * cascade の各段が成功時に `tracker.value = '<strategy>'` をセットする。
+ *
+ * 設計選択 (mutable param vs return tuple): 既存 cascade 関数のシグネチャ
+ * (`Promise<Got.Response<string>>`) を維持して回帰リスクを最小化するため、
+ * optional な mutable holder で side-channel 通信する。`tracker` 未指定なら no-op で
+ * 既存挙動と完全互換。
+ */
+export type StrategyTracker = { value?: DomainStrategy };
 
 /**
  * 外部から `setAgent` で渡された agent。設定されている場合は keep-alive デフォルトより優先される。
@@ -169,8 +182,9 @@ async function fetchByStrategy(
 		return await getResponse({ ...args, method: 'GET' });
 	}
 	if (strategy === 'fallback_ua') {
-		// fallback UA が無い (= config で無効) ならゲート不通過
-		if (fallback == null) return null;
+		// fallback UA が無い / 空文字 (= config で無効、または `buildFallbackConfig` を通らない経路で
+		// `userAgent: ''` が直接渡された等のミス) ならゲート不通過 (W-2 review feedback)
+		if (fallback == null || fallback.userAgent === '') return null;
 		return await getResponse({
 			...args,
 			method: 'GET',
@@ -196,16 +210,23 @@ async function fetchByStrategy(
 }
 
 /**
- * `scpaping()` 内のレスポンス取得部分を切り出した内部関数 (phase14 Step 2a)。
+ * `scpaping()` 内のレスポンス取得部分を切り出した内部関数 (phase14 Step 2a + Step 2b)。
  *
  * 優先順位:
  * 1. `forceCurlCffiFallback` / `forceProxyFallback` フラグが立っていればそちらを優先 (Step 4 で廃止予定)
- * 2. 経路学習キャッシュにヒットがあれば fast path で該当 strategy を直接呼ぶ
- *    - 成功 → `recordSuccess` で更新して return
- *    - 失敗 → `recordFailure` で連続失敗カウントを進めて通常カスケードに fallthrough
- * 3. 通常 4 段カスケード (default UA → fallback UA → proxy → curl_cffi)
- *    - **注**: phase14 Step 2a では cascade tracking + recordSuccess は実装しない (Step 2b で実装)。
- *      cache に登録されるのは Step 2a 時点では「ヒット → 成功」または bootstrap (Step 3 同梱予定) のみ
+ * 2. 経路学習キャッシュにヒットがあれば fast path で該当 strategy を直接呼ぶ (Step 2a)
+ *    - 成功 → `recordSuccess(hitKey)` で更新して return
+ *    - throw 失敗 → `recordFailure(hitKey)` で連続失敗カウントを進めて通常カスケードに fallthrough
+ *    - ゲート不通過 (null) → recordFailure 呼ばず、cascade success の record も skip して中立性維持
+ * 3. 通常 4 段カスケード (default UA → fallback UA → proxy → curl_cffi) (Step 2b)
+ *    - cache miss 時は `tracker` 経由でどの段が成功したかを捕捉
+ *    - cascade 成功 → 状況別に pathKey を選定して `recordSuccess` 呼出
+ *      - cache hit が throw で失敗していたら `hitKey` を上書き (= 失敗していた strategy を新 strategy に置換)
+ *      - cache miss なら 1-seg pathKey に新規記録 (host のみ URL は host)
+ *      - cache hit gate-fail なら record せず (entry は config 復帰時の再利用候補として温存)
+ *
+ * **注**: cascade 失敗時の recordFailure と Summary レイヤでの thin 判定は Step 2b 後半で実装予定。
+ * 現状 cache miss 時の cascade 失敗は cache に何も記録されない。
  */
 async function fetchResponse(
 	args: ReturnType<typeof getGotOptions>,
@@ -275,8 +296,16 @@ async function fetchResponse(
 	}
 
 	// 経路学習キャッシュ fast path (phase14 Step 2a)
+	// 注: `pathKeysOf` は `URL.hostname` を使うため **port は pathKey に含まれない**
+	// (`localhost:3060` と `localhost:3061` は同じ `'localhost'` キーを共有する)。
+	// ローカルテストでは `setActiveCache(undefined)` で test 間の cache 汚染を防ぐ責任が呼出側にある (W-3 review feedback)。
 	const cache = getActiveCache();
 	const hit = cache?.lookup(args.url);
+	// 以下 2 つのフラグは **排他的**: 同時に true になることはない (try ブロック内で先に return するか、
+	// 後段の null branch / catch branch のいずれかしか実行されない)。`cacheHitFailed === true` なら必ず
+	// `hit != null` でもある (catch は `hit != null` ガード内のため)。W-1 review feedback。
+	let cacheHitFailed = false; // cache hit が throw で失敗 (recordFailure 済み)
+	let cacheHitGateFailed = false; // cache hit がゲート不通過 (config が現在のセッションで使えない)
 	if (cache != null && hit != null) {
 		try {
 			const response = await fetchByStrategy(args, hit.entry.strategy, fallback, proxyCfg, curlCffiCfg);
@@ -285,21 +314,52 @@ async function fetchResponse(
 				return response;
 			}
 			// strategy ゲート不通過 (config が変わった等) → fallthrough。recordFailure はしない
-			// (失敗ではなく「現環境で使えない」だけなので連続失敗カウントを進めるのは不適切)
+			// (失敗ではなく「現環境で使えない」だけなので連続失敗カウントを進めるのは不適切)。
+			// cascade success 後の record も skip して、entry を「config 復帰時の再利用候補」として温存
+			cacheHitGateFailed = true;
 		} catch {
 			// fast path 失敗 → 連続失敗カウントを進める。N 連続失敗で破棄される
 			cache.recordFailure(hit.hitKey);
-			// fallthrough して通常カスケードを試す (= 一時障害なら別経路で取れる可能性、
-			// 取れたら次サイクルで cache 値が更新される ※ Step 2b)
+			cacheHitFailed = true;
+			// fallthrough して通常カスケードを試す。一時障害なら別経路で取れる可能性、
+			// 取れたら下記 cascade-success ブロックで hit.hitKey に新 strategy を上書き記録する
 		}
 	}
 
-	// 通常 4 段カスケード
+	// 通常 4 段カスケード (phase14 Step 2b: tracker で成功 strategy を捕捉して recordSuccess)
+	const tracker: StrategyTracker | undefined = cache != null ? {} : undefined;
 	const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
-	return await getResponseWithCurlCffiFallback({
+	const response = await getResponseWithCurlCffiFallback({
 		...args,
 		method: 'GET',
-	}, fallback, proxyCfg, curlCffiCfg);
+	}, fallback, proxyCfg, curlCffiCfg, tracker);
+
+	if (cache != null && tracker?.value != null && !cacheHitGateFailed) {
+		// 記録先キーの選定:
+		// - cache hit が throw で失敗していたら、その hitKey を上書き (= 失敗していた strategy を
+		//   今回成功した strategy に書き換える。次回からは新 strategy で fast path に乗る)
+		// - cache miss なら、1 セグメント prefix (host + path 1 段) に記録。
+		//   1-seg は「同じパス配下の他 URL でも再利用される generalize 度」と「過剰一般化リスク」の
+		//   バランス。bootstrap JSONL も 1-seg を主流にする予定 (Step 3)。`pathKeysOf` の戻り値は
+		//   specific → general 順なので、length >= 2 なら index = length - 2 が 1-seg、length == 1
+		//   (host のみ) なら index = 0
+		// - cache hit ゲート不通過は上記 if ガードで弾く (entry 上書きで「config 復帰時の再利用候補」が
+		//   失われるのを防ぐ neutrality 維持)
+		let recordKey: string | undefined;
+		if (cacheHitFailed && hit != null) {
+			recordKey = hit.hitKey;
+		} else {
+			const keys = pathKeysOf(args.url);
+			if (keys.length > 0) {
+				recordKey = keys[Math.max(0, keys.length - 2)];
+			}
+		}
+		if (recordKey != null) {
+			cache.recordSuccess(recordKey, tracker.value);
+		}
+	}
+
+	return response;
 }
 
 export async function scpaping(
@@ -542,12 +602,17 @@ export function buildFallbackConfig(opts?: GeneralScrapingOptions): FallbackUaCo
 export async function getResponseWithFallback(
 	args: GotOptions,
 	fallback?: FallbackUaConfig,
+	tracker?: StrategyTracker,
 ): Promise<Got.Response<string>> {
 	if (fallback == null) {
-		return await getResponse(args);
+		const r = await getResponse(args);
+		if (tracker != null) tracker.value = 'default';
+		return r;
 	}
 	try {
-		return await getResponse(args);
+		const r = await getResponse(args);
+		if (tracker != null) tracker.value = 'default';
+		return r;
 	} catch (firstErr) {
 		const message = firstErr instanceof Error ? firstErr.message : undefined;
 		const name = firstErr instanceof Error ? firstErr.name : undefined;
@@ -567,7 +632,9 @@ export async function getResponseWithFallback(
 				'user-agent': fallback.userAgent,
 			},
 		};
-		return await getResponse(retryArgs);
+		const r = await getResponse(retryArgs);
+		if (tracker != null) tracker.value = 'fallback_ua';
+		return r;
 	}
 }
 

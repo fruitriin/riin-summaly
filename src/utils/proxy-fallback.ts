@@ -22,6 +22,7 @@ import {
 	getResponseWithFallback,
 	type GotOptions,
 	type FallbackUaConfig,
+	type StrategyTracker,
 	DEFAULT_RESPONSE_TIMEOUT,
 	DEFAULT_MAX_RESPONSE_SIZE,
 } from '@/utils/got.js';
@@ -89,9 +90,10 @@ export async function getResponseWithProxyFallback(
 	args: GotOptions,
 	uaFallback: FallbackUaConfig | undefined,
 	proxyConfig: ProxyFallbackConfig | undefined,
+	tracker?: StrategyTracker,
 ): Promise<Got.Response<string>> {
 	try {
-		return await getResponseWithFallback(args, uaFallback);
+		return await getResponseWithFallback(args, uaFallback, tracker);
 	} catch (err) {
 		if (proxyConfig == null || !proxyConfig.enabled || proxyConfig.secret === '') {
 			throw err;
@@ -113,7 +115,9 @@ export async function getResponseWithProxyFallback(
 			throw err;
 		}
 		// Worker proxy 経由でリトライ
-		return await viaProxyWorker(args, proxyConfig);
+		const r = await viaProxyWorker(args, proxyConfig);
+		if (tracker != null) tracker.value = 'proxy';
+		return r;
 	}
 }
 

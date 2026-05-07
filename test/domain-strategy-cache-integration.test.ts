@@ -128,11 +128,12 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 		const result = await summaly(host, { followRedirects: false });
 		expect(result.title).toBe('recovered');
 
-		// fast path が失敗 → recordFailure (consecutiveFailures = 1)
+		// fast path 失敗 → recordFailure (consecutiveFailures=1) → cascade default success →
+		// recordSuccess で再記録 → consecutiveFailures が 0 にリセット (Step 2b 挙動)
 		const after = cache.lookup(host)?.entry;
-		expect(after?.consecutiveFailures).toBe(1);
-		// 失敗カウントが上がっただけで strategy は破棄されない (閾値 5 未満)
 		expect(after?.strategy).toBe('default');
+		expect(after?.consecutiveFailures).toBe(0); // Step 2b: cascade success でリセット
+		expect(after?.successCount).toBeGreaterThanOrEqual(2); // 初期 1 + cascade success 1
 	});
 
 	test('strategy=fallback_ua が登録されていても fallbackUserAgent 未指定なら fallthrough (S-1)', async () => {
@@ -187,6 +188,99 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 		expect(after?.successCount).toBe(1);
 		expect(after?.consecutiveFailures).toBe(0);
 		expect(after?.strategy).toBe('proxy');
+	});
+
+	test('cache miss + cascade default 成功 → 1-seg pathKey に default を記録 (Step 2b)', async () => {
+		app = fastify();
+		app.get('/foo/bar', (_, reply) => {
+			reply.header('content-type', 'text/html');
+			return reply.send('<html><head><title>cascadeRecord</title></head></html>');
+		});
+		await app.listen({ port });
+
+		const cache = new DomainStrategyCache();
+		setActiveCache(cache);
+
+		// cache 空状態
+		expect(cache.size).toBe(0);
+
+		const result = await summaly(`${host}/foo/bar`, { followRedirects: false });
+		expect(result.title).toBe('cascadeRecord');
+
+		// cache miss → cascade success → 1-seg ('localhost/foo') に default を記録
+		expect(cache.size).toBe(1);
+		const hit = cache.lookup(`${host}/foo/bar`);
+		expect(hit?.hitKey).toBe('localhost/foo');
+		expect(hit?.entry.strategy).toBe('default');
+		expect(hit?.entry.successCount).toBe(1);
+	});
+
+	test('cache miss + cascade default 成功 (host のみ URL) → host pathKey に default を記録', async () => {
+		app = fastify();
+		app.get('/', (_, reply) => {
+			reply.header('content-type', 'text/html');
+			return reply.send('<html><head><title>hostOnly</title></head></html>');
+		});
+		await app.listen({ port });
+
+		const cache = new DomainStrategyCache();
+		setActiveCache(cache);
+
+		const result = await summaly(host, { followRedirects: false });
+		expect(result.title).toBe('hostOnly');
+
+		// path 無しのときは host のみ pathKey
+		const hit = cache.lookup(host);
+		expect(hit?.hitKey).toBe('localhost');
+		expect(hit?.entry.strategy).toBe('default');
+	});
+
+	test('cache hit fail + cascade success → hitKey に新 strategy を上書き記録 (Step 2b)', async () => {
+		app = fastify();
+		let requestCount = 0;
+		app.get('/article/42', (_, reply) => {
+			requestCount++;
+			if (requestCount === 1) {
+				// fast path のみ失敗
+				reply.code(500).send('boom');
+				return;
+			}
+			reply.header('content-type', 'text/html');
+			return reply.send('<html><head><title>recovered</title></head></html>');
+		});
+		await app.listen({ port });
+
+		const cache = new DomainStrategyCache({ consecutiveFailureThreshold: 5 });
+		cache.recordSuccess('localhost', 'default');
+		setActiveCache(cache);
+
+		const result = await summaly(`${host}/article/42`, { followRedirects: false });
+		expect(result.title).toBe('recovered');
+
+		// fast path 失敗 → recordFailure (consecutiveFailures=1) → cascade で default UA で再試行 → 成功
+		// → hitKey ('localhost') に default を再記録 (cascade success の上書きで consecutiveFailures をリセット)
+		const hit = cache.lookup(`${host}/article/42`);
+		expect(hit?.hitKey).toBe('localhost');
+		expect(hit?.entry.strategy).toBe('default');
+		expect(hit?.entry.consecutiveFailures).toBe(0); // cascade success の recordSuccess でリセット
+		expect(hit?.entry.successCount).toBeGreaterThanOrEqual(2); // 初期登録 1 + cascade success 再記録 1
+	});
+
+	test('cache miss + cascade fail → 何も記録しない (recordFailure は cache miss 経路では呼ばれない)', async () => {
+		app = fastify();
+		app.get('/', (_, reply) => {
+			reply.code(500).send('boom');
+		});
+		await app.listen({ port });
+
+		const cache = new DomainStrategyCache();
+		setActiveCache(cache);
+
+		await expect(summaly(host, { followRedirects: false })).rejects.toThrow();
+
+		// cache miss + cascade 失敗 → cache は空のまま (Step 2b では Summary レイヤの thin 判定や
+		// cascade 失敗時の recordFailure は実装しない、Step 2b-3 で扱う予定)
+		expect(cache.size).toBe(0);
 	});
 
 	test('閾値到達でエントリが破棄され、次回は cascade のみ', async () => {
