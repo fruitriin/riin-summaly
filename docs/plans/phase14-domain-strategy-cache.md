@@ -242,20 +242,20 @@ scpaping(url, opts)
 - [ ] `/api/strategy-cache` エンドポイント (dev 専用) で in-memory cache の中身を JSON で返す
 - [ ] サンプル URL から取得すると経路マッピングが学習される動作確認
 
-### Step 6 — ドキュメント
+### Step 6 — ドキュメント (完了 2026-05-08)
 
-- [ ] `docs/Library.md` に `[scraping.strategy_cache]` 設定説明
-- [ ] `docs/SETUP.md` に bootstrap / runtime path の運用説明
-- [ ] `docs/Plugins.md` の sqex / yodobashi セクションを更新 (forceX フラグ削除 → bootstrap で初期値設定の説明に)
-- [ ] `docs/knowhow/` に `domain-strategy-cache.md` を新設 (設計思想と運用)
-- [ ] `CLAUDE.repo.md` の「対応形式」表は変更なし (プラグインの test() 条件は同じ)
-- [ ] `CHANGELOG.md` に **breaking** で記載 (scpaping options から forceX 削除、ライブラリ利用者がカスタムプラグインで使っている場合は影響あり)
+- [x] `docs/Library.md` に `[scraping.strategy_cache]` 設定説明 (Step 1 / 2b-4 / 3 で逐次完了)
+- [x] `docs/SETUP.md` に bootstrap / runtime path の運用説明 (Step 1 / 3 で完了、Step 4 で「予定」表現を完了形に)
+- [x] `docs/Plugins.md` の sqex / yodobashi セクションを更新 (Step 4 で「forceX フラグ → cache + bootstrap 経由」に書き換え)
+- [x] `docs/knowhow/domain-strategy-cache.md` を新設 (Step 1 で作成、各 Step ごとに追記)
+- [x] `CLAUDE.repo.md` の yodobashi / sqex 行を Step 4 反映に更新 (Step 6 で実施)
+- [x] `CHANGELOG.md` に各 Step エントリ追加 (Step 4 は **breaking note** で internal 型 `GeneralScrapingOptions` から forceX 削除を記載)
 
-### Step 7 — skill 更新
+### Step 7 — skill 更新 (完了 2026-05-08)
 
-- [ ] `/url-preview-check` の Phase 4 「修正レイヤの選定」表を更新:
-  - 「特殊な救援が必要な host を発見」→ **`bootstrap.jsonl` に 1 行追加** が第一選択肢に
-  - プラグイン作成は引き続き「引き出し方の自在性」が必要なケースのみ
+- [x] `/url-preview-check` の Phase 4 「修正レイヤの選定」表を更新: **経路学習キャッシュ層** を最上段に追加し「`bootstrap.jsonl` に 1 行追加」を第一選択肢に明示
+- [x] 同 skill の fail mode H (yodobashi 系 TLS 切断) / B' (sqex 系 IP block 200+thin) セクションを「forceX フラグ」から「bootstrap entry + (必要なら) プラグイン」の説明に書き換え
+- [x] 「新サイト追加の判断フロー (phase14 以降)」を Phase 4 末尾に追加 — 経路だけ問題 / URL 正規化必要 / DOM 直読み必要 / ブラウザ JS 実行必要 の 4 段階で判断
 
 ## 設計判断
 
@@ -306,4 +306,4 @@ scpaping(url, opts)
 
 ## 完了状況
 
-Step 1 + Step 2 系 + Step 3 + Step 4 (forceX 廃止) 完了 (2026-05-08)。Step 5 (dev UI) / Step 6 (docs) / Step 7 (skill 更新) が残 — いずれも非ブロッカー。
+Step 1 + Step 2 系 + Step 3 + Step 4 + Step 6 (docs 仕上げ) + Step 7 (skill 更新) 完了 (2026-05-08)。**残るは Step 5 (dev UI) のみ** — UI 動作確認が必要なため自動化困難、運用者が手動で着手判断する想定。

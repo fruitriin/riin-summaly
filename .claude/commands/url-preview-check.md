@@ -169,10 +169,10 @@ curl 結果のパターンから **5 タイプ**に分類:
   ssh summaly "curl -sS -L '$URL' | grep -oE '<title[^>]*>[^<]+</title>'"  # → 404 NOT FOUND
   ```
 - **B との違い**: B はエラーシグナル (5xx / type filter undefined / connection_dropped) があるので `getResponseWithProxyFallback` のエラー発火型で救援できるが、B' は HTTP 層完全正常なので発火しない
-- **対処**: phase12.6 の `forceProxyFallback` フラグ。プラグイン側で `scpaping(url, { ...opts, forceProxyFallback: true })` を渡すと **1〜2段目をスキップして CF Workers proxy 直行**。`forceCurlCffiFallback` (TLS 切断対策) と並列構造、defense-in-depth (domains allowlist + `https:` プロトコル) は維持
-- **実例 (2026-05-07)**: `store.jp.square-enix.com` (Square Enix e-STORE / `sqex` プラグインで対処)
-- 関連 knowhow: [cf-workers-outbound-proxy.md](../../docs/knowhow/cf-workers-outbound-proxy.md) の「phase12.6 で発見: エラーシグナルなし IP block」セクション
-- 関連実装: [src/plugins/sqex.ts](../../src/plugins/sqex.ts), [docs/plans/phase12.6-sqex-store-proxy.md](../../docs/plans/phase12.6-sqex-store-proxy.md)
+- **対処 (phase14 Step 4 以降)**: 経路学習キャッシュ + bootstrap で proxy fast path を発火させる。`data/domain-strategy-bootstrap.jsonl` に `<host> → proxy` エントリを 1 行追加する (旧 `forceProxyFallback` フラグは phase14 Step 4 で廃止)。プラグインを書く必要は「URL 正規化」「DOM 直読み」等の引き出し方の自在性が必要なケースのみ
+- **実例 (2026-05-07)**: `store.jp.square-enix.com` (Square Enix e-STORE / `sqex` プラグイン + bootstrap entry で対処)
+- 関連 knowhow: [cf-workers-outbound-proxy.md](../../docs/knowhow/cf-workers-outbound-proxy.md) の「phase12.6 で発見: エラーシグナルなし IP block」セクション、[domain-strategy-cache.md](../../docs/knowhow/domain-strategy-cache.md)
+- 関連実装: [src/plugins/sqex.ts](../../src/plugins/sqex.ts), [data/domain-strategy-bootstrap.jsonl](../../data/domain-strategy-bootstrap.jsonl), [docs/plans/phase12.6-sqex-store-proxy.md](../../docs/plans/phase12.6-sqex-store-proxy.md)
 
 ### C. 短縮 URL の preview HTML 詐欺 (phase12.1 followup #4)
 
@@ -215,14 +215,13 @@ curl 結果のパターンから **5 タイプ**に分類:
 
 - 兆候: `curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR` でローカルから即座に切断 (`status=000 size=0 time<0.1s`)、本番 (Vultr) からは `category: timeout` (`Timeout awaiting 'socket' for 20000ms`)。UA / SNS bot UA すべてで弾かれる + **CF Workers proxy fetch も同じ TLS フィンガープリントで弾かれる** (proxy 経由でも救えない)
 - **判断**: `curl_cffi` (libcurl-impersonate) で Chrome / Firefox / Safari の TLS フィンガープリント (JA3) を**完全再現**することだけが正解経路
-- **対処**: phase12.5 で **`tools/curl-cffi-fetcher/` 経由 + 専用プラグイン**パターンを採用。`(www.)?yodobashi.com` で実装:
-  - test() で対象ホストにマッチ
-  - summarize() で `proxyFallback: undefined` (proxy 段は構造的に効かないので明示スキップ) + `forceCurlCffiFallback: true` (1〜3段目すべてスキップして curl_cffi 直行) を渡す
-  - プラグインに `export const skipRedirectResolution = true` を宣言 (resolveRedirect HEAD probe も yodobashi で 20 秒空回りするため切る)
-  - `[scraping.curl_cffi]` を有効化 + `domains` allowlist に対象ホスト追加
+- **対処 (phase14 Step 4 以降)**: 経路学習キャッシュ + bootstrap で curl_cffi fast path を発火させる。`data/domain-strategy-bootstrap.jsonl` に `<host> → curl_cffi` エントリを 1 行追加する (旧 `forceCurlCffiFallback` フラグは phase14 Step 4 で廃止)。`(www.)?yodobashi.com` で実装済 (`yodobashi` プラグイン + bootstrap entry):
+  - **bootstrap entry**: `data/domain-strategy-bootstrap.jsonl` に `{"pathKey":"yodobashi.com","strategy":"curl_cffi",...}` (本サイト用は実装済)
+  - **プラグイン (引き出し方の自在性が必要な場合のみ)**: test() で対象ホストにマッチ、`export const skipRedirectResolution = true` を宣言 (resolveRedirect HEAD probe も yodobashi で 20 秒空回りするため切る、cache では代替不可な独立最適化)
+  - **config**: `[scraping.curl_cffi]` を有効化 + `domains` allowlist に対象ホスト追加、`[scraping.strategy_cache]` を有効化 (デフォルト)
   - production server に `uv` インストール + `tools/curl-cffi-fetcher/` で `uv sync`
 - **判断条件**: 対象サイトが OGP を整備していて (= share させたい意思あり、static HTML に OGP が入っている)、curl_cffi (chrome120 impersonate) で 200 + OGP が取れれば実装する価値あり
-- 関連 knowhow: [curl-cffi-tls-impersonation.md](../../docs/knowhow/curl-cffi-tls-impersonation.md)、[src/plugins/yodobashi.ts](../../src/plugins/yodobashi.ts) — 3 重スキップ実装例
+- 関連 knowhow: [curl-cffi-tls-impersonation.md](../../docs/knowhow/curl-cffi-tls-impersonation.md)、[domain-strategy-cache.md](../../docs/knowhow/domain-strategy-cache.md)、[src/plugins/yodobashi.ts](../../src/plugins/yodobashi.ts)、[data/domain-strategy-bootstrap.jsonl](../../data/domain-strategy-bootstrap.jsonl)
 
 ### I. SPA で OGP が JS 実行後の DOM にだけ入るサイト (救援不可、保留)
 
@@ -248,11 +247,18 @@ curl 結果のパターンから **5 タイプ**に分類:
 
 | Layer | 該当 fail mode | 実装ファイル |
 |---|---|---|
+| **経路学習キャッシュ (第一選択肢、phase14)** | B' / H | **`data/domain-strategy-bootstrap.jsonl` に 1 行追加** (`{"pathKey":"<host>","strategy":"<proxy\|curl_cffi\|fallback_ua>",...}`) で `scpaping()` 冒頭の cache hit fast path から該当 strategy を直接呼ぶ。プラグイン作成は不要 (URL 正規化や DOM 直読み等の「引き出し方の自在性」が必要なケースのみ) |
 | URL 解決 | C / D | `src/utils/short-urls.ts` (`KNOWN_SHORT_HOSTS`)、各 plugin の `test()` + `summarize()` 内 URL 正規化 |
-| HTTP 取得 | A / B / F | `src/utils/got.ts` (`getResponseWithFallback`)、`src/utils/proxy-fallback.ts` (`viaProxyWorker`) |
-| プラグイン | C / D / E / F | `src/plugins/<name>.ts`、`src/plugins/index.ts` 登録 |
+| HTTP 取得 | A / B / F | `src/utils/got.ts` (`getResponseWithFallback`)、`src/utils/proxy-fallback.ts` (`viaProxyWorker`)、`src/utils/curl-cffi-fetch.ts` (`viaCurlCffi`) |
+| プラグイン | C / D / E / F | `src/plugins/<name>.ts`、`src/plugins/index.ts` 登録。phase14 以降は **bootstrap で経路だけ済むなら作らない** ことを推奨 (test() + URL 正規化 + DOM 直読み等の理由が必要) |
 | 汎用パス | E (汎用) | `src/general.ts` (`parseGeneral`)、phase11.7 favicon fallback 等 |
 | エラー分類 / 救援 | A / B | `src/utils/parse-failure-log.ts` (`categorizeError`)、`bin/config-loader.ts` 設定 |
+
+**新サイト追加の判断フロー (phase14 以降)**:
+1. 経路だけが問題 (= デフォルト UA で 5xx / 200+thin / TLS 切断、proxy or curl_cffi で取れる) → **bootstrap entry 追加だけで完了**
+2. 上記 + URL 正規化が必要 (短縮 URL や `?ref_=...` 等) → プラグインを新設して `test()` + URL 正規化を実装、bootstrap entry も追加
+3. 上記 + DOM 直読みや公式 API 直叩きが必要 → プラグインで `summarize()` をフル実装 (npmjs / amazon パターン)
+4. ブラウザ JS 実行が必須 (fail mode I) → **summaly のスコープ外** (Misskey 側で URL のみ表示にフォールバック)
 
 ## Phase 5: 実装 + テスト
 
