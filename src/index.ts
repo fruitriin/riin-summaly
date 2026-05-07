@@ -248,6 +248,20 @@ export type SummalyOptions = {
 	 * 詳細は `tools/curl-cffi-fetcher/README.md` 参照。
 	 */
 	curlCffiFallback?: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig;
+
+	/**
+	 * 経路学習キャッシュ設定 (phase14 Step 1)。
+	 *
+	 * ドメイン (host + path prefix 1〜2 段) ごとに「成功した取得経路」を学習・永続化し、
+	 * 次回以降のリクエストで第一選択肢として使うことで「初回 default UA で 20 秒空回り
+	 * → fallback で成功」の時間損失を回避する。`enabled === false` なら従来カスケードのみ。
+	 *
+	 * 詳細は `docs/plans/phase14-domain-strategy-cache.md` 参照。
+	 *
+	 * **注**: phase14 Step 1 ではストレージ層と TOML 設定パスのみが導入される。
+	 * `scpaping()` への統合は Step 2 で行う。
+	 */
+	domainStrategyCache?: import('@/utils/domain-strategy-cache.js').DomainStrategyCacheOptions;
 };
 
 const DEFAULT_CACHE_MAX_AGE = 604800;

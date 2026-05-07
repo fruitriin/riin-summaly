@@ -120,6 +120,7 @@ function parseScrapingSection(rawScraping: Toml, out: SummalyOptions): void {
 	parseScrapingFallbackSection(rawScraping.fallback, out);
 	parseProxySection(rawScraping.proxy, out);
 	parseCurlCffiSection(rawScraping['curl_cffi'], out);
+	parseStrategyCacheSection(rawScraping['strategy_cache'], out);
 }
 
 function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void {
@@ -321,6 +322,63 @@ function parseCurlCffiSection(rawCurlCffi: Toml, out: SummalyOptions): void {
 		domains,
 		timeoutMs,
 	};
+}
+
+/**
+ * `[scraping.strategy_cache]` セクションを処理し、`SummalyOptions.domainStrategyCache` にマップする (phase14 Step 1)。
+ *
+ * - `enabled === false` のときは何もマップしない (従来カスケードのみ)
+ * - `enabled === true` (or undefined when section present) でデフォルト値を採用する
+ * - `bootstrapPath` / `runtimePath` は省略可。空文字列は明示エラー
+ * - `maxEntries` / `consecutiveFailureThreshold` / `compactionThreshold` は正整数
+ */
+function parseStrategyCacheSection(rawStrategyCache: Toml, out: SummalyOptions): void {
+	if (rawStrategyCache === undefined) return;
+	if (!isObject(rawStrategyCache)) {
+		throw new TypeError('config: `[scraping.strategy_cache]` must be a table');
+	}
+	let enabled = true;
+	if (rawStrategyCache.enabled !== undefined) {
+		expectType(rawStrategyCache.enabled, 'boolean', 'scraping.strategy_cache.enabled');
+		enabled = rawStrategyCache.enabled as boolean;
+	}
+	if (!enabled) return;
+
+	const opts: NonNullable<SummalyOptions['domainStrategyCache']> = { enabled: true };
+
+	if (rawStrategyCache.bootstrapPath !== undefined) {
+		expectType(rawStrategyCache.bootstrapPath, 'string', 'scraping.strategy_cache.bootstrapPath');
+		const v = (rawStrategyCache.bootstrapPath as string).trim();
+		if (v === '') {
+			throw new RangeError('config: `scraping.strategy_cache.bootstrapPath` must not be empty when specified');
+		}
+		opts.bootstrapPath = v;
+	}
+	if (rawStrategyCache.runtimePath !== undefined) {
+		expectType(rawStrategyCache.runtimePath, 'string', 'scraping.strategy_cache.runtimePath');
+		const v = (rawStrategyCache.runtimePath as string).trim();
+		if (v === '') {
+			throw new RangeError('config: `scraping.strategy_cache.runtimePath` must not be empty when specified');
+		}
+		opts.runtimePath = v;
+	}
+	if (rawStrategyCache.maxEntries !== undefined) {
+		expectType(rawStrategyCache.maxEntries, 'number', 'scraping.strategy_cache.maxEntries');
+		expectPositiveInteger(rawStrategyCache.maxEntries as number, 'scraping.strategy_cache.maxEntries');
+		opts.maxEntries = rawStrategyCache.maxEntries as number;
+	}
+	if (rawStrategyCache.consecutiveFailureThreshold !== undefined) {
+		expectType(rawStrategyCache.consecutiveFailureThreshold, 'number', 'scraping.strategy_cache.consecutiveFailureThreshold');
+		expectPositiveInteger(rawStrategyCache.consecutiveFailureThreshold as number, 'scraping.strategy_cache.consecutiveFailureThreshold');
+		opts.consecutiveFailureThreshold = rawStrategyCache.consecutiveFailureThreshold as number;
+	}
+	if (rawStrategyCache.compactionThreshold !== undefined) {
+		expectType(rawStrategyCache.compactionThreshold, 'number', 'scraping.strategy_cache.compactionThreshold');
+		expectPositiveInteger(rawStrategyCache.compactionThreshold as number, 'scraping.strategy_cache.compactionThreshold');
+		opts.compactionThreshold = rawStrategyCache.compactionThreshold as number;
+	}
+
+	out.domainStrategyCache = opts;
 }
 
 function parseServerSection(raw: Toml): ServerOptions {

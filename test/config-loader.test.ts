@@ -495,4 +495,107 @@ describe('parseTomlConfigString', () => {
 			expect(cfg.summaly.proxyFallback?.timeoutMs).toBe(30000);
 		});
 	});
+
+	describe('[scraping.strategy_cache] (phase14 Step 1)', () => {
+		test('セクション省略時は domainStrategyCache が undefined', () => {
+			const cfg = parseTomlConfigString(`
+				[summaly]
+				responseTimeout = 5000
+			`);
+			expect(cfg.summaly.domainStrategyCache).toBeUndefined();
+		});
+
+		test('enabled = true (デフォルト) + 全パラメータ指定で全フィールドをマップ', () => {
+			const cfg = parseTomlConfigString(`
+				[scraping.strategy_cache]
+				enabled = true
+				bootstrapPath = "data/bootstrap.jsonl"
+				runtimePath = "/var/cache/summaly/runtime.jsonl"
+				maxEntries = 2000
+				consecutiveFailureThreshold = 5
+				compactionThreshold = 500
+			`);
+			expect(cfg.summaly.domainStrategyCache).toEqual({
+				enabled: true,
+				bootstrapPath: 'data/bootstrap.jsonl',
+				runtimePath: '/var/cache/summaly/runtime.jsonl',
+				maxEntries: 2000,
+				consecutiveFailureThreshold: 5,
+				compactionThreshold: 500,
+			});
+		});
+
+		test('enabled = false なら何もマップしない', () => {
+			const cfg = parseTomlConfigString(`
+				[scraping.strategy_cache]
+				enabled = false
+				bootstrapPath = "data/bootstrap.jsonl"
+			`);
+			expect(cfg.summaly.domainStrategyCache).toBeUndefined();
+		});
+
+		test('enabled 省略時はデフォルト ON で空 opts (= 全 default 採用)', () => {
+			const cfg = parseTomlConfigString(`
+				[scraping.strategy_cache]
+			`);
+			expect(cfg.summaly.domainStrategyCache).toEqual({ enabled: true });
+		});
+
+		test('bootstrapPath 空文字列は RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.strategy_cache]
+				bootstrapPath = ""
+			`)).toThrow(/scraping\.strategy_cache\.bootstrapPath.*must not be empty/);
+		});
+
+		test('runtimePath 空文字列は RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.strategy_cache]
+				runtimePath = ""
+			`)).toThrow(/scraping\.strategy_cache\.runtimePath.*must not be empty/);
+		});
+
+		test('maxEntries が 0 / 負数 / 小数なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.strategy_cache]
+				maxEntries = 0
+			`)).toThrow(/scraping\.strategy_cache\.maxEntries.*positive integer/);
+			expect(() => parseTomlConfigString(`
+				[scraping.strategy_cache]
+				maxEntries = -1
+			`)).toThrow(/scraping\.strategy_cache\.maxEntries.*positive integer/);
+			expect(() => parseTomlConfigString(`
+				[scraping.strategy_cache]
+				maxEntries = 1.5
+			`)).toThrow(/scraping\.strategy_cache\.maxEntries.*positive integer/);
+		});
+
+		test('consecutiveFailureThreshold が 0 なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.strategy_cache]
+				consecutiveFailureThreshold = 0
+			`)).toThrow(/scraping\.strategy_cache\.consecutiveFailureThreshold.*positive integer/);
+		});
+
+		test('compactionThreshold が 0 なら RangeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.strategy_cache]
+				compactionThreshold = 0
+			`)).toThrow(/scraping\.strategy_cache\.compactionThreshold.*positive integer/);
+		});
+
+		test('enabled の型違いは TypeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping.strategy_cache]
+				enabled = "yes"
+			`)).toThrow(/scraping\.strategy_cache\.enabled.*boolean/);
+		});
+
+		test('セクションがテーブルでないと TypeError', () => {
+			expect(() => parseTomlConfigString(`
+				[scraping]
+				strategy_cache = "not a table"
+			`)).toThrow(/scraping\.strategy_cache.*must be a table/);
+		});
+	});
 });

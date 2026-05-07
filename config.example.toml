@@ -80,6 +80,22 @@ enabled = false
 #
 # 詳細は tools/curl-cffi-fetcher/README.md 参照。
 
+[scraping.strategy_cache]
+# 経路学習キャッシュ (phase14 Step 1)。host + path prefix 1〜2 段ごとに「成功した取得経路」
+# (default / fallback_ua / proxy / curl_cffi のどれか) を学習し、JSONL で永続化する。
+# 次回以降のリクエストでは学習した経路を第一選択肢として使うことで「初回 default UA で
+# 20 秒空回り → fallback で成功」のような時間損失を回避する。
+#
+# **注**: phase14 Step 1 ではストレージ層と TOML 設定パスのみ。`scpaping()` への統合は Step 2 で行う。
+# 現時点でこのセクションを設定しても挙動は変わらない (将来互換のため明示しておくのは可)。
+#
+# enabled = true                                    # デフォルト ON。明示 false で従来カスケードのみ
+# bootstrapPath = "data/domain-strategy-bootstrap.jsonl"   # リポ同梱の初期データ。省略時は bootstrap なし (Step 3 で同梱予定)
+# runtimePath = "/var/cache/summaly/domain-strategy.jsonl" # 学習結果の永続化先。省略時は永続化なし (in-memory のみ)
+# maxEntries = 5000                                 # in-memory LRU の上限エントリ数
+# consecutiveFailureThreshold = 3                   # N 連続失敗でエントリ破棄
+# compactionThreshold = 1000                        # runtime JSONL 累積行数がこれを超えたら BG 圧縮
+
 [scraping.fallback]
 # Bot block 検出時に別 UA で 1 回リトライする (phase11.9)。
 # `SummalyBot` 文字列を WAF が弾くサイト (`playing-games.com` 等) を救援する用途。

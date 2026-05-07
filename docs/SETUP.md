@@ -376,6 +376,40 @@ uv sync
 - **子プロセス timeout** で SIGKILL 強制終了 (`timeoutMs`)
 - 詳細は `tools/curl-cffi-fetcher/README.md` 参照
 
+経路学習キャッシュ (phase14 Step 1)
+----------------------------------------------------------------
+
+ドメイン (host + path prefix 1〜2 段) ごとに「成功した取得経路」(`default` / `fallback_ua` / `proxy` / `curl_cffi`) を学習し、JSONL で永続化する仕組みです。次回以降のリクエストでは学習した経路を第一選択肢として使うことで「初回 default UA で 20 秒空回り → fallback で成功」のような時間損失を回避します。
+
+> **注**: phase14 Step 1 では **ストレージ層と TOML 設定パスのみ** が導入されています。`scpaping()` への統合は Step 2 で実施するため、現時点ではこのセクションを設定しても挙動は変わりません (将来互換のため明示しておくのは可)。
+
+### 設定 (`config.toml`)
+
+```toml
+[scraping.strategy_cache]
+enabled = true
+bootstrapPath = "data/domain-strategy-bootstrap.jsonl"   # リポ同梱の初期データ (省略時は内蔵 default)
+runtimePath = "/var/cache/summaly/domain-strategy.jsonl" # 学習結果の永続化先
+maxEntries = 5000
+consecutiveFailureThreshold = 3
+compactionThreshold = 1000
+```
+
+| 設定キー | 説明 | デフォルト |
+|:--|:--|:--|
+| `enabled` | 経路学習キャッシュを有効化 | `true` |
+| `bootstrapPath` | リポ同梱の初期 JSONL パス (yodobashi → curl_cffi 等の bootstrap 値) | （省略時は bootstrap なし。Step 3 で `data/domain-strategy-bootstrap.jsonl` が同梱される予定） |
+| `runtimePath` | 学習結果の永続化先 JSONL。`fs.appendFileSync` で 1 行ずつ追記 | （省略時は永続化なし、in-memory のみ） |
+| `maxEntries` | in-memory LRU の上限エントリ数 | `5000` |
+| `consecutiveFailureThreshold` | N 連続失敗でエントリ破棄 | `3` |
+| `compactionThreshold` | runtime JSONL 累積行数がこれを超えたら BG で全件書き換え | `1000` |
+
+### 永続化ファイルの取り扱い
+
+- `runtimePath` には **学習履歴** (どのサイトをよく見ているか) が含まれるため、ファイルパーミッション 600 を推奨
+- bootstrap (リポ同梱で横断共有) と runtime (環境固有) を分離する設計。bootstrap は `data/domain-strategy-bootstrap.jsonl` に集約予定 (Step 3 で配備)
+- 連続失敗で破棄されたエントリは「閾値到達状態」を JSONL に append する形で記録。次回起動時のロードで bootstrap の値があっても「破棄済み」として打ち消す
+
 パース失敗ドメインのログ蓄積 (phase10.1)
 ----------------------------------------------------------------
 

@@ -31,6 +31,7 @@
 | ファイル | 要約 | キーワード |
 |---|---|---|
 | [inflight-dedup-pattern.md](inflight-dedup-pattern.md) | in-flight Map で同 URL の並列リクエストを 1 本化。Promise の resolve 値にエラーを埋め込んで finally / non-null-assertion を回避するパターン、LRU set → inFlight delete の順序、X-Cache: HIT-COALESCED のテスト方法 | in-flight dedup, thundering herd, LRU, Promise, CacheEntry, kind union, X-Cache, HIT-COALESCED, Fastify, Misskey ストリーミング, no-non-null-assertion |
+| [domain-strategy-cache.md](domain-strategy-cache.md) | 経路学習キャッシュ (phase14 Step 1)。host + path prefix 1〜2 段ごとに「成功した取得経路」(default / fallback_ua / proxy / curl_cffi) を学習・JSONL 永続化。bootstrap (リポ管理) + runtime (環境固有 gitignored) の 2 段ロード、specific → general 順 lookup、N 連続失敗で破棄 + 「閾値到達マーク」JSONL append で次回起動 bootstrap 打ち消し。bootstrap ロード時 consecutiveFailures を 0 にリセット (誤削除防止 C-1)、compaction の tmp cleanup (C-2)、append/compact error logged フラグ分離 (W-1)、http(s) 限定 + hostname 空ガード (W-3 phase10.1 sanitizeUrlForLog 横展開)。Step 2 で scpaping 統合、Step 4 で forceX 廃止予定 | domain strategy cache, 経路学習, bootstrap.jsonl, runtime.jsonl, lookup specific → general, recordSuccess, recordFailure, 連続失敗破棄, JSONL append, 原子置き換え, setImmediate compaction, tmp cleanup, error logged フラグ分離, pathKeysOf, http(s) 限定, file/data スキーム除外, forceX 廃止予定 |
 
 ## summaly 開発体験（dev サーバ）
 

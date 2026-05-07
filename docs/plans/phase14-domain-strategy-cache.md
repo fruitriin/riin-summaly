@@ -117,23 +117,40 @@ scpaping(url, opts)
 
 ## 実装ステップ
 
-### Step 1 — ストレージ層 (S〜M)
+### Step 1 — ストレージ層 (S〜M) (完了 2026-05-07)
 
-- [ ] `src/utils/domain-strategy-cache.ts`:
-  - `DomainStrategyEntry` 型定義
+- [x] `src/utils/domain-strategy-cache.ts`:
+  - `DomainStrategyEntry` 型定義 + `DomainStrategy` ユニオン型
+  - `pathKeysOf(url)` で specific → general 順 (2 段, 1 段, host のみ) のキー生成
   - in-memory LRU (上限 5000 entries) + JSONL persistence
-  - `lookup(host, path)` で specific → general 順に探索
+  - `lookup(url)` で最初にヒットしたエントリを `{entry, hitKey}` で返す
   - `recordSuccess(pathKey, strategy)` / `recordFailure(pathKey)`
-  - bootstrap JSONL ロード (起動時 1 回)
-  - runtime JSONL append (`fs.appendFile` 非同期)
-  - compaction (1000 行超えたら BG で書き換え)
-- [ ] `bin/config-loader.ts` に `[scraping.strategy_cache]` セクション追加:
+  - bootstrap JSONL ロード (起動時 1 回、`consecutiveFailures` を 0 にリセットして取り込み)
+  - runtime JSONL append (`appendFileSync` 同期、event loop 上で原子的)
+  - compaction (`compactionThreshold` 行超で `setImmediate` 経由 → `writeFileSync` + `renameSync` 原子置き換え)
+  - N 連続失敗で破棄 (デフォルト 3)
+- [x] `bin/config-loader.ts` に `[scraping.strategy_cache]` セクション追加:
   - `enabled = true` (デフォルト ON)
-  - `bootstrapPath` (省略時: パッケージ同梱の `data/domain-strategy-bootstrap.jsonl`)
-  - `runtimePath` (省略時: `~/.cache/summaly/domain-strategy.jsonl`)
+  - `bootstrapPath` (省略時: bootstrap なし。Step 3 で `data/domain-strategy-bootstrap.jsonl` 同梱予定)
+  - `runtimePath` (省略時: 永続化なし、in-memory のみ)
+  - `maxEntries = 5000`
   - `consecutiveFailureThreshold = 3`
   - `compactionThreshold = 1000`
-- [ ] テスト: lookup 順序 / append / compaction / 連続失敗破棄
+- [x] `SummalyOptions.domainStrategyCache?: DomainStrategyCacheOptions` を追加
+- [x] テスト (36 ケース): lookup 順序 / append / compaction / 連続失敗破棄 / bootstrap consecutiveFailures リセット (C-1) / data: file: スキーム除外 (W-3)
+- [x] config-loader テスト 11 ケース追加
+- [x] config.example.toml + docs/deploy-examples/summaly-config.example.toml 両方に `[scraping.strategy_cache]` セクション追加
+- [x] docs/Library.md / docs/SETUP.md に説明追加
+- [x] CHANGELOG (unreleased) にエントリ追加
+
+#### 方針からの変更
+
+- `lookup(host, path)` ではなく `lookup(url)` API に変更 (URL から自動で pathKeys を導出)
+- `runtimePath` のデフォルトを `~/.cache/summaly/domain-strategy.jsonl` ではなく **省略時は永続化なし** に変更 (依存関係を増やさず、運用者が明示的に指定する設計)
+- bootstrap ロード時に `consecutiveFailures` を 0 にリセットして取り込み (レビュー C-1: 同梱データの誤削除防止)
+- `pathKeysOf` は `data:` / `file:` / `javascript:` 等の non-http(s) スキームを空配列で返す (レビュー W-3: phase10.1 sanitizeUrlForLog の教訓再適用)
+- compaction 失敗時の `.tmp` ファイル cleanup を `unlinkSync` で追加 (レビュー C-2)
+- append 用と compaction 用の error logged フラグを分離 (レビュー W-1: 一方が抑制されても他方は通る)
 
 ### Step 2 — `scpaping()` への統合
 
@@ -233,4 +250,4 @@ scpaping(url, opts)
 
 ## 完了状況
 
-未着手。
+Step 1 完了 (2026-05-07)。Step 2〜7 は次サイクル以降。
