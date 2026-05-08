@@ -191,6 +191,43 @@ const thumbnail = image ?? icon?.href ?? null;
 
 favicon が 16×16 だと Misskey クライアントの大きなサムネ枠で拡大表示されてボヤける。「`thumbnail === icon` ならアイコン扱いの小枠表示」のような分岐は Misskey fork 側の責務（summaly の射程外）。
 
+### `.ico` / `.cur` は thumbnail に流用しない (2026-05-08 補正)
+
+phase11.7 の favicon fallback で **`.ico` / `.cur` は `<img>` で broken image** になる問題が判明。Misskey は `summary.icon` を `media-proxy/preview.webp?url=...&preview=1` 経由で ico→webp 変換して表示しているが、**summaly はその proxy ホストを知らない** ため `summary.thumbnail` 自体には素材として `<img>` 直接表示可能なものを返すしかない。
+
+設計判断:
+
+- **`isThumbnailableIcon(icon)` ヘルパで判定** (export、`src/general.ts`):
+  - content-type 優先: `image/x-icon` / `image/vnd.microsoft.icon` を blocklist、それ以外の `image/*` を許可
+  - content-type 不明: 拡張子で判定 (`.ico` / `.cur` 除外、その他は許可)
+  - 拡張子なし path (動的 favicon) は許可 (誤検知より取りこぼし防止優先)
+- **`summary.icon` フィールドは ico を残す** (互換性維持): Misskey 等が proxy 経由で ico→webp 変換できる UI もあるため、icon フィールドのセマンティクス「サイトアイコン」を保つ
+- **`summary.thumbnail` のセマンティクス**: 「`<img>` に直接貼れる素材」と定義し、proxy が無い利用者 (Mastodon / 任意 client) でも broken image にならない安全側へ寄せる
+
+**summaly のスコープ整理**: 「URL preview メタデータを返すライブラリ」として **「素材は再生可能形式のみ返す」** が責務。proxy URL の組み立ては利用者責務 (proxy ホストは summaly が知らない)。`mediaProxyHint` のような利用者宣言オプションを将来追加すれば proxy 経由 thumbnail も解禁できるが、現状は未対応。
+
+### なろうプラグイン: API allcount=0 のとき HTML 専用 scrape にフォールバック (phase13.1 補正、2026-05-08)
+
+phase13.1 で「API 直叩き = PV カウント影響無し」を採用したが、**API の index に載っていない作品** (古い作品 / API 登録漏れ) で `allcount=0` が返るケースが本番ログで観測 (`n3862be` 等)。HTML ページは正常に存在し OGP も完備しているのに preview 不能になる。
+
+3 段フォールバック:
+
+1. **API 直叩き** (`allcount=1`) — 最優先 (PV 影響無し)
+2. **HTML scrape (`extractNovelDataFromHtml`)** (`allcount=0` で title or writer が取れる) — `Twitterbot/1.0` UA で叩いて PV カウント除外を狙う
+3. **`general()` + Twitterbot UA** (HTML 構造が完全に壊れた場合) — OGP 経路の最終 fallback
+
+HTML から取れるフィールド: `title` / `writer` / `story` / `isr15` / `iszankoku` / `isbl` / `isgl` / `keyword`。取れないフィールド: `genre` / `novel_type` / `end` (HTML には明示されない、API のみで取れる)。`composeDescription` の asString/asNumber が `undefined` を `null` として扱う設計のおかげで「取れないフィールドは undefined のまま」で動作する。
+
+セレクタは fallback テキストマッチを併用してメンテ耐性を高める:
+
+- title: `h1.p-novel__title` → fallback `og:title`
+- writer: `.p-novel__author a` → fallback テキスト「作者：xxx」
+- マーカー: 本文「〔残酷描写〕」テキストパターンマッチ
+
+抽出関数を `extractNovelDataFromHtml($)` として **pure 化 + export** することで test fixture HTML で容易にテスト可能 (cheerio.load 経由で 9 ケース)。
+
+**SNS bot UA を選ぶ意義**: なろうのアクセス解析は SNS bot UA を PV カウントから除外している前提で、phase13.1 の API 直叩き精神 (PV 影響無し) を構造的に維持できる。phase12.3 (nintendo-store の `facebookexternalhit/1.1` 固定) と同類のパターン。
+
 ## 関連
 
 - [object-assign-mutable-target.md](object-assign-mutable-target.md) — オプション扱いの落とし穴

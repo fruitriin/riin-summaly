@@ -206,6 +206,64 @@ const res = await scpaping(url.href, {
 
 `followRedirects` は型上 `GeneralScrapingOptions` に含まれるが現状すべての呼出経路で undefined。将来別経路が `followRedirects: false` を渡すリスクに対する明示 override。コメントで意図を明示すれば許容。
 
+## 自信度評価は実装を Read してから答える
+
+オーナーから「Phase X の実装の自信度」を聞かれたとき、**計画書 + コンパクション後記憶ベースで答えると不正確になる**。実装ファイルの存在は覚えていても、レビュー反映で改善された対処済みの懸念や、JSDoc に明記された設計判断は記憶から薄れている。
+
+実体験 (2026-05-08 phase14 自信度評価):
+
+1. **1 回目の評価**: 「writeFileSync + renameSync の EXDEV エラー、unlinkSync catch」の懸念を計画書記憶から列挙、自信度 75〜80% と回答
+2. **オーナー指摘で実装を Read**: catch で `unlinkSync(tmpPath)` 済み、JSDoc に cross-device 対処が明記、`fetchByStrategy` の `null` vs `throw` 二値設計で gateFailedNeutral の neutrality 維持が読み取れる、HTTP 層 recordSuccess 削除という Step 2b 後半 設計修正の跡 (oscillation bug 根本解決)
+3. **2 回目の評価**: 自信度 85〜90% に上方修正、コード品質単独なら 90%+
+
+教訓:
+- **自信度評価は本番未検証分とコード品質を分けて答える**: 「コード品質 90%+」「本番未検証分の不確実性で総合 85〜90%」のような分離回答が正確
+- **実装を Read してから答える**: Plan-time の懸念リストには「実装で対処済みのもの」と「実装でしか見えないもの」が混在する。実装読み直し前に答えると前者を疑似懸念として混ぜてしまう
+- **JSDoc は重要な設計判断の宝庫**: レビュー指摘 (S-1 / W-1 等) の reference 番号が JSDoc に残っているケースが多く、対処済み根拠として読める
+
+## 本番 fix と E2E テスト追加の分業
+
+オーナーが本番デプロイ (実環境ログ確認 + 再現確認 + 修正効果観察) を担当する裏で、AI が **本来あるべきだった E2E テストを 1 本追加** する分業パターン。
+
+実体験 (2026-05-08 phase14 cascade fallback E2E):
+
+- 初期実装で「default UA 失敗 → fallback UA で取れる → fallback_ua 学習」の E2E テストが欠落していた
+- オーナー指摘 (「他の優先経路にフォールバックされていく → 2 回目以降 OK になっていれば OK」) で発覚
+- AI が tracker 機構の構造的確認 + 専用 E2E テスト 1 本追加、オーナーは並行で本番投入
+
+メリット:
+- **本番投入の意思決定は人間**、E2E テスト追加 (auto-runnable) は AI、で時間並列化
+- E2E テストが回帰防止層として残るので **将来の構造変更で同種バグが再発しない**
+- 本番修正コミット ≠ E2E テスト追加コミット で分離 (revert 容易)
+
+注意:
+- AI 追加の E2E は「成功パス」だけでなく「失敗カウント増加 → cascade 移行」のような中間状態も assert すること
+- E2E が通っただけで本番が動く保証にはならない (Mock の限界、本番は Mock 化できないネットワーク要素を含む)
+
+## 本番ログから始まる即時 fix の作業順序
+
+オーナーが本番 pino ログをペーストして「ここで failed しているのを見て」と渡してくる場合の作業順序:
+
+1. **エラー stack を読み解いて該当コード箇所を特定** (file:line から逆引き)
+2. **再現条件を実 API / 実 HTML で確認** (curl 等で本番と同じレスポンスを取得し、再現確認)
+3. **どこで null / throw が発生するか具体的なエッジケースを特定** (`allcount=0` 等の具体値)
+4. **設計選択肢を整理** (3 〜 5 選択肢、各々のトレードオフ): 例
+   - A. 取り消す
+   - B. fallback path を追加
+   - C. オプション flag で利用者制御
+5. **オーナー判断仰ぎ or 推奨 + 動く実装**: シンプルな case は推奨案で進めて事後確認、複雑な case は選択肢提示で判断仰ぎ
+6. **実装 + テスト** (pure 関数化 + cheerio.load 経由で fixture HTML テストすると小さく書ける)
+7. **コミット → オーナーが本番投入** (並列で AI が次の補強テストを書く分業へ)
+
+実体験 (2026-05-08 syosetu n3862be 本番修正):
+
+- ログから `failed summarize at src/index.ts:556` を特定
+- curl で実 API 確認 → `[{"allcount":0}]` を得て allcount=0 ケースを特定
+- 選択肢 3 つを整理、初手は最小修正 (general fallback) で進め、オーナー指摘 (「SNS bot UA」) → 改善 (`Twitterbot/1.0` UA)、さらに指摘 (「HTML scrape で API 同等情報」) → 専用 scraper 実装
+- 段階的に修正コミットを積み重ね、各段でオーナーが本番投入できる状態を維持
+
+教訓: **「本番 fix の即時性」と「設計の正しさ」のバランスは、まず最小修正で本番を動かし、改善を後続コミットで重ねる**。1 回で完璧を目指して数時間止めるより、3 回 commit して各々で本番反映する方が運用上安全。
+
 ## 関連
 
 - [.claude/templates/ProgressTemplate.addf.md](../../.claude/templates/ProgressTemplate.addf.md) — 4.6 ステップ実装版
