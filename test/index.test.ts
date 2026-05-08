@@ -174,21 +174,68 @@ describe('local tests', () => {
 	});
 
 	describe('favicon thumbnail fallback (phase11.7)', () => {
-		test('OG/Twitter/image_src/apple-touch-icon が無く favicon が HEAD 200 → thumbnail に favicon を採用', async () => {
+		test('OG/Twitter/image_src/apple-touch-icon が無く favicon (PNG) が HEAD 200 → thumbnail に採用', async () => {
+			// 2026-05-08 修正: `<img>` で表示可能な PNG favicon を採用するケース。
+			// `.ico` は別テスト (`.ico は thumbnail から除外される`) で除外動作を担保する。
 			app = fastify();
 			app.get('/', (_req, reply) => {
-				const html = '<html><head><title>Bare Page</title><link rel="icon" href="/favicon.ico"></head><body>x</body></html>';
+				const html = '<html><head><title>Bare Page</title><link rel="icon" href="/favicon.png"></head><body>x</body></html>';
 				reply.header('content-type', 'text/html');
 				reply.header('content-length', html.length);
 				return reply.send(html);
 			});
-			app.get('/favicon.ico', (_req, reply) => reply.status(200).send());
+			app.get('/favicon.png', (_req, reply) => {
+				reply.header('content-type', 'image/png');
+				return reply.status(200).send();
+			});
 			await app.listen({ port });
 
 			const summary = await summaly(host);
-			expect(summary.icon).toBe(`${host}/favicon.ico`);
-			expect(summary.thumbnail).toBe(`${host}/favicon.ico`);
+			expect(summary.icon).toBe(`${host}/favicon.png`);
+			expect(summary.thumbnail).toBe(`${host}/favicon.png`);
 			expect(summary.thumbnail).toBe(summary.icon);
+		});
+
+		test('isThumbnailableIcon: content-type / 拡張子バリエーション (pure)', async () => {
+			const { isThumbnailableIcon } = await import('@/general.js');
+			// content-type 優先
+			expect(isThumbnailableIcon({ href: 'https://x/favicon.png', contentType: 'image/png' })).toBe(true);
+			expect(isThumbnailableIcon({ href: 'https://x/favicon.ico', contentType: 'image/x-icon' })).toBe(false);
+			expect(isThumbnailableIcon({ href: 'https://x/favicon.ico', contentType: 'image/vnd.microsoft.icon' })).toBe(false);
+			// content-type に charset 付き
+			expect(isThumbnailableIcon({ href: 'https://x/x.svg', contentType: 'image/svg+xml; charset=utf-8' })).toBe(true);
+			// content-type が image/* 以外 (HTML 誤返却等)
+			expect(isThumbnailableIcon({ href: 'https://x/x.png', contentType: 'text/html' })).toBe(false);
+			// content-type 不明 → 拡張子で判定
+			expect(isThumbnailableIcon({ href: 'https://x/favicon.png', contentType: undefined })).toBe(true);
+			expect(isThumbnailableIcon({ href: 'https://x/favicon.ico', contentType: undefined })).toBe(false);
+			expect(isThumbnailableIcon({ href: 'https://x/cursor.cur', contentType: undefined })).toBe(false);
+			// クエリ / フラグメント付き .ico
+			expect(isThumbnailableIcon({ href: 'https://x/favicon.ico?v=2', contentType: undefined })).toBe(false);
+			expect(isThumbnailableIcon({ href: 'https://x/favicon.ico#hash', contentType: undefined })).toBe(false);
+			// 拡張子なし path (動的 favicon) は許可 (誤検知より取りこぼし防止優先)
+			expect(isThumbnailableIcon({ href: 'https://x/favicon', contentType: undefined })).toBe(true);
+		});
+
+		test('favicon が `.ico` の場合は thumbnail から除外される (Misskey で <img> 表示できないため)', async () => {
+			// 2026-05-08 追加: `.ico` / `.cur` は `<img>` で broken image になるため thumbnail に流用しない。
+			// icon フィールド自体は `.ico` を残す (サイトアイコン経路は ico 対応する UI もあるため互換性維持)。
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				const html = '<html><head><title>Ico Only</title><link rel="icon" href="/favicon.ico"></head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			app.get('/favicon.ico', (_req, reply) => {
+				reply.header('content-type', 'image/x-icon');
+				return reply.status(200).send();
+			});
+			await app.listen({ port });
+
+			const summary = await summaly(host);
+			expect(summary.icon).toBe(`${host}/favicon.ico`); // icon は残る
+			expect(summary.thumbnail).toBeNull(); // thumbnail は除外
 		});
 
 		test('OG 画像があるとき favicon は採用しない（既存挙動維持）', async () => {

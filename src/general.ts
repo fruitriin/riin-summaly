@@ -130,6 +130,33 @@ async function getOEmbedPlayer($: cheerio.CheerioAPI, pageUrl: string): Promise<
 	};
 }
 
+/**
+ * favicon を thumbnail に流用してよいか判定する (phase11.7 favicon fallback の補強、2026-05-08)。
+ *
+ * Misskey 等の preview UI は `<img>` タグで thumbnail を表示するため、`.ico` / `.cur` のような
+ * `<img>` で描画できない形式を渡すと broken image アイコンになる。content-type を優先し、
+ * content-type 不明なら拡張子で判定する。
+ *
+ * 判定ルール:
+ * - content-type あり → `image/x-icon` / `image/vnd.microsoft.icon` を除外、それ以外の `image/*` を許可
+ *   - `image/*` 以外 (HTML が誤って返るサイト等) は除外
+ * - content-type 無し → 拡張子で判定 (`.ico` / `.cur` は除外、その他は許可)
+ *
+ * テスト容易性のため export。
+ */
+export function isThumbnailableIcon(icon: { href: string; contentType: string | undefined }): boolean {
+	if (icon.contentType != null) {
+		const ct = icon.contentType.toLowerCase().split(';')[0].trim();
+		if (ct === 'image/x-icon' || ct === 'image/vnd.microsoft.icon') return false;
+		return ct.startsWith('image/');
+	}
+	const lower = icon.href.toLowerCase();
+	// クエリ / フラグメント前の拡張子だけを見る (例: `/favicon.ico?v=2` も `.ico` 判定)
+	const pathOnly = lower.split('?')[0].split('#')[0];
+	if (pathOnly.endsWith('.ico') || pathOnly.endsWith('.cur')) return false;
+	return true;
+}
+
 export type GeneralScrapingOptions = {
 	lang?: string | null;
 	userAgent?: string;
@@ -352,18 +379,18 @@ export async function parseGeneral(_url: URL | string, res: Awaited<ReturnType<t
 		$('meta[name=\'rating\']').attr('content') === 'adult' ||
 		$('meta[name=\'rating\']').attr('content')?.toUpperCase() === 'RTA-5042-1996-1400-1577-RTA';
 
-	const find = async (path: string) => {
-		const target = new URL(path, url.href);
+	const getIcon = async (): Promise<{ href: string; contentType: string | undefined } | null> => {
+		const target = new URL(favicon, url.href);
 		try {
-			await head(target.href);
-			return target;
+			const res = await head(target.href);
+			const ct = res.headers['content-type'];
+			return {
+				href: target.href,
+				contentType: typeof ct === 'string' ? ct : undefined,
+			};
 		} catch {
 			return null;
 		}
-	};
-
-	const getIcon = async () => {
-		return (await find(favicon)) || null;
 	};
 
 	const [icon, oEmbed] = await Promise.all([
@@ -381,8 +408,13 @@ export async function parseGeneral(_url: URL | string, res: Awaited<ReturnType<t
 	// OG/Twitter Card/image_src/apple-touch-icon が全部無い場合、HEAD 検証済みの favicon を
 	// thumbnail フォールバックとして採用する (phase11.7, riin-summaly#3)。
 	// 「タイトルだけのスカスカプレビュー」を「サイトアイコン入りの最低限の見た目」に格上げ。
-	// favicon が HEAD 失敗 (`icon?.href === undefined`) ならフォールバックも発動しない。
-	const thumbnail = image ?? icon?.href ?? null;
+	// favicon が HEAD 失敗 (`icon === null`) ならフォールバックも発動しない。
+	//
+	// **`.ico` / `.cur` の除外** (riin-summaly フィードバック 2026-05-08): `<img>` で表示できない
+	// 画像形式 (主に Windows .ico) を thumbnail に流用すると Misskey 等の preview UI で broken
+	// image になる。content-type / 拡張子の双方で判定し、表示不能形式は thumbnail から除外。
+	// icon フィールド自体には残す (サイトアイコン表示は ico 対応の経路もあるため互換性維持)。
+	const thumbnail = image ?? (icon != null && isThumbnailableIcon(icon) ? icon.href : null);
 
 	return {
 		title: title || null,
