@@ -143,6 +143,7 @@ allowed = [
   "yodobashi",
   "sqex",
   "syosetu",
+  "kakuyomu",
   # 性的コンテンツを含むサイトの組み込みプラグイン。除外したい場合はコメントアウトのまま:
   # "dlsite",
   # "iwara",
@@ -202,5 +203,5 @@ parseFailureLogSamplesPerGroup = 5       # 1 グループあたりの直近サ�
 # - 商用運用では `frameAncestors` を Misskey インスタンスのオリジンに明示制限すること
 enabled = false
 # 有効化時に必須 (enabled = false なら未設定で OK):
-# allowedPlugins = ["syosetu"]          # embed 対応プラグインの allowlist。空配列禁止 (fail-close)
+# allowedPlugins = ["syosetu", "kakuyomu"]   # embed 対応プラグインの allowlist。空配列禁止 (fail-close)
 # frameAncestors = ["*"]                # iframe を読み込んで良いオリジン (CSP frame-ancestors)。商用運用は明示制限推奨

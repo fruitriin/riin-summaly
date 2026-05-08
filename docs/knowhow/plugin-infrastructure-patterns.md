@@ -206,6 +206,38 @@ phase11.7 の favicon fallback で **`.ico` / `.cur` は `<img>` で broken imag
 
 **summaly のスコープ整理**: 「URL preview メタデータを返すライブラリ」として **「素材は再生可能形式のみ返す」** が責務。proxy URL の組み立ては利用者責務 (proxy ホストは summaly が知らない)。`mediaProxyHint` のような利用者宣言オプションを将来追加すれば proxy 経由 thumbnail も解禁できるが、現状は未対応。
 
+### Next.js `__NEXT_DATA__` を事実上の API として使う (phase15.2 カクヨム、2026-05-08)
+
+公式 API が無いサイトでも、Next.js + Apollo (Relay 風) で SSR されたページなら **HTML 内の `<script id="__NEXT_DATA__" type="application/json">`** に正規化キャッシュ JSON が埋め込まれている。これを parse すれば API 同等の構造化情報が取れる。
+
+実例: カクヨム `kakuyomu.jp/works/<id>` の `__NEXT_DATA__` には `Work:<id>` エンティティ (title / introduction / genre / serialStatus / publicEpisodeCount / isCruel / isSexual / isViolent / tagLabels / ogImageUrl など) が完備されている。`author = { __ref: 'UserAccount:<id>' }` 形式で別エンティティに参照されている部分は、同じ Apollo state 内で `UserAccount:<id>` キーを lookup する。
+
+実装パターン (`src/plugins/kakuyomu.ts` 参照):
+
+```typescript
+// 1. cheerio で <script id="__NEXT_DATA__"> の中身を取得
+const raw = $('script#__NEXT_DATA__').first().contents().text();
+
+// 2. JSON.parse + try/catch で壊れた JSON を null に
+const state = (() => { try { return JSON.parse(raw); } catch { return null; } })();
+
+// 3. Apollo state を再帰探索して `Work:<id>` キーを探す (WeakSet で循環参照ガード)
+function findWork(o, target) {
+  // ... 再帰 walk、direct[`Work:${id}`] が `__typename: 'Work'` ならヒット
+}
+```
+
+**設計上の利点**:
+- 公式 API 無しでも構造化情報が取れる (HTML scrape より dramatically クリーン)
+- フィールド名が直接コードに出るので保守性が高い
+- 未知フィールドは `unknown` 型で受けて asString/asNumber/asBoolean ヘルパで narrowing → スキーマ変更耐性
+
+**設計上の落とし穴**:
+- Apollo の `__ref` 参照は別エンティティを lookup する必要があり、再帰探索 + 循環参照ガード必須
+- `__NEXT_DATA__` の構造はサイトの Next.js 設定次第で大きく変わる (`__APOLLO_STATE__` / `props.pageProps.<key>` 等、固定経路ではない)。**WeakSet 付きの再帰 walk で全ノードを探す**のが現実的
+- Next.js のメジャーバージョンアップでフィールド名や正規化方式が変わる可能性 → fallback として OGP scrape を最終手段に置いておく
+- PV カウント影響: HTML を取る = サーバはアクセスとしてカウントしうる。`Twitterbot/1.0` UA で叩いて bot 除外を狙う (なろう allcount=0 fallback と同パターン)
+
 ### なろうプラグイン: API allcount=0 のとき HTML 専用 scrape にフォールバック (phase13.1 補正、2026-05-08)
 
 phase13.1 で「API 直叩き = PV カウント影響無し」を採用したが、**API の index に載っていない作品** (古い作品 / API 登録漏れ) で `allcount=0` が返るケースが本番ログで観測 (`n3862be` 等)。HTML ページは正常に存在し OGP も完備しているのに preview 不能になる。

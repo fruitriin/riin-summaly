@@ -14,6 +14,7 @@ import * as nintendoStore from './nintendo-store.js';
 import * as yodobashi from './yodobashi.js';
 import * as sqex from './sqex.js';
 import * as syosetu from './syosetu.js';
+import * as kakuyomu from './kakuyomu.js';
 import { SummalyPlugin } from '@/iplugin.js';
 
 export const plugins: SummalyPlugin[] = [
@@ -33,4 +34,5 @@ export const plugins: SummalyPlugin[] = [
 	yodobashi,
 	sqex,
 	syosetu,
+	kakuyomu,
 ];

@@ -291,6 +291,24 @@ interface SummalyPlugin {
 | 運用要件 | Fastify モードで `[plugins].allowed` に `"syosetu"`、embed 機能を使う場合は `[server].publicUrl` (https only) + `[embed].enabled = true` + `allowedPlugins = ["syosetu"]` 設定。library mode では player.url=null で card style のみ動作 |
 | 実装メモ | `n[0-9]+[a-z][0-9a-z]*` の正規表現で `/novelview/` `/ncode/` 等の他パスを構造的に除外 (phase13.1 W-1)。chapter URL の本文取得は API に存在しないため作品見出しと同じ Summary を返す (Plan で割り切り) |
 
+### kakuyomu (カクヨム)
+
+実装: [src/plugins/kakuyomu.ts](../src/plugins/kakuyomu.ts) / [src/utils/kakuyomu-genres.ts](../src/utils/kakuyomu-genres.ts)
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `kakuyomu.jp` (anchored) + path `/works/<id>` または `/works/<id>/episodes/<eid>` (id は数値) |
+| 取得方法 | カクヨムには公式 API が無いため、HTML 内の `<script id="__NEXT_DATA__" type="application/json">` の Apollo (Relay 風) 正規化キャッシュ JSON を parse して `Work:<id>` エンティティを取得。`Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (phase12.3 nintendo-store と同類) |
+| 抽出フィールド | Work エンティティから title / catchphrase / introduction / genre (enum 文字列) / serialStatus (`RUNNING`/`COMPLETED`) / publicEpisodeCount / totalCharacterCount / isCruel / isSexual / isViolent / tagLabels / ogImageUrl / lastEpisodePublishedAt を抽出。author は `{__ref:"UserAccount:<id>"}` 経由で別エンティティから name を lookup |
+| card style description | `composeDescription`: `作者: <name> / <ジャンル名> / 連載中 (169話) / [残酷描写] [性的描写] [暴力描写] / あらすじ: <catchphrase or introduction の 80 文字 clip>` を 1 行整形 |
+| embed (renderEmbed) | `composeEmbedHtml`: 完全な HTML5 ドキュメント (タイトル / 作者 / ジャンル + 状態 + 文字数 + マーカー / あらすじ 300 文字 clip / タグ上位 5 件 / 最終話日付) を返す。**全フィールド `escapeHtml` で entity 化** + CSP `default-src 'none'` で二重 XSS 防御 |
+| サムネ | `Work.ogImageUrl` (`cdn-static.kakuyomu.jp/works/<id>/ogimage.png`) を `Summary.thumbnail` に採用。作品ごとのカスタムサムネが取れるためなろうのサイトロゴ固定より見栄え良い |
+| R-18 / sensitive | `Work.isSexual === true` で `sensitive: true` を返す。`isCruel` / `isViolent` は description にマーカー表示するが sensitive flag には含めない (なろう基準と揃える) |
+| ジャンル enum | `src/utils/kakuyomu-genres.ts` の `GENRE_NAMES` で `LOVE_STORY` / `FANTASY` / `SF` 等 → 日本語表示名を変換。未知 enum は `'その他'` フォールバック (本番ログから収集して都度補強) |
+| chapter URL の扱い | episode URL でも作品トップ (`/works/<id>`) から Work data を取得。episode 個別 HTML を別途叩いて `og:title` (= `<EpisodeTitle> - <WorkTitle> - カクヨム`) から各話タイトルだけ抽出し、card description 末尾に「`/ <各話タイトル>`」を付与 (なろう phase13.1 chapter 対応と同パターン) |
+| 運用要件 | Fastify モードで `[plugins].allowed` に `"kakuyomu"`、embed 機能を使う場合は `[server].publicUrl` (https only) + `[embed].enabled = true` + `allowedPlugins = ["kakuyomu"]` (or syosetu と併記) 設定。library mode では player.url=null で card style のみ動作 |
+| 実装メモ | Apollo state は深いネストを持つため `findWorkInApolloState` / `lookupAuthorName` で再帰探索 + `WeakSet` 循環参照ガード。`__NEXT_DATA__` の構造変更で parse 不能になったらプラグインが null を返すので最終的に汎用 OGP 経路にフォールバック (kakuyomu.jp の OGP は完備) |
+
 カスタムプラグインの書き方
 ----------------------------------------------------------------
 
