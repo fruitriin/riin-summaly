@@ -76,4 +76,4 @@ parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
 cat /var/log/summaly/parse-failures.jsonl | jq -r '.key' | sort | uniq -c | sort -rn | head -20
 ```
 
-> phase11.5 (2026-05-05) で `/__diagnostics/parse-failures` HTTP エンドポイントは廃止されました。プライバシーリスク（過去 preview 試行 URL の外部漏洩）を恒久排除するため、診断は JSONL ファイル経由のみとなっています。
+> 集約データの参照は JSONL ファイル経由のみ。旧 `/__diagnostics/parse-failures` HTTP エンドポイントの廃止理由と移行手順は [DEPRECATED.md](../../DEPRECATED.md#__diagnosticsparse-failures-http-エンドポイント-phase115-で廃止) を参照。

@@ -255,7 +255,7 @@ interface SummalyPlugin {
 | 項目 | 内容 |
 |:--|:--|
 | マッチ | `(?:www\.)?yodobashi\.com` (anchored) |
-| 取得方法 | `scpaping()` → `parseGeneral()`。**経路学習キャッシュ + bootstrap で curl_cffi 直行** (phase14 Step 3+4): `data/domain-strategy-bootstrap.jsonl` に `yodobashi.com → curl_cffi` エントリが入っているため Fastify モードで cache 有効なら scpaping 冒頭の cache hit fast path で curl_cffi が直接呼ばれる。さらに `skipRedirectResolution = true` で `summaly()` 冒頭の HEAD/GET probe をスキップ (TLS 切断する HEAD の空回り回避)。phase12.5 Step 2 / followup #3 で導入した `forceCurlCffiFallback` / `proxyFallback: undefined` フラグは phase14 Step 4 で廃止 |
+| 取得方法 | `scpaping()` → `parseGeneral()`。**経路学習キャッシュ + bootstrap で curl_cffi 直行**: `data/domain-strategy-bootstrap.jsonl` に `yodobashi.com → curl_cffi` エントリが入っているため Fastify モードで cache 有効なら scpaping 冒頭の cache hit fast path で curl_cffi が直接呼ばれる。さらに `skipRedirectResolution = true` で `summaly()` 冒頭の HEAD/GET probe をスキップ (TLS 切断する HEAD の空回り回避) |
 | 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準) |
 | 背景 | yodobashi は **TLS / HTTP/2 レイヤで bot を能動切断**する。Vultr Tokyo IP は `category: "timeout"`、ローカル MacOS は `HTTP/2 stream INTERNAL_ERROR` (即時 RST、time<0.05s) で SummalyBot / ブラウザ UA / 各種 SNS bot UA すべて弾かれる (skill `/url-preview-check` の Phase 3 fail mode H)。HEAD probe も同じく TLS 切断で空回りするため、URL が終端確定 (短縮 URL でない) であることを利用して `skipRedirectResolution = true` で probe 自体をスキップする (本番実証 21 秒 → 数秒に短縮、phase12.5 followup #2) |
 | なぜ curl_cffi なのか | **CF Workers fetch も TLS フィンガープリント固定**なので yodobashi 側で構造的に弾かれる。curl_cffi (libcurl-impersonate) で Chrome の TLS フィンガープリント (JA3) を偽装することだけが正解 (phase12.4 → phase12.5 で確認) |
@@ -269,7 +269,7 @@ interface SummalyPlugin {
 | 項目 | 内容 |
 |:--|:--|
 | マッチ | `(?:www\.)?store\.jp\.square-enix\.com` (anchored) |
-| 取得方法 | `scpaping()` → `parseGeneral()`。**経路学習キャッシュ + bootstrap で proxy 直行** (phase14 Step 3+4): `data/domain-strategy-bootstrap.jsonl` に `store.jp.square-enix.com → proxy` エントリが入っているため Fastify モードで cache 有効なら scpaping 冒頭の cache hit fast path で proxy が直接呼ばれる。phase12.6 で導入した `forceProxyFallback` フラグは phase14 Step 4 で廃止 |
+| 取得方法 | `scpaping()` → `parseGeneral()`。**経路学習キャッシュ + bootstrap で proxy 直行**: `data/domain-strategy-bootstrap.jsonl` に `store.jp.square-enix.com → proxy` エントリが入っているため Fastify モードで cache 有効なら scpaping 冒頭の cache hit fast path で proxy が直接呼ばれる |
 | 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準) |
 | 背景 | Square Enix e-STORE はデータセンター IP レンジ全般を CDN 段で広く弾く。Vultr Tokyo IP からは **HTTP/200 + `text/html;charset=utf-8` + 正規 404 ページボディ** が返ってくるため、`got` レイヤでは何のエラーも発生しない (= phase12.1 の `getResponseWithProxyFallback` のエラー発火型では救援できない、新パターン)。サーバ HTML には完璧な OGP (`og:title` / `og:description` / `og:image` / `og:site_name`) が入っているので、proxy 経由で IP を変えれば取得できる |
 | 短縮 URL | `sqex.to/<id>` は HEAD で `store.jp.square-enix.com/...` に正常解決可能 (CloudFront 経由)。`summaly()` 冒頭の resolveRedirect で展開 → このプラグインがマッチ |

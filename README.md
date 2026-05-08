@@ -42,10 +42,10 @@ URL から `title` / `description` / `thumbnail` / `icon` / `sitename` / 埋め�
 | **in-flight dedup** | Misskey ユーザーストリーミング由来の **thundering herd を 1 本化**。同 URL の並列リクエストは先頭リクエストの結果を共有し origin への同時アクセスを 1 件に絞る | `inFlightDedup`、`X-Cache: HIT-COALESCED` |
 | **TOML 設定ファイル** | `pnpm serve config.toml` で起動。コメント・セクション分割が書ける運用設定 | `config.example.toml` |
 | **dev サーバ UI** | `pnpm dev` で `http://127.0.0.1:3000`。URL を入れて JSON / Misskey 風カード / iframe プレーヤーを並列確認、サンプル URL ワンクリック、proxy / curl_cffi 経路の手元再現も対応 | tsx + Vanilla JS |
-| **パース失敗ログ集約** | 「OG/Twitter Card/`<title>` のいずれも取れず汎用パスでスカスカになった URL」を host + path 単位で集約。**プラグイン化候補のドメイン発見器**。集約データは JSONL ファイルに `cat \| jq` でアクセス（HTTP エンドポイントは phase11.5 で廃止） | `[diagnostics] parseFailureLog`、`parseFailureLogJsonlPath` |
+| **パース失敗ログ集約** | 「OG/Twitter Card/`<title>` のいずれも取れず汎用パスでスカスカになった URL」を host + path 単位で集約。**プラグイン化候補のドメイン発見器**。集約データは JSONL ファイルに `cat \| jq` でアクセス | `[diagnostics] parseFailureLog`、`parseFailureLogJsonlPath` |
 | **短縮 URL の HEAD→GET fallback** | `amzn.asia` のように HEAD に 404 を返すサーバを GET fallback で正しく解決 | `KNOWN_SHORT_HOSTS` |
 | **twitter (X) プラグイン** | `cdn.syndication.twimg.com` 直叩きで本文 + thumbnail + `medias[]` を返す。**player は null**（Misskey 側「ポストを展開」と重複しないように） | `(twitter\|x).com/<user>/status/<id>` |
-| **経路学習キャッシュ + bootstrap** | host + path prefix 単位で 4 経路 (default / fallback_ua / proxy / curl_cffi) を学習・JSONL 永続化。bootstrap JSONL 同梱で初回コスト回避、N 連続失敗で entry 破棄。プラグインから経路フラグを廃止し責務を集約 (phase14) | `[scraping.strategy_cache]` |
+| **経路学習キャッシュ + bootstrap** | host + path prefix 単位で 4 経路 (default / fallback_ua / proxy / curl_cffi) を学習・JSONL 永続化。bootstrap JSONL 同梱で初回コスト回避、N 連続失敗で entry 破棄 (phase14) | `[scraping.strategy_cache]` |
 | **CF Workers proxy fallback** | Vultr Tokyo IP block (`amazon.co.jp` 500 等) を Cloudflare Workers の AS13335 経由で救援。HMAC-SHA256 認証 + 8 層防御 (phase12.1) | `[scraping.proxy]` |
 | **curl_cffi TLS 偽装** | TLS / HTTP/2 layer の bot block (yodobashi 級 INTERNAL_ERROR) を Chrome JA3 完全再現で突破。Python CLI を `child_process.spawn` で呼ぶ (phase12.5) | `[scraping.curl_cffi]` |
 
@@ -111,7 +111,7 @@ allowed = ["amazon", "bluesky", "wikipedia", "branchio-deeplinks", "youtube", "s
 経路優先システム（取得経路の自動選択）
 ----------------------------------------------------------------
 
-riin-summaly の独自軸として、URL 取得を **4 種類の経路** に整理し、**ホスト + パス前 1〜2 段単位で第一選択肢を学習する経路学習キャッシュ + 同梱 bootstrap JSONL** によって自動最適化します。WAF / IP block / TLS フィンガープリント検査 / SNS bot UA allowlist 等、サイトごとに異なる bot 排除レイヤーに対し、**プラグインが経路をハードコードするのではなく、ドメインごとに最適経路を学習・永続化する**構造です（phase14 で `forceCurlCffiFallback` / `forceProxyFallback` プラグインフラグを廃止し、経路選択を経路学習キャッシュ側に集約）。
+riin-summaly の独自軸として、URL 取得を **4 種類の経路** に整理し、**ホスト + パス前 1〜2 段単位で第一選択肢を学習する経路学習キャッシュ + 同梱 bootstrap JSONL** によって自動最適化します。WAF / IP block / TLS フィンガープリント検査 / SNS bot UA allowlist 等、サイトごとに異なる bot 排除レイヤーに対し、**プラグインは extraction (DOM 直読み・公式 API 直叩き・URL 正規化) の自在性専用、経路選択は経路学習キャッシュ専用** という責務分離になっています。
 
 ### 4 経路
 
@@ -243,6 +243,7 @@ pnpm dev
 - **[docs/SETUP.md](docs/SETUP.md)**: 本番運用ガイド（TOML 設定・キャッシュ戦略・パース失敗ログ・nginx/systemd 例）
 - **[docs/Plugins.md](docs/Plugins.md)**: プラグイン詳細仕様・カスタムプラグインの書き方
 - **[docs/Library.md](docs/Library.md)**: `summaly()` 関数の API リファレンス
+- **[DEPRECATED.md](DEPRECATED.md)**: 廃止された機能と移行ガイド（旧 fastify-cli / 診断エンドポイント / forceX フラグ等）
 - **[docs/knowhow/](docs/knowhow/)**: 実装中に蓄積した設計知見（in-flight dedup・TOML loader・dev サーバ・パース失敗ログ等）
 - **[docs/plans/](docs/plans/)**: 各 phase の設計プラン（実装の意思決定の経緯）
 

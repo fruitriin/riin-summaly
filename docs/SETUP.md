@@ -87,7 +87,7 @@ diff -u config.example.toml /etc/summaly/config.toml | less
 
 旧バージョン (`< 5.x`) からのアップグレードで「セクション全体がコメントアウト」になっていた箇所がある場合は、新 example の構造に揃えてコメントアウトを外すこと。**`enabled = false` のままならアップグレード前と挙動は変わらない**。
 
-> **Migration note (phase8.1 / 5.4)**: 旧 fastify-cli `--options summaly-config.json` ベースは廃止しました。マイグレーション手順は [docs/deploy-examples/README.md](deploy-examples/README.md) を参照してください。
+> 旧 fastify-cli `--options summaly-config.json` ベースから TOML への移行手順は [DEPRECATED.md](../DEPRECATED.md#fastify-cli---options-summaly-configjson-phase81--リリース-54-で廃止) を参照。
 
 Fastify モード固有のオプション
 ----------------------------------------------------------------
@@ -205,7 +205,7 @@ cascade fallback は初回発火コストが大きい (例: yodobashi に defaul
 - リポ同梱の **bootstrap JSONL** (`data/domain-strategy-bootstrap.jsonl`、yodobashi → curl_cffi、sqex → proxy 等) で初回コストもゼロ
 - N 連続失敗で entry 破棄 + bootstrap 値打ち消しマーカー JSONL append (サイト側仕様変更耐性)
 
-phase14 Step 4 で `forceCurlCffiFallback` / `forceProxyFallback` プラグインフラグを廃止し、**経路選択の責務はすべて経路学習キャッシュ側に集約** されました。プラグインは extraction (例: `yodobashi` で `skipRedirectResolution = true` / `kakuyomu` で `__NEXT_DATA__` parse) の自在性専用に整理されています。
+**経路選択の責務はすべて経路学習キャッシュ側に集約** されており、プラグインは extraction (例: `yodobashi` で `skipRedirectResolution = true` / `kakuyomu` で `__NEXT_DATA__` parse) の自在性専用に整理されています。旧 `forceCurlCffiFallback` / `forceProxyFallback` プラグインフラグからの移行は [DEPRECATED.md](../DEPRECATED.md#forcecurlcffifallback--forceproxyfallback-プラグインフラグ-phase14-step-4-で廃止) を参照。
 
 設定は `[scraping.strategy_cache]` で `enabled = true` (デフォルト)。詳細設定は [経路学習キャッシュ (phase14 Step 1)](#経路学習キャッシュ-phase14-step-1) を参照。
 
@@ -440,7 +440,10 @@ uv sync
 
 ドメイン (host + path prefix 1〜2 段) ごとに「成功した取得経路」(`default` / `fallback_ua` / `proxy` / `curl_cffi`) を学習し、JSONL で永続化する仕組みです。次回以降のリクエストでは学習した経路を第一選択肢として使うことで「初回 default UA で 20 秒空回り → fallback で成功」のような時間損失を回避します。
 
-> Step 2a/2b で `scpaping()` 統合済 (cache hit fast path → cache miss cascade tracking → Summary 層 thin 判定 → N 連続失敗で entry 破棄)。Step 2b-4 で Fastify モードの自動インスタンス化済。Step 3 で `data/domain-strategy-bootstrap.jsonl` 同梱済 (yodobashi → curl_cffi、sqex → proxy、amazon co.jp/com の dp/gp → proxy)。Step 4 で `forceCurlCffiFallback` / `forceProxyFallback` フラグを廃止し、yodobashi / sqex プラグインは経路学習キャッシュ経由で動作するように統合済。
+- `scpaping()` に統合済: cache hit fast path → cache miss cascade tracking → Summary 層 thin 判定 → N 連続失敗で entry 破棄
+- Fastify モードでは `[scraping.strategy_cache] enabled = true` (デフォルト) で自動インスタンス化
+- リポ同梱 bootstrap (`data/domain-strategy-bootstrap.jsonl`、yodobashi → curl_cffi、sqex → proxy、amazon co.jp/com の dp/gp → proxy) で新規環境でも初日から最適化された経路で動く
+- yodobashi / sqex プラグインは bootstrap エントリ + extraction-only 整理済み (旧 `forceX` フラグからの移行は [DEPRECATED.md](../DEPRECATED.md#forcecurlcffifallback--forceproxyfallback-プラグインフラグ-phase14-step-4-で廃止) 参照)
 
 ### 設定 (`config.toml`)
 
@@ -544,7 +547,7 @@ parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
 | `parseFailureLogMaxGroups` | グループ数上限（超過時 LRU 風に最古から削除） | `1000` |
 | `parseFailureLogSamplesPerGroup` | 1 グループあたりの直近サンプル数 | `5` |
 
-> **phase11.5 で `/__diagnostics/parse-failures` HTTP エンドポイントは廃止されました**。プライバシーリスク（過去 preview 試行 URL の漏洩）を恒久排除するため、診断は **`parseFailureLogJsonlPath` で書き出される JSONL ファイル経由のみ** となっています。`parseFailureLogEndpoint` オプションは存在しません（TOML に残っていても silent ignore）。
+> 集約データの参照は `parseFailureLogJsonlPath` で書き出される JSONL ファイル経由のみ。旧 `/__diagnostics/parse-failures` HTTP エンドポイントの廃止理由 (プライバシーリスク恒久排除) と移行手順は [DEPRECATED.md](../DEPRECATED.md#__diagnosticsparse-failures-http-エンドポイント-phase115-で廃止) を参照。旧 `parseFailureLogEndpoint` TOML キーは smol-toml の挙動で **silent ignore されるため、`config.toml` に残っていても起動失敗しません**。
 
 ### 「絶対失敗する類型」は自動除外
 

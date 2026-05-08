@@ -34,6 +34,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | 高 | 14 | [docs/plans/phase14-domain-strategy-cache.md](docs/plans/phase14-domain-strategy-cache.md) — 経路学習キャッシュ (host + path prefix 2段、JSONL 永続化、N 連続失敗で invalidate)。bootstrap JSONL 同梱で初回コスト回避。`forceCurlCffiFallback` / `forceProxyFallback` を廃止し、プラグインは「引き出し方の自在性」専用に整理。汎用パスでも自動最適化される | M〜L | ほぼ完了 (Step 1 + 2 系 + 3 + 4 + 6 + 7 + 5 部分 (`/api/strategy-cache` API) 完了 2026-05-08、残る UI パネル + 目視検証のみ — 手動範囲) |
 | 低 | 15.1 | [docs/plans/phase15.1-playwright-fallback.md](docs/plans/phase15.1-playwright-fallback.md) — Playwright モード (fail mode I 救援、SPA + JS 動的 OGP 注入対応)。phase14 経路学習キャッシュに `'playwright'` strategy を追加。`tools/playwright-fetcher/` 独立構成、allowlist 必須、メモリ要件あり (Vultr 拡張)。実ブラウザレンダリングのため最終手段位置付け | L〜XL | 未着手 (着手トリガー: fail mode I 発生頻度 月 N 件 / 個人的に preview したい SPA EC が増えた時) |
 | — | 16.1 | [docs/plans/phase16.1-docs-route-strategy.md](docs/plans/phase16.1-docs-route-strategy.md) — ドキュメント網羅性更新 (経路優先システムを目玉特徴に位置づけ)。README に「経路優先システム」セクション新設 + 4 経路 (Summaly UA / SNS Bot UA / Proxy / curl_cffi) + 経路学習キャッシュの俯瞰、プラグイン表に kakuyomu 行 + 経路列追加、test/readme-plugins.test.ts で同期漏れを構造的にガード | S〜M | 完了 (2026-05-08) |
+| — | 16.2 | [docs/plans/phase16.2-deprecated-md.md](docs/plans/phase16.2-deprecated-md.md) — 廃止された機能の経緯記述を `DEPRECATED.md` に集約。旧 fastify-cli / 診断エンドポイント / parseFailureLogEndpoint / forceX プラグインフラグの 4 機能について「旧 / 新 / 廃止理由 / 移行手順」を一貫構成で記載、各 docs からは 1 行サマリ + リンクに簡素化 | S〜M | 完了 (2026-05-09) |
 
 ### 将来検討メモ (Plan は未起票)
 
