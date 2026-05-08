@@ -768,4 +768,32 @@ describe('parseTomlConfigString', () => {
 			`)).toThrow(/\[embed\].*must be a table/);
 		});
 	});
+
+	describe('example ファイルの起動互換性 (config.example.toml / docs/deploy-examples/...)', () => {
+		// 2026-05-08 example のリファクタリング (proxy/curl_cffi/strategy_cache をコメントアウト無し +
+		// enabled 明示に統一) で、enabled = false の場合に空文字 / 空配列 / 未指定値が混在する形になった。
+		// **このスタイルが parseTomlConfigString を通せること** を回帰防止する。
+		// 「example のコピペでサーバが起動する」基本契約。
+		test('config.example.toml (root) が parse error なくロードできる', async () => {
+			const fs = await import('node:fs');
+			const text = fs.readFileSync('config.example.toml', 'utf8');
+			expect(() => parseTomlConfigString(text)).not.toThrow();
+			const cfg = parseTomlConfigString(text);
+			// enabled = false なら proxy/curl_cffi セクションは undefined
+			expect(cfg.summaly.proxyFallback).toBeUndefined();
+			expect(cfg.summaly.curlCffiFallback).toBeUndefined();
+			// strategy_cache は enabled = true なので opts が組み立てられる
+			expect(cfg.summaly.domainStrategyCache?.enabled).toBe(true);
+		});
+
+		test('docs/deploy-examples/summaly-config.example.toml が parse error なくロードできる', async () => {
+			const fs = await import('node:fs');
+			const text = fs.readFileSync('docs/deploy-examples/summaly-config.example.toml', 'utf8');
+			expect(() => parseTomlConfigString(text)).not.toThrow();
+			const cfg = parseTomlConfigString(text);
+			expect(cfg.summaly.proxyFallback).toBeUndefined(); // enabled = false
+			expect(cfg.summaly.curlCffiFallback).toBeUndefined(); // enabled = false
+			expect(cfg.summaly.domainStrategyCache?.enabled).toBe(true);
+		});
+	});
 });

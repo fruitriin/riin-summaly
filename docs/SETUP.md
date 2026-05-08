@@ -64,6 +64,26 @@ port = 3000
 
 設定例: [config.example.toml](../config.example.toml) または [docs/deploy-examples/summaly-config.example.toml](deploy-examples/summaly-config.example.toml)。
 
+### example 更新時の運用 config への反映手順
+
+新バージョンに移行するときは **example と運用 config の差分を必ず確認**して、漏れなく反映する:
+
+```bash
+# 1. リポジトリを更新後、example と運用 config の差分を確認
+diff -u config.example.toml /etc/summaly/config.toml | less
+
+# 2. 新規セクション / 新規キーが example にあれば運用 config に追加
+#    (運用 config の値は維持し、新規行のみコピー)
+```
+
+**設計方針** (2026-05-08〜): 新規追加されたセクションは **`enabled = false` 明示 + 必須でない値はデフォルトで書く** スタイルに統一されている。これにより:
+
+- セクション全体をコメントアウトしないため「セクションごと忘れる」事故が発生しない
+- 機能を有効化したいときは `enabled = false` → `true` の 1 行差分で済む
+- `secret` / `url` / `projectDir` のような有効化時の必須値だけがコメントアウトで残っており、運用者は「コメントアウトを外しつつ実値を書く」だけで設定が完結する
+
+旧バージョン (`< 5.x`) からのアップグレードで「セクション全体がコメントアウト」になっていた箇所がある場合は、新 example の構造に揃えてコメントアウトを外すこと。**`enabled = false` のままならアップグレード前と挙動は変わらない**。
+
 > **Migration note (phase8.1 / 5.4)**: 旧 fastify-cli `--options summaly-config.json` ベースは廃止しました。マイグレーション手順は [docs/deploy-examples/README.md](deploy-examples/README.md) を参照してください。
 
 Fastify モード固有のオプション

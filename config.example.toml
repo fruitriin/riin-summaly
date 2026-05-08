@@ -44,24 +44,27 @@ enabled = false
 [scraping.proxy]
 # Cloudflare Workers Free にデプロイした outbound proxy 経由のフォールバック (phase12.1)。
 # Vultr Tokyo IP からの amazon.co.jp 等が IP レピュテーション層で 500 になる問題への救援。
-# UA fallback (`[scraping.fallback]`) でも救えない `origin_error` カテゴリで発火する。
+# UA fallback (`[scraping.fallback]`) でも救えない `origin_error` / `bot_blocked` カテゴリで発火する。
+# `bot_blocked` には Amazon が 200 + content-type 欠落で弾くケース
+# (`Rejected by type filter undefined`) も含まれる。
 #
 # **シークレット管理**: `secret` を TOML に直書きせず、環境変数 `SUMMALY_PROXY_SECRET` を使うこと推奨。
 # env が設定されていれば config の `secret` より優先される。
-# enabled = false                              # デフォルト false (要明示オプトイン)
-# url = "https://summaly-proxy.<your>.workers.dev"
-# secret = "..."                               # 推奨: env SUMMALY_PROXY_SECRET 経由
-# categories = ["origin_error", "bot_blocked"] # どのカテゴリで proxy を発火するか (デフォルト)
-                                                # `bot_blocked` には Amazon が 200 + content-type 欠落で
-                                                # 弾くケース (`Rejected by type filter undefined`) も含まれる
-# domains = [                                  # suffix-match。空配列禁止 (allowlist 必須)
-#   "amazon.co.jp", "amazon.com",               # Amazon 商品ページ (TLD ごとに列挙)
-#   "amzn.asia", "amzn.to", "a.co",             # Amazon 短縮 URL (resolveRedirect が失敗したときの fallback)
-#   "store.jp.square-enix.com",                  # Square Enix e-STORE (phase12.6 / sqex プラグインで forceProxyFallback)
-# ]                                             # ※ Worker 側 wrangler.toml の ALLOWED_DOMAINS と同期させること
-# timeoutMs = 30000                            # proxy リクエストのタイムアウト
 #
-# Worker 側のデプロイ手順は tools/cf-proxy-worker/README.md 参照。
+# **運用ガイド** (`enabled = true` にする前に):
+# 1. CF Workers をデプロイして `url` を埋める (tools/cf-proxy-worker/README.md 参照)
+# 2. env `SUMMALY_PROXY_SECRET` を設定
+# 3. `domains` に救援対象を列挙 (Worker 側 wrangler.toml の ALLOWED_DOMAINS と同期させること)
+enabled = false
+# 有効化時に必須 (enabled = false なら未設定で OK):
+# url = "https://summaly-proxy.<your>.workers.dev"
+# secret = "..."                                  # 推奨: env SUMMALY_PROXY_SECRET 経由
+categories = ["origin_error", "bot_blocked"]      # どのエラーカテゴリで proxy を発火するか
+domains = []                                       # suffix-match。例:
+                                                    # ["amazon.co.jp", "amazon.com",
+                                                    #  "amzn.asia", "amzn.to", "a.co",
+                                                    #  "store.jp.square-enix.com"]
+timeoutMs = 30000                                  # proxy リクエストのタイムアウト
 
 [scraping.curl_cffi]
 # curl_cffi (libcurl-impersonate) を使った TLS layer bot block 救援フォールバック (phase12.5)。
@@ -72,33 +75,40 @@ enabled = false
 # **運用要件**: production server に `uv` (Python パッケージマネージャ) を別途インストールし、
 # `cd tools/curl-cffi-fetcher && uv sync` で依存解決しておく必要がある。
 #
-# enabled = false                                  # デフォルト false (要明示オプトイン)
-# projectDir = "/path/to/summaly/tools/curl-cffi-fetcher"  # 絶対パス推奨 (cwd 相対も可)
-# uvPath = "uv"                                    # PATH 上に `uv` があれば省略可。無ければ絶対パス
-# impersonate = "chrome120"                        # `firefox120` / `safari17_0` 等も可
-# categories = ["timeout", "connection_dropped", "bot_blocked"]  # どのカテゴリで curl_cffi を発火するか (デフォルト)
-# domains = [                                      # suffix-match。空配列禁止 (allowlist 必須)
-#   "yodobashi.com",                                #   yodobashi.com TLS layer 切断対策 (実証済 phase12.5)
-# ]                                                 # 任意 URL を ブラウザ偽装で叩けるツールを scraping bridge として晒さないための allowlist
-# timeoutMs = 30000                                # spawn 起動 + curl_cffi 完走の合計タイムアウト
+# **運用ガイド** (`enabled = true` にする前に):
+# 1. `projectDir` に `tools/curl-cffi-fetcher/` の絶対パスを設定
+# 2. `domains` に救援対象を列挙 (任意 URL に対するブラウザ偽装の悪用を防ぐ allowlist)
 #
 # 詳細は tools/curl-cffi-fetcher/README.md 参照。
+enabled = false
+# 有効化時に必須 (enabled = false なら未設定で OK):
+# projectDir = "/path/to/summaly/tools/curl-cffi-fetcher"   # 絶対パス推奨 (cwd 相対も可)
+uvPath = "uv"                                       # PATH 上に `uv` があれば変更不要
+impersonate = "chrome120"                           # `firefox120` / `safari17_0` 等も可
+categories = ["timeout", "connection_dropped", "bot_blocked"]  # どのカテゴリで curl_cffi を発火するか
+domains = []                                        # suffix-match。例: ["yodobashi.com"]
+timeoutMs = 30000                                   # spawn 起動 + curl_cffi 完走の合計タイムアウト
 
 [scraping.strategy_cache]
-# 経路学習キャッシュ (phase14 Step 1)。host + path prefix 1〜2 段ごとに「成功した取得経路」
+# 経路学習キャッシュ (phase14)。host + path prefix 1〜2 段ごとに「成功した取得経路」
 # (default / fallback_ua / proxy / curl_cffi のどれか) を学習し、JSONL で永続化する。
 # 次回以降のリクエストでは学習した経路を第一選択肢として使うことで「初回 default UA で
 # 20 秒空回り → fallback で成功」のような時間損失を回避する。
 #
-# **注**: phase14 Step 1 ではストレージ層と TOML 設定パスのみ。`scpaping()` への統合は Step 2 で行う。
-# 現時点でこのセクションを設定しても挙動は変わらない (将来互換のため明示しておくのは可)。
+# **bootstrap 同梱**: `data/domain-strategy-bootstrap.jsonl` (npm 同梱) に
+# yodobashi → curl_cffi、amazon.co.jp/dp → proxy 等の主要救援経路が初期登録されている。
+# 起動時に自動ロードされ、初回アクセスから fast path で正解経路が選ばれる。
 #
-# enabled = true                                    # デフォルト ON。明示 false で従来カスケードのみ
-# bootstrapPath = "data/domain-strategy-bootstrap.jsonl"   # リポ同梱の初期データ。省略時は npm 同梱の同名ファイルを自動解決 (phase14 Step 3)
-# runtimePath = "/var/cache/summaly/domain-strategy.jsonl" # 学習結果の永続化先。省略時は永続化なし (in-memory のみ)
-# maxEntries = 5000                                 # in-memory LRU の上限エントリ数
-# consecutiveFailureThreshold = 3                   # N 連続失敗でエントリ破棄
-# compactionThreshold = 1000                        # runtime JSONL 累積行数がこれを超えたら BG 圧縮
+# **重要**: bootstrap が真に機能するには `[scraping.proxy]` または `[scraping.curl_cffi]` の
+# いずれかを有効化していないと、学習指示が入っていても発射経路が無く救援できない。
+# 例: bootstrap で `amazon.co.jp/dp → proxy` が入っていても `[scraping.proxy].enabled = false`
+# のままでは救援不能 (Amazon プレビューが「Rejected by type filter undefined」で失敗する)。
+enabled = true
+# bootstrapPath = "data/domain-strategy-bootstrap.jsonl"    # 省略時は npm 同梱から自動解決
+# runtimePath = "/var/cache/summaly/domain-strategy.jsonl"  # 学習結果の永続化先。省略時は in-memory のみ
+maxEntries = 5000                                   # in-memory LRU の上限エントリ数
+consecutiveFailureThreshold = 3                     # N 連続失敗でエントリ破棄
+compactionThreshold = 1000                          # runtime JSONL 累積行数がこれを超えたら BG 圧縮
 
 [scraping.fallback]
 # Bot block 検出時に別 UA で 1 回リトライする (phase11.9)。
@@ -186,11 +196,11 @@ parseFailureLogSamplesPerGroup = 5       # 1 グループあたりの直近サ�
 # `/embed` エンドポイント設定 (phase13.1)。renderEmbed を実装したプラグイン (現状は syosetu のみ予定)
 # が「JS なし HTML+CSS で iframe 用ページを返す」エンドポイント。Misskey の embed (player) で表示される。
 #
-# **運用要件**:
+# **運用要件** (`enabled = true` にする前に):
 # - `[server].publicUrl` が **必ず https: で設定されている** こと (browser から直接 iframe で読まれるため)
 # - 対応プラグインが `[plugins].allowed` に含まれていること (TOML 経由で有効化)
 # - 商用運用では `frameAncestors` を Misskey インスタンスのオリジンに明示制限すること
-#
-# enabled = true                        # false で /embed が 404、player.url も生成しない (完全無効化)
+enabled = false
+# 有効化時に必須 (enabled = false なら未設定で OK):
 # allowedPlugins = ["syosetu"]          # embed 対応プラグインの allowlist。空配列禁止 (fail-close)
 # frameAncestors = ["*"]                # iframe を読み込んで良いオリジン (CSP frame-ancestors)。商用運用は明示制限推奨
