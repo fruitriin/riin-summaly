@@ -12,8 +12,11 @@ summaly を Misskey 等のフロントエンドから利用するために、**�
 - [最小起動](#最小起動)
 - [Fastify モード固有のオプション](#fastify-モード固有のオプション)
 - [キャッシュ戦略](#キャッシュ戦略)
+- [経路優先システム俯瞰 (phase11.9 / 12.1 / 12.5 / 14)](#経路優先システム俯瞰-phase119--121--125--14)
 - [Bot block フォールバック UA リトライ (phase11.9)](#bot-block-フォールバック-ua-リトライ-phase119)
 - [Outbound proxy フォールバック (phase12.1)](#outbound-proxy-フォールバック-phase121)
+- [curl_cffi (TLS layer bot block) フォールバック (phase12.5)](#curl_cffi-tls-layer-bot-block-フォールバック-phase125)
+- [経路学習キャッシュ (phase14 Step 1)](#経路学習キャッシュ-phase14-step-1)
 - [パース失敗ドメインのログ蓄積 (phase10.1)](#パース失敗ドメインのログ蓄積-phase101)
 - [バージョン確認エンドポイント `GET /v`](#バージョン確認エンドポイント-get-v)
 - [エラーレスポンスのカテゴリ (phase11.2)](#エラーレスポンスのカテゴリ-phase112)
@@ -169,6 +172,42 @@ summaly のキャッシュ・流量制御は **4 段重ね** で考えるのが�
 | dedup・LRU 共に無効 | （ヘッダなし） | 既存挙動 |
 
 異なる URL の並列数に上限はかけません（dedup は同 URL のみ）。Fastify 全体のリクエストキューイングは上位レイヤ（nginx の `limit_conn` 等）の責務です。
+
+経路優先システム俯瞰 (phase11.9 / 12.1 / 12.5 / 14)
+----------------------------------------------------------------
+
+URL 取得は **4 種類の経路** に整理され、サイト固有の bot 排除レイヤーに応じて適切な経路を選択します。各経路の詳細設定は後続の独立セクション ([UA リトライ](#bot-block-フォールバック-ua-リトライ-phase119) / [Proxy](#outbound-proxy-フォールバック-phase121) / [curl_cffi](#curl_cffi-tls-layer-bot-block-フォールバック-phase125) / [経路学習キャッシュ](#経路学習キャッシュ-phase14-step-1)) を参照してください。
+
+### 4 経路の責務分担
+
+| 経路 | 内部キー | 突破対象 | 設定セクション |
+|:--|:--|:--|:--|
+| **Summaly UA (default)** | `default` | (デフォルト経路、bot block 無し) | (なし) |
+| **SNS Preview Bot UA** | `fallback_ua` | `SummalyBot` 文字列を弾く WAF (`socket hang up` 等) | `[scraping.fallback]` |
+| **Proxy 経由** | `proxy` | datacenter IP block (Vultr Tokyo IP の amazon.co.jp 500 等) | `[scraping.proxy]` |
+| **curl_cffi** | `curl_cffi` | TLS / HTTP/2 layer の bot block (yodobashi 級 INTERNAL_ERROR) | `[scraping.curl_cffi]` |
+
+### Cascade fallback chain (cache miss 時の初回経路探索)
+
+1. **Summaly UA** で取得 → 成功すれば終了
+2. 失敗カテゴリが `fallback_ua` の発火対象 (`bot_blocked` / `connection_dropped`) なら **SNS Preview Bot UA** でリトライ
+3. 失敗カテゴリが `proxy` の発火対象 (`origin_error` / `bot_blocked`) かつ `domains` allowlist 一致なら **Proxy 経由** でリトライ
+4. 失敗カテゴリが `curl_cffi` の発火対象 (`timeout` / `connection_dropped` / `bot_blocked`) かつ `domains` allowlist 一致なら **curl_cffi** でリトライ
+
+各経路は `enabled = true` 時のみ有効で、`domains` allowlist (proxy / curl_cffi) または `categories` (fallback_ua) で発火条件を絞ります。
+
+### 経路学習キャッシュ (phase14)
+
+cascade fallback は初回発火コストが大きい (例: yodobashi に default UA で 20 秒タイムアウト → fallback_ua で 20 秒タイムアウト → proxy で失敗 → curl_cffi で初めて成功) ため、phase14 で **学習機構** を追加しました:
+
+- 成功した経路を **`host` + `pathPrefix` (1〜2 段) 単位で JSONL 永続化**
+- 次回以降のリクエストは cache hit fast path で **学習済み経路を直接呼び出し**、cascade をスキップ
+- リポ同梱の **bootstrap JSONL** (`data/domain-strategy-bootstrap.jsonl`、yodobashi → curl_cffi、sqex → proxy 等) で初回コストもゼロ
+- N 連続失敗で entry 破棄 + bootstrap 値打ち消しマーカー JSONL append (サイト側仕様変更耐性)
+
+phase14 Step 4 で `forceCurlCffiFallback` / `forceProxyFallback` プラグインフラグを廃止し、**経路選択の責務はすべて経路学習キャッシュ側に集約** されました。プラグインは extraction (例: `yodobashi` で `skipRedirectResolution = true` / `kakuyomu` で `__NEXT_DATA__` parse) の自在性専用に整理されています。
+
+設定は `[scraping.strategy_cache]` で `enabled = true` (デフォルト)。詳細設定は [経路学習キャッシュ (phase14 Step 1)](#経路学習キャッシュ-phase14-step-1) を参照。
 
 Bot block フォールバック UA リトライ (phase11.9)
 ----------------------------------------------------------------

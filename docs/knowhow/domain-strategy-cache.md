@@ -119,7 +119,7 @@ class DomainStrategyCache {
 - `recordSuccess` / `recordFailure` は同期関数で event loop 上で原子的 (parse-failure-log の `record` と同じ理由)
 - `forceCompaction()` は `@internal` でテスト専用
 
-## bootstrap JSONL の運用 (Step 3 で同梱予定)
+## bootstrap JSONL の運用 (Step 3 で同梱済み — `data/domain-strategy-bootstrap.jsonl`)
 
 ```jsonl
 {"pathKey":"yodobashi.com","strategy":"curl_cffi","successCount":1,"consecutiveFailures":0,"lastSuccessAt":1234,"lastAttemptAt":1234}
@@ -156,13 +156,14 @@ class DomainStrategyCache {
 
 混同すると「config を一時的に無効化したらキャッシュエントリが N 回で破棄されてしまう」誤動作になる。**「現環境で使えない」** と **「一時的に失敗」** は別物として扱う。
 
-### `forceX` フラグとの優先順位
+### `forceX` フラグとの優先順位 (phase14 Step 4 で廃止済)
 
-cache hit より forceX (forceProxyFallback / forceCurlCffiFallback) を優先する設計:
+phase14 Step 2a の移行期は cache hit より forceX (forceProxyFallback / forceCurlCffiFallback) を優先する設計だった:
 
 - `forceX` はプラグインが「このサイトは確実にこの経路でしか取れない」と確信しているシグナル
 - cache に古い情報が残っていても plugin の意思を尊重する
-- phase14 Step 4 で `forceX` は廃止予定。移行期は二重存在して問題ない (forceX が短期で使われるサイトは限定的)
+
+**phase14 Step 4 で `forceX` フラグは廃止済**。プラグイン側からは経路選択の責務が外れ、bootstrap JSONL に同等エントリを書くことで `'curl_cffi'` / `'proxy'` の cache fast path 経由に統合された。プラグインは extraction (`skipRedirectResolution` 等) の自在性専用に整理されている。
 
 ### `'default'` strategy の fast path は UA リトライしない設計
 

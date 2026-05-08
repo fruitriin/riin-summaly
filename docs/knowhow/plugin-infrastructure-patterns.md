@@ -44,6 +44,28 @@ test('プラグイン name はファイル名（src/plugins/<name>.ts）と一�
 });
 ```
 
+### ドキュメント表チェックを test で構造的に守る (phase11.4 / phase15.2 / phase16.1)
+
+新規プラグイン追加時に **「ドキュメントへの言及漏れ」を test で fail させる** 構造的ガードを置くと、phase11.4 (`npmjs` を `[plugins.allowed]` に反映漏れ → 本番 403)、phase15.2 (`kakuyomu` を README プラグイン表に反映漏れ) のような同種の見落としを防げる。
+
+[test/config-example-plugins.test.ts](../../test/config-example-plugins.test.ts) は `config.example.toml` と `docs/deploy-examples/summaly-config.example.toml` の `[plugins.allowed]` を `"<name>"` quoted パターンでチェックする。phase16.1 ではこれを README にも拡張し ([test/readme-plugins.test.ts](../../test/readme-plugins.test.ts))、`` `<name>` `` バッククォート付きトークンで言及されているかを確認する。
+
+**設計パターン**:
+
+- 「言及の有無」だけを保証 (経路列の値 / 対象 URL の正確性は人力レビュー or 詳細ドキュメント側に委ねる)
+- コメントアウト行 (`# "dlsite",`) や非推奨注記もパス扱い (運用者が判断で活性化できれば OK)
+- エラーメッセージで具体的な修正箇所を案内 (どのファイルのどの表に追記するか)
+- 検出ロジックは `src/plugins/*.ts` 直接の `export const name = '...'` 抽出 (`builtinPlugins` import は循環回避のため避ける)
+
+**ドキュメントごとの「言及形式」と検出パターン**:
+
+| ドキュメント | 言及形式 | 検出パターン |
+|---|---|---|
+| `config.example.toml` / `docs/deploy-examples/summaly-config.example.toml` | TOML 配列の quoted 文字列 | `"<name>"` または `'<name>'` |
+| `README.md` プラグイン表 | バッククォート付きトークン | `` `<name>` `` |
+
+新形式のドキュメントを追加する時は、その形式の検出パターンで test ファイルを追加すれば、運用者は「新規プラグイン追加 → `pnpm test` で漏れ検出」の同じ反射神経で守れる。
+
 ## ブラウザ UA オーバーライド
 
 サイト固有の UA 切替えを **コアにホストリストを抱えず、プラグイン単位で** 対処する。
