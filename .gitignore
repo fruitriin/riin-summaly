@@ -18,3 +18,9 @@ CLAUDE.repo.md
 .venv/
 __pycache__/
 *.pyc
+
+# 経路学習キャッシュ runtime + パース失敗ログ (phase14 / phase10.1 / phase11.6 / phase16.3)
+# `data/domain-strategy-bootstrap.jsonl` だけは git tracking 対象 (npm 同梱)
+data/domain-strategy-runtime.jsonl
+data/parse-failures.jsonl
+data/parse-failures-blocked.jsonl

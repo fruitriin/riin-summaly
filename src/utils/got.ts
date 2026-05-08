@@ -112,7 +112,8 @@ export function getGotOptions(url: string, opts?: GeneralScrapingOptions): Omit<
 			// useRange: true のときは Range ヘッダで先頭領域だけ取得する。
 			// サーバが Range をサポートしていなければ 200 OK でフルボディが返るため
 			// 既存の contentLengthLimit ガードで保護される。
-			...(opts?.useRange ? { range: `bytes=0-${maxSize - 1}` } : {}),
+			// **phase16.3**: internal default を true に変更。明示 false で off。
+			...((opts?.useRange ?? true) ? { range: `bytes=0-${maxSize - 1}` } : {}),
 		},
 		typeFilter,
 		followRedirects: opts?.followRedirects,
@@ -120,7 +121,7 @@ export function getGotOptions(url: string, opts?: GeneralScrapingOptions): Omit<
 		operationTimeout: opts?.operationTimeout,
 		contentLengthLimit: opts?.contentLengthLimit,
 		contentLengthRequired: opts?.contentLengthRequired,
-		useRange: opts?.useRange,
+		useRange: opts?.useRange ?? true,
 		enablePdf: opts?.enablePdf,
 	};
 }

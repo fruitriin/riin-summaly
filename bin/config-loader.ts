@@ -11,35 +11,11 @@ import { readFileSync } from 'node:fs';
 import { parse as parseToml } from 'smol-toml';
 import type { SummalyOptions } from '../src/index.js';
 import { DEFAULT_FALLBACK_UA } from '../src/utils/got.js';
-
-/**
- * `SummalyErrorCategory` の現存値一覧（typo を防ぐための検証用）。
- * `src/utils/parse-failure-log.ts` の `SummalyErrorCategory` ユニオンに合わせる。
- * 新カテゴリ追加時はこちらも追記する必要がある（現状は手動同期）。
- */
-const VALID_ERROR_CATEGORIES: ReadonlySet<string> = new Set([
-	'timeout',
-	'bot_blocked',
-	'not_found',
-	'origin_error',
-	'unsupported_type',
-	'content_too_large',
-	'ssrf_blocked',
-	'network_error',
-	'connection_dropped',
-	'parse_error',
-	'unknown',
-]);
+import { getDefaultBootstrapPath } from '../src/utils/domain-strategy-cache.js';
 
 export interface ServerOptions {
 	host?: string;
 	port?: number;
-	/**
-	 * **自身が外部に公開されている URL** (phase13.1)。例: `https://summaly.example.com`。
-	 * `[embed]` を有効化したプラグインの player.url を組み立てるのに使う。
-	 * 未設定なら embed 機能は実質無効 (`embedBaseUrl` が undefined のまま)。
-	 */
-	publicUrl?: string;
 }
 
 export interface ParsedConfig {
@@ -89,6 +65,87 @@ function expectPositiveInteger(value: number, key: string): void {
 }
 
 /**
+ * セクション内の未知キーを起動失敗で検出する (phase16.3)。
+ *
+ * smol-toml は unknown key を silent ignore するため、旧キー (`[scraping.proxy].domains` 等) や
+ * typo を黙って受け流してしまう。phase16.3 で削除/移動されたキーを「動かないが気付けない」
+ * 状態で残す方が運用上のコストが大きいため、各セクションで allowed キーを明示する fail-fast 設計に変更。
+ *
+ * `[plugins.<name>]` のような placeholder セクションは unknown キーになるため例外的に skip する場合がある。
+ */
+function expectKnownKeys(obj: Record<string, Toml>, allowed: readonly string[], path: string): void {
+	for (const k of Object.keys(obj)) {
+		if (!allowed.includes(k)) {
+			throw new RangeError(
+				`config: unknown key '${path}.${k}'. valid keys: ${allowed.join(', ')}. `
+				+ `(phase16.3 で削除/移動された可能性があります — DEPRECATED.md を参照してください)`,
+			);
+		}
+	}
+}
+
+/**
+ * bootstrap JSONL を読み、strategy 別に host (pathKey の最初のセグメント) を集約する (phase16.3)。
+ *
+ * proxy / curl_cffi の `domains` allowlist を bootstrap entry から自動導出するために使う。
+ * 1 ソース管理 (bootstrap.jsonl だけ更新すればよい) を実現するための内部ヘルパ。
+ *
+ * ファイルが存在しない / 読めない場合は **警告なく空 Map を返す** (起動失敗にしない、bootstrap は optional)。
+ * 各エントリの parse error も silent skip (DomainStrategyCache.loadJsonl の堅牢性と同じ方針)。
+ */
+function loadBootstrapHostsByStrategy(bootstrapPath: string): Map<string, Set<string>> {
+	const result = new Map<string, Set<string>>();
+	let text: string;
+	try {
+		text = readFileSync(bootstrapPath, 'utf-8');
+	} catch {
+		return result;
+	}
+	for (const line of text.split('\n')) {
+		const trimmed = line.trim();
+		if (trimmed === '' || trimmed.startsWith('#')) continue;
+		try {
+			const obj = JSON.parse(trimmed) as { pathKey?: unknown; strategy?: unknown };
+			if (typeof obj.pathKey !== 'string' || typeof obj.strategy !== 'string') continue;
+			const host = obj.pathKey.split('/')[0];
+			if (host === '') continue;
+			let set = result.get(obj.strategy);
+			if (set === undefined) {
+				set = new Set();
+				result.set(obj.strategy, set);
+			}
+			set.add(host);
+		} catch {
+			continue;
+		}
+	}
+	return result;
+}
+
+/**
+ * proxy / curl_cffi の `categories` デフォルト値 (phase16.3 でコード側固定化、TOML キーは廃止)。
+ *
+ * 旧設計では運用者が config.toml で個別に override 可能だったが、運用上ほぼ全員が同じ値を使っていた。
+ * 設定責任を運用者から外しコード側に集約する判断 (Feedback.md の orientation に従う)。
+ */
+const DEFAULT_PROXY_CATEGORIES: NonNullable<SummalyOptions['proxyFallback']>['categories']
+	= ['origin_error', 'bot_blocked'];
+const DEFAULT_CURL_CFFI_CATEGORIES: NonNullable<SummalyOptions['curlCffiFallback']>['categories']
+	= ['timeout', 'connection_dropped', 'bot_blocked'];
+const DEFAULT_FALLBACK_CATEGORIES: NonNullable<SummalyOptions['fallbackRetryCategories']>
+	= ['bot_blocked', 'connection_dropped'];
+
+/**
+ * `parseFailureLog = true` 時のデフォルトパス (phase16.3)。
+ *
+ * 運用者が `parseFailureLog = true` だけ書けば集約が動くようにペア制御 + デフォルト適用。
+ * cwd 相対の `./data/` (bootstrap.jsonl と同階層) で grep / jq しやすく一貫性確保。
+ * `.gitignore` で `data/parse-failures*.jsonl` を除外するので git status を汚さない。
+ */
+const DEFAULT_PARSE_FAILURE_LOG_JSONL_PATH = './data/parse-failures.jsonl';
+const DEFAULT_PARSE_FAILURE_LOG_BLOCKED_JSONL_PATH = './data/parse-failures-blocked.jsonl';
+
+/**
  * TOML 文字列をパースし、検証済みの `SummalyOptions` + `ServerOptions` を返す。
  * テストから直接呼べるよう、ファイル I/O は分離する（`parseTomlConfig` がラッパー）。
  */
@@ -103,28 +160,41 @@ export function parseTomlConfigString(toml: string): ParsedConfig {
 		throw new ConfigError('config: top-level must be a TOML table');
 	}
 
+	// phase16.3: トップレベルの未知キーも fail-fast。`[plugins.<name>]` のような placeholder
+	// (将来拡張用) も含むため `plugins` だけは例外的に許容する判断はしない (placeholder は plugins 配下のみ)。
+	expectKnownKeys(parsed, TOP_LEVEL_KEYS, '');
+
 	const server = parseServerSection(parsed.server);
 	const summaly = parseSummalySection(parsed.summaly, parsed.plugins, parsed.diagnostics);
 	parseScrapingSection(parsed.scraping, summaly);
-	parseEmbedSection(parsed.embed, server, summaly);
+	parseEmbedSection(parsed.embed, summaly);
 
 	return { server, summaly };
 }
 
+const TOP_LEVEL_KEYS = ['server', 'summaly', 'scraping', 'plugins', 'diagnostics', 'embed'] as const;
+
 /**
- * `[embed]` セクションを処理し、`SummalyOptions.embedBaseUrl` / `embedConfig` にマップする (phase13.1)。
+ * `[embed]` セクションを処理し、`SummalyOptions.embedBaseUrl` / `embedConfig` にマップする (phase13.1, phase16.3 改修)。
  *
- * - `enabled` が省略 / true で `[server].publicUrl` が設定済なら embed 有効化、`embedBaseUrl` を投入
+ * - `enabled` が省略 / true で `publicUrl` が設定済なら embed 有効化、`embedBaseUrl` を投入
  * - `enabled = false` なら `embedConfig.enabled = false` で完全無効化 (= /embed が 404、player.url も生成しない)
- * - `[server].publicUrl` 未設定なら embed は実質無効 (embedConfig は作るが embedBaseUrl は undefined のまま)
- * - `allowedPlugins` 必須 (空配列禁止、fail-close で全プラグイン無効を防ぐ)
+ * - `publicUrl` 未設定なら embed は実質無効 (embedConfig は作るが embedBaseUrl は undefined のまま)
  * - `frameAncestors` 省略時は `["*"]` (デフォルト全許可、商用は config で制限推奨)
+ *
+ * **phase16.3 変更**:
+ * - `[server].publicUrl` → `[embed].publicUrl` 移動 (embed でしか使わない)
+ * - `[embed].allowedPlugins` 削除。`renderEmbed` 実装プラグインで `[plugins].allowed` に含まれるものを
+ *   src/index.ts の Fastify auto-init 側で自動構成 (詳細は src/index.ts 参照)
  */
-function parseEmbedSection(rawEmbed: Toml, server: ServerOptions, summaly: SummalyOptions): void {
+const EMBED_KEYS = ['enabled', 'publicUrl', 'frameAncestors'] as const;
+function parseEmbedSection(rawEmbed: Toml, summaly: SummalyOptions): void {
 	if (rawEmbed === undefined) return;
 	if (!isObject(rawEmbed)) {
 		throw new TypeError('config: `[embed]` must be a table');
 	}
+	expectKnownKeys(rawEmbed, EMBED_KEYS, 'embed');
+
 	let enabled = true;
 	if (rawEmbed.enabled !== undefined) {
 		expectType(rawEmbed.enabled, 'boolean', 'embed.enabled');
@@ -134,16 +204,6 @@ function parseEmbedSection(rawEmbed: Toml, server: ServerOptions, summaly: Summa
 		// 完全無効化: embedConfig.enabled = false で /embed が 404、player.url も組み立てられない
 		summaly.embedConfig = { enabled: false, allowedPlugins: [], frameAncestors: [] };
 		return;
-	}
-
-	// allowedPlugins は必須 (空配列禁止 — fail-close 維持)
-	if (rawEmbed.allowedPlugins === undefined) {
-		throw new RangeError('config: `embed.allowedPlugins` is required when embed.enabled = true');
-	}
-	expectStringArray(rawEmbed.allowedPlugins, 'embed.allowedPlugins');
-	const allowedPlugins = rawEmbed.allowedPlugins;
-	if (allowedPlugins.length === 0) {
-		throw new RangeError('config: `embed.allowedPlugins` must not be empty (fail-close)');
 	}
 
 	let frameAncestors: string[] = ['*'];
@@ -183,15 +243,30 @@ function parseEmbedSection(rawEmbed: Toml, server: ServerOptions, summaly: Summa
 		);
 	}
 
-	summaly.embedConfig = { enabled: true, allowedPlugins, frameAncestors };
+	// allowedPlugins は src/index.ts 側で `renderEmbed` 実装 × `[plugins].allowed` から auto-fill。
+	// ここでは空配列を入れる (auto-fill されるまでのプレースホルダ)。
+	summaly.embedConfig = { enabled: true, allowedPlugins: [], frameAncestors };
 
-	// `[server].publicUrl` が設定済なら `embedBaseUrl` を組み立てて投入
-	// (publicUrl 未設定でも embed エンドポイント自体は受け付けるが、プラグインが player.url を組み立てない)
-	if (server.publicUrl != null && server.publicUrl !== '') {
+	// `[embed].publicUrl` が設定済なら `embedBaseUrl` を組み立てて投入
+	if (rawEmbed.publicUrl !== undefined) {
+		expectType(rawEmbed.publicUrl, 'string', 'embed.publicUrl');
+		const v = (rawEmbed.publicUrl as string).trim();
+		if (v === '') {
+			throw new RangeError('config: `embed.publicUrl` must not be empty when specified');
+		}
+		// `https:` only — `/embed` は browser から直接アクセスされるため平文 HTTP は不可
+		// (中間者が iframe HTML を改竄してフィッシング/XSS の踏み台にする)
+		let parsed: URL;
+		try {
+			parsed = new URL(v);
+		} catch {
+			throw new RangeError(`config: \`embed.publicUrl\` must be a valid URL, got "${v}"`);
+		}
+		if (parsed.protocol !== 'https:') {
+			throw new RangeError(`config: \`embed.publicUrl\` must use https: scheme, got "${parsed.protocol}"`);
+		}
 		// **`URL` パースで origin + pathname だけを取る** (security review L-3): 末尾スラッシュ削除 +
 		// クエリ / フラグメントは除去 ( `https://x.com?debug=1/embed?url=...` のような不正 URL 生成を防ぐ)。
-		// publicUrl は parseServerSection で URL 検証済みのため new URL は throw しない
-		const parsed = new URL(server.publicUrl);
 		summaly.embedBaseUrl = `${parsed.origin}${parsed.pathname}`.replace(/\/$/, '');
 	}
 }
@@ -204,22 +279,59 @@ function parseEmbedSection(rawEmbed: Toml, server: ServerOptions, summaly: Summa
  * - `enabled = true` (or undefined) で `userAgent` 指定があれば `fallbackUserAgent` に
  * - `categories` 指定があれば `fallbackRetryCategories` に
  */
+const SCRAPING_KEYS = ['fallback', 'proxy', 'curl_cffi', 'strategy_cache'] as const;
 function parseScrapingSection(rawScraping: Toml, out: SummalyOptions): void {
-	if (rawScraping === undefined) return;
+	if (rawScraping === undefined) {
+		// scraping セクション無しでも bootstrap 依存チェックは走らせる (proxy/curl_cffi に渡す host set を空で評価)
+		const empty = new Map<string, Set<string>>();
+		parseProxySection(undefined, out, empty);
+		parseCurlCffiSection(undefined, out, empty);
+		return;
+	}
 	if (!isObject(rawScraping)) {
 		throw new TypeError('config: `[scraping]` must be a table');
 	}
+	expectKnownKeys(rawScraping, SCRAPING_KEYS, 'scraping');
+
+	// phase16.3: bootstrap.jsonl から strategy 別 host set を導出 → proxy/curl_cffi の domains に注入。
+	// **bootstrap は `[scraping.strategy_cache]` セクション明示時のみ読む** (元の parseStrategyCacheSection
+	// 設計「section 無ければ何もマップしない」と整合)。section 無し = strategy_cache 無効 = 経路依存チェック不要。
+	// strategy_cache.bootstrapPath が明示されていればそれを、未指定なら getDefaultBootstrapPath() で同梱解決。
+	let bootstrapHostsByStrategy = new Map<string, Set<string>>();
+	const rawCache = rawScraping['strategy_cache'];
+	if (rawCache !== undefined && isObject(rawCache)) {
+		const cacheEnabled = rawCache.enabled === undefined || rawCache.enabled === true;
+		// bootstrapPath が string 型で空文字なら、ここで fail-fast (parseStrategyCacheSection より先に)
+		if (typeof rawCache.bootstrapPath === 'string' && rawCache.bootstrapPath.trim() === '') {
+			throw new RangeError('config: `scraping.strategy_cache.bootstrapPath` must not be empty when specified');
+		}
+		if (cacheEnabled) {
+			let bootstrapPath: string | undefined;
+			if (typeof rawCache.bootstrapPath === 'string') {
+				bootstrapPath = rawCache.bootstrapPath.trim();
+			} else {
+				bootstrapPath = getDefaultBootstrapPath();
+			}
+			if (bootstrapPath !== undefined && bootstrapPath !== '') {
+				bootstrapHostsByStrategy = loadBootstrapHostsByStrategy(bootstrapPath);
+			}
+		}
+	}
+
 	parseScrapingFallbackSection(rawScraping.fallback, out);
-	parseProxySection(rawScraping.proxy, out);
-	parseCurlCffiSection(rawScraping['curl_cffi'], out);
+	parseProxySection(rawScraping.proxy, out, bootstrapHostsByStrategy);
+	parseCurlCffiSection(rawScraping['curl_cffi'], out, bootstrapHostsByStrategy);
 	parseStrategyCacheSection(rawScraping['strategy_cache'], out);
 }
 
+const SCRAPING_FALLBACK_KEYS = ['enabled', 'userAgent'] as const;
 function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void {
 	if (fallback === undefined) return;
 	if (!isObject(fallback)) {
 		throw new TypeError('config: `[scraping.fallback]` must be a table');
 	}
+	expectKnownKeys(fallback, SCRAPING_FALLBACK_KEYS, 'scraping.fallback');
+
 	let enabled = true;
 	if (fallback.enabled !== undefined) {
 		expectType(fallback.enabled, 'boolean', 'scraping.fallback.enabled');
@@ -238,37 +350,58 @@ function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void
 	} else {
 		out.fallbackUserAgent = DEFAULT_FALLBACK_UA;
 	}
-	if (fallback.categories !== undefined) {
-		expectStringArray(fallback.categories, 'scraping.fallback.categories');
-		// 各値が `SummalyErrorCategory` の既存メンバーかをチェック（typo 検出）
-		for (const c of fallback.categories) {
-			if (!VALID_ERROR_CATEGORIES.has(c)) {
-				throw new RangeError(`config: \`scraping.fallback.categories\` contains unknown category "${c}"`);
-			}
-		}
-		out.fallbackRetryCategories = fallback.categories as SummalyOptions['fallbackRetryCategories'];
-	}
+	// phase16.3: `categories` TOML キーは削除。コード側 default 固定 (DEFAULT_FALLBACK_CATEGORIES)。
+	out.fallbackRetryCategories = DEFAULT_FALLBACK_CATEGORIES;
 }
 
 /**
- * `[scraping.proxy]` セクションを処理し、`SummalyOptions.proxyFallback` にマップする (phase12.1)。
+ * `[scraping.proxy]` セクションを処理し、`SummalyOptions.proxyFallback` にマップする (phase12.1, phase16.3 改修)。
  *
  * シークレットの解決順:
  * 1. `process.env.SUMMALY_PROXY_SECRET`
  * 2. `config.toml` の `[scraping.proxy].secret`
- * 3. どちらも無ければ `enabled = false` 扱いで warning を stderr に出して return（起動失敗にはしない）
+ * 3. どちらも無ければ起動失敗 (phase16.3 で warning + 無効化を fail-fast に変更)
+ *
+ * **phase16.3 変更**:
+ * - `categories` TOML キー削除 → コード側 default 固定 (`DEFAULT_PROXY_CATEGORIES`)
+ * - `domains` TOML キー削除 → bootstrap.jsonl から strategy=proxy の host を自動導出
+ * - 経路依存 fail-fast: bootstrap に proxy entry があるけど `enabled = false` なら起動失敗
+ *
+ * @param bootstrapHostsByStrategy bootstrap.jsonl から導出した strategy 別 host set
  */
-function parseProxySection(rawProxy: Toml, out: SummalyOptions): void {
-	if (rawProxy === undefined) return;
+const SCRAPING_PROXY_KEYS = ['enabled', 'url', 'secret', 'timeoutMs'] as const;
+function parseProxySection(
+	rawProxy: Toml,
+	out: SummalyOptions,
+	bootstrapHostsByStrategy: Map<string, Set<string>>,
+): void {
+	const proxyHosts = bootstrapHostsByStrategy.get('proxy') ?? new Set<string>();
+
+	if (rawProxy === undefined) {
+		// セクション自体無い + bootstrap に proxy entry あり → fail-fast
+		if (proxyHosts.size > 0) {
+			throw new RangeError(buildBootstrapDependencyError('proxy', proxyHosts, '[scraping.proxy] セクションが未定義です'));
+		}
+		return;
+	}
 	if (!isObject(rawProxy)) {
 		throw new TypeError('config: `[scraping.proxy]` must be a table');
 	}
+	expectKnownKeys(rawProxy, SCRAPING_PROXY_KEYS, 'scraping.proxy');
+
 	let enabled = false;
 	if (rawProxy.enabled !== undefined) {
 		expectType(rawProxy.enabled, 'boolean', 'scraping.proxy.enabled');
 		enabled = rawProxy.enabled as boolean;
 	}
-	if (!enabled) return;
+	if (!enabled) {
+		// 経路依存 fail-fast: bootstrap に proxy entry あり + enabled = false → 起動失敗
+		if (proxyHosts.size > 0) {
+			throw new RangeError(buildBootstrapDependencyError('proxy', proxyHosts, '[scraping.proxy].enabled = false です'));
+		}
+		return;
+	}
+
 	if (rawProxy.url === undefined) {
 		throw new RangeError('config: `scraping.proxy.url` is required when scraping.proxy.enabled = true');
 	}
@@ -285,31 +418,22 @@ function parseProxySection(rawProxy: Toml, out: SummalyOptions): void {
 	const envSecret = process.env.SUMMALY_PROXY_SECRET;
 	const secret = (envSecret != null && envSecret !== '') ? envSecret : (configSecret ?? '');
 	if (secret === '') {
-		// シークレット未設定なら起動失敗にせず warning + 無効化（運用者が config.toml を晒し投稿しても安全）
-		process.stderr.write(
-			'[summaly][scraping.proxy] enabled = true だが secret が未設定 (env SUMMALY_PROXY_SECRET も無い)。' +
-			'proxy フォールバックは無効化されました\n',
+		// phase16.3: 旧 warning + 無効化を fail-fast に変更
+		throw new RangeError(
+			'config: scraping.proxy.enabled = true ですが secret が未設定です。'
+			+ ' 環境変数 SUMMALY_PROXY_SECRET または `[scraping.proxy].secret` のいずれかを設定してください',
 		);
-		return;
 	}
-	let categories: string[] = ['origin_error', 'bot_blocked'];
-	if (rawProxy.categories !== undefined) {
-		expectStringArray(rawProxy.categories, 'scraping.proxy.categories');
-		for (const c of rawProxy.categories) {
-			if (!VALID_ERROR_CATEGORIES.has(c)) {
-				throw new RangeError(`config: \`scraping.proxy.categories\` contains unknown category "${c}"`);
-			}
-		}
-		categories = rawProxy.categories;
-	}
-	if (rawProxy.domains === undefined) {
-		throw new RangeError('config: `scraping.proxy.domains` is required when scraping.proxy.enabled = true');
-	}
-	expectStringArray(rawProxy.domains, 'scraping.proxy.domains');
-	const domains = rawProxy.domains;
+
+	// domains は bootstrap から自動導出 (phase16.3)
+	const domains = Array.from(proxyHosts);
 	if (domains.length === 0) {
-		throw new RangeError('config: `scraping.proxy.domains` must not be empty (proxy は明示的な allowlist が必須)');
+		throw new RangeError(
+			'config: scraping.proxy.enabled = true ですが、bootstrap.jsonl に proxy 経路のエントリが存在しません。'
+			+ ' proxy を有効化する場合は data/domain-strategy-bootstrap.jsonl に対象 host を追加してください',
+		);
 	}
+
 	let timeoutMs = 30000;
 	if (rawProxy.timeoutMs !== undefined) {
 		expectType(rawProxy.timeoutMs, 'number', 'scraping.proxy.timeoutMs');
@@ -320,32 +444,73 @@ function parseProxySection(rawProxy: Toml, out: SummalyOptions): void {
 		enabled: true,
 		url,
 		secret,
-		// VALID_ERROR_CATEGORIES でメンバー検証済みなので SummalyErrorCategory[] に narrow できる
-		categories: categories as NonNullable<SummalyOptions['fallbackRetryCategories']>,
+		categories: DEFAULT_PROXY_CATEGORIES,
 		domains,
 		timeoutMs,
 	};
 }
 
 /**
- * `[scraping.curl_cffi]` セクションを処理し、`SummalyOptions.curlCffiFallback` にマップする (phase12.5)。
+ * bootstrap 依存エラーのメッセージ生成 (phase16.3 経路依存 fail-fast)。
+ * 利用者に「どちらかを修正すべきか」を明示する。
+ */
+function buildBootstrapDependencyError(strategy: 'proxy' | 'curl_cffi', hosts: Set<string>, condition: string): string {
+	const hostList = Array.from(hosts).slice(0, 10).map(h => `  - ${h}`).join('\n');
+	const more = hosts.size > 10 ? `\n  ... 他 ${hosts.size - 10} 件` : '';
+	const sectionKey = strategy === 'proxy' ? 'scraping.proxy' : 'scraping.curl_cffi';
+	return (
+		`config: bootstrap (data/domain-strategy-bootstrap.jsonl) は以下の host に対し '${strategy}' 経路を必須としていますが、${condition}:\n`
+		+ hostList + more + '\n\n'
+		+ '以下のいずれかで対処してください:\n'
+		+ `  (a) [${sectionKey}].enabled = true にして ${strategy} をセットアップ`
+		+ (strategy === 'proxy' ? ' (tools/cf-proxy-worker/README.md 参照)' : ' (tools/curl-cffi-fetcher/README.md 参照)') + '\n'
+		+ `  (b) [scraping.strategy_cache].enabled = false で経路学習キャッシュを無効化 (該当ホストのプレビューは取得できなくなります)\n`
+		+ `  (c) data/domain-strategy-bootstrap.jsonl から該当エントリを削除`
+	);
+}
+
+/**
+ * `[scraping.curl_cffi]` セクションを処理し、`SummalyOptions.curlCffiFallback` にマップする (phase12.5, phase16.3 改修)。
  *
  * - `enabled === false` のときは何もマップしない（curl_cffi 無効）
- * - `enabled === true` で `domains` (allowlist) が必須。空配列は明示的に許可しない（オープンプロキシ化防止）
- * - `projectDir` 必須（`tools/curl-cffi-fetcher/` の絶対 or 相対パス）
- * - `uvPath` / `impersonate` / `categories` / `timeoutMs` は省略可能（妥当なデフォルトを採用）
+ * - `enabled === true` で `projectDir` 必須（`tools/curl-cffi-fetcher/` の絶対 or 相対パス）
+ * - `uvPath` / `impersonate` / `timeoutMs` は省略可能（妥当なデフォルトを採用）
+ *
+ * **phase16.3 変更**:
+ * - `categories` TOML キー削除 → コード側 default 固定
+ * - `domains` TOML キー削除 → bootstrap.jsonl から strategy=curl_cffi の host を自動導出
+ * - 経路依存 fail-fast: bootstrap に curl_cffi entry あり + enabled = false → 起動失敗
  */
-function parseCurlCffiSection(rawCurlCffi: Toml, out: SummalyOptions): void {
-	if (rawCurlCffi === undefined) return;
+const SCRAPING_CURL_CFFI_KEYS = ['enabled', 'projectDir', 'uvPath', 'impersonate', 'timeoutMs'] as const;
+function parseCurlCffiSection(
+	rawCurlCffi: Toml,
+	out: SummalyOptions,
+	bootstrapHostsByStrategy: Map<string, Set<string>>,
+): void {
+	const curlCffiHosts = bootstrapHostsByStrategy.get('curl_cffi') ?? new Set<string>();
+
+	if (rawCurlCffi === undefined) {
+		if (curlCffiHosts.size > 0) {
+			throw new RangeError(buildBootstrapDependencyError('curl_cffi', curlCffiHosts, '[scraping.curl_cffi] セクションが未定義です'));
+		}
+		return;
+	}
 	if (!isObject(rawCurlCffi)) {
 		throw new TypeError('config: `[scraping.curl_cffi]` must be a table');
 	}
+	expectKnownKeys(rawCurlCffi, SCRAPING_CURL_CFFI_KEYS, 'scraping.curl_cffi');
+
 	let enabled = false;
 	if (rawCurlCffi.enabled !== undefined) {
 		expectType(rawCurlCffi.enabled, 'boolean', 'scraping.curl_cffi.enabled');
 		enabled = rawCurlCffi.enabled as boolean;
 	}
-	if (!enabled) return;
+	if (!enabled) {
+		if (curlCffiHosts.size > 0) {
+			throw new RangeError(buildBootstrapDependencyError('curl_cffi', curlCffiHosts, '[scraping.curl_cffi].enabled = false です'));
+		}
+		return;
+	}
 
 	if (rawCurlCffi.projectDir === undefined) {
 		throw new RangeError('config: `scraping.curl_cffi.projectDir` is required when scraping.curl_cffi.enabled = true');
@@ -376,24 +541,13 @@ function parseCurlCffiSection(rawCurlCffi: Toml, out: SummalyOptions): void {
 		impersonate = v;
 	}
 
-	let categories: string[] = ['timeout', 'connection_dropped', 'bot_blocked'];
-	if (rawCurlCffi.categories !== undefined) {
-		expectStringArray(rawCurlCffi.categories, 'scraping.curl_cffi.categories');
-		for (const c of rawCurlCffi.categories) {
-			if (!VALID_ERROR_CATEGORIES.has(c)) {
-				throw new RangeError(`config: \`scraping.curl_cffi.categories\` contains unknown category "${c}"`);
-			}
-		}
-		categories = rawCurlCffi.categories;
-	}
-
-	if (rawCurlCffi.domains === undefined) {
-		throw new RangeError('config: `scraping.curl_cffi.domains` is required when scraping.curl_cffi.enabled = true');
-	}
-	expectStringArray(rawCurlCffi.domains, 'scraping.curl_cffi.domains');
-	const domains = rawCurlCffi.domains;
+	// domains は bootstrap から自動導出 (phase16.3)
+	const domains = Array.from(curlCffiHosts);
 	if (domains.length === 0) {
-		throw new RangeError('config: `scraping.curl_cffi.domains` must not be empty (curl_cffi は明示的な allowlist が必須)');
+		throw new RangeError(
+			'config: scraping.curl_cffi.enabled = true ですが、bootstrap.jsonl に curl_cffi 経路のエントリが存在しません。'
+			+ ' curl_cffi を有効化する場合は data/domain-strategy-bootstrap.jsonl に対象 host を追加してください',
+		);
 	}
 
 	let timeoutMs = 30000;
@@ -408,9 +562,7 @@ function parseCurlCffiSection(rawCurlCffi: Toml, out: SummalyOptions): void {
 		uvPath,
 		projectDir,
 		impersonate,
-		// VALID_ERROR_CATEGORIES でメンバー検証済みなので SummalyErrorCategory[] に narrow できる。
-		// 型は `CurlCffiFallbackConfig['categories']` を直接参照（`fallbackRetryCategories` を流用しない）。
-		categories: categories as NonNullable<SummalyOptions['curlCffiFallback']>['categories'],
+		categories: DEFAULT_CURL_CFFI_CATEGORIES,
 		domains,
 		timeoutMs,
 	};
@@ -424,11 +576,16 @@ function parseCurlCffiSection(rawCurlCffi: Toml, out: SummalyOptions): void {
  * - `bootstrapPath` / `runtimePath` は省略可。空文字列は明示エラー
  * - `maxEntries` / `consecutiveFailureThreshold` / `compactionThreshold` は正整数
  */
+const SCRAPING_STRATEGY_CACHE_KEYS = [
+	'enabled', 'bootstrapPath', 'runtimePath', 'maxEntries', 'consecutiveFailureThreshold', 'compactionThreshold',
+] as const;
 function parseStrategyCacheSection(rawStrategyCache: Toml, out: SummalyOptions): void {
 	if (rawStrategyCache === undefined) return;
 	if (!isObject(rawStrategyCache)) {
 		throw new TypeError('config: `[scraping.strategy_cache]` must be a table');
 	}
+	expectKnownKeys(rawStrategyCache, SCRAPING_STRATEGY_CACHE_KEYS, 'scraping.strategy_cache');
+
 	let enabled = true;
 	if (rawStrategyCache.enabled !== undefined) {
 		expectType(rawStrategyCache.enabled, 'boolean', 'scraping.strategy_cache.enabled');
@@ -473,11 +630,14 @@ function parseStrategyCacheSection(rawStrategyCache: Toml, out: SummalyOptions):
 	out.domainStrategyCache = opts;
 }
 
+const SERVER_KEYS = ['host', 'port'] as const;
 function parseServerSection(raw: Toml): ServerOptions {
 	if (raw === undefined) return {};
 	if (!isObject(raw)) {
 		throw new TypeError('config: `[server]` must be a table');
 	}
+	expectKnownKeys(raw, SERVER_KEYS, 'server');
+
 	const out: ServerOptions = {};
 	if (raw.host !== undefined) {
 		expectType(raw.host, 'string', 'server.host');
@@ -494,27 +654,27 @@ function parseServerSection(raw: Toml): ServerOptions {
 		expectPort(raw.port as number);
 		out.port = raw.port as number;
 	}
-	if (raw.publicUrl !== undefined) {
-		expectType(raw.publicUrl, 'string', 'server.publicUrl');
-		const v = (raw.publicUrl as string).trim();
-		if (v === '') {
-			throw new RangeError('config: `server.publicUrl` must not be empty when specified');
-		}
-		// `https:` only — `/embed` 機能は browser から直接アクセスされるため平文 HTTP は不可
-		// (= 中間者が iframe HTML を改竄してフィッシングや XSS の踏み台にする)
-		let parsed: URL;
-		try {
-			parsed = new URL(v);
-		} catch {
-			throw new RangeError(`config: \`server.publicUrl\` must be a valid URL, got "${v}"`);
-		}
-		if (parsed.protocol !== 'https:') {
-			throw new RangeError(`config: \`server.publicUrl\` must use https: scheme, got "${parsed.protocol}"`);
-		}
-		out.publicUrl = v;
-	}
 	return out;
 }
+
+const SUMMALY_KEYS = [
+	'userAgent', 'contentLengthRequired', 'useRange', 'responseTimeout', 'operationTimeout', 'contentLengthLimit',
+	'cache', 'pdf',
+] as const;
+const SUMMALY_CACHE_KEYS = [
+	'maxAge', 'errorMaxAge', 'inMemory', 'inMemoryMaxEntries', 'inFlightDedup',
+] as const;
+const SUMMALY_PDF_KEYS = ['enabled'] as const;
+const PLUGINS_KEYS = ['allowed'] as const;
+const DIAGNOSTICS_KEYS = [
+	'parseFailureLog',
+	'parseFailureLogMaxGroups',
+	'parseFailureLogSamplesPerGroup',
+	'parseFailureLogJsonlPath',
+	'parseFailureLogJsonlMaxBytes',
+	'parseFailureLogBlockedJsonlPath',
+	'parseFailureLogBlockedJsonlMaxBytes',
+] as const;
 
 function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics: Toml): SummalyOptions {
 	const out: SummalyOptions = {};
@@ -522,6 +682,10 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 	if (!isObject(summaly)) {
 		throw new TypeError('config: `[summaly]` must be a table');
 	}
+	expectKnownKeys(summaly, SUMMALY_KEYS, 'summaly');
+
+	// phase16.3: useRange の internal default を true に変更。明示 false で off。
+	out.useRange = true;
 
 	if (summaly.userAgent !== undefined) {
 		expectType(summaly.userAgent, 'string', 'summaly.userAgent');
@@ -554,6 +718,7 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 		if (!isObject(summaly.cache)) {
 			throw new TypeError('config: `[summaly.cache]` must be a table');
 		}
+		expectKnownKeys(summaly.cache, SUMMALY_CACHE_KEYS, 'summaly.cache');
 		const c = summaly.cache;
 		if (c.maxAge !== undefined) {
 			expectType(c.maxAge, 'number', 'summaly.cache.maxAge');
@@ -585,6 +750,7 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 		if (!isObject(summaly.pdf)) {
 			throw new TypeError('config: `[summaly.pdf]` must be a table');
 		}
+		expectKnownKeys(summaly.pdf, SUMMALY_PDF_KEYS, 'summaly.pdf');
 		if (summaly.pdf.enabled !== undefined) {
 			expectType(summaly.pdf.enabled, 'boolean', 'summaly.pdf.enabled');
 			out.enablePdf = summaly.pdf.enabled as boolean;
@@ -596,12 +762,20 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 		if (!isObject(rawPlugins)) {
 			throw new TypeError('config: `[plugins]` must be a table');
 		}
+		// `[plugins.<name>]` セクションは将来拡張用 placeholder として許容するため、unknown key 検出は
+		// `allowed` キー以外の **string キー (= ネスト table)** を無視する形で行う (allowed と placeholder のみ)。
+		for (const k of Object.keys(rawPlugins)) {
+			if (k === 'allowed') continue;
+			// `[plugins.<name>]` placeholder セクションは Toml object として現れる
+			if (isObject(rawPlugins[k])) continue;
+			throw new RangeError(
+				`config: unknown key 'plugins.${k}'. valid keys: allowed (or '[plugins.<plugin-name>]' nested tables for future placeholder)`,
+			);
+		}
 		if (rawPlugins.allowed !== undefined) {
 			expectStringArray(rawPlugins.allowed, 'plugins.allowed');
 			out.allowedPlugins = rawPlugins.allowed;
 		}
-		// `[plugins.<name>]` セクションは将来拡張用 placeholder として読み飛ばす（無視）。
-		// 個別プラグインへの options 受け渡し機構は本フェーズではスコープ外。
 	}
 
 	// [diagnostics] (phase10.1)
@@ -609,6 +783,7 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 		if (!isObject(rawDiagnostics)) {
 			throw new TypeError('config: `[diagnostics]` must be a table');
 		}
+		expectKnownKeys(rawDiagnostics, DIAGNOSTICS_KEYS, 'diagnostics');
 		const d = rawDiagnostics;
 		if (d.parseFailureLog !== undefined) {
 			expectType(d.parseFailureLog, 'boolean', 'diagnostics.parseFailureLog');
@@ -624,9 +799,7 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 			expectPositiveInteger(d.parseFailureLogSamplesPerGroup as number, 'diagnostics.parseFailureLogSamplesPerGroup');
 			out.parseFailureLogSamplesPerGroup = d.parseFailureLogSamplesPerGroup as number;
 		}
-		// `parseFailureLogEndpoint` は phase11.5 で削除済み (プライバシーリスク撤去)。
-		// 既存設定で残っている場合は smol-toml が unknown key を silently 無視する挙動に任せる。
-		// 集約データの参照は `parseFailureLogJsonlPath` 経由 (JSONL ファイル + jq) に移行。
+		// `parseFailureLogEndpoint` は phase11.5 で削除済み + phase16.3 で expectKnownKeys が起動失敗化。
 		if (d.parseFailureLogJsonlPath !== undefined) {
 			expectType(d.parseFailureLogJsonlPath, 'string', 'diagnostics.parseFailureLogJsonlPath');
 			const path = (d.parseFailureLogJsonlPath as string).trim();
@@ -653,6 +826,24 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 			expectType(d.parseFailureLogBlockedJsonlMaxBytes, 'number', 'diagnostics.parseFailureLogBlockedJsonlMaxBytes');
 			expectNonNegativeFiniteNumber(d.parseFailureLogBlockedJsonlMaxBytes as number, 'diagnostics.parseFailureLogBlockedJsonlMaxBytes');
 			out.parseFailureLogBlockedJsonlMaxBytes = d.parseFailureLogBlockedJsonlMaxBytes as number;
+		}
+
+		// phase16.3: parseFailureLog = true のとき、Path のペア制御 + デフォルト適用。
+		// 「片方だけ Path を指定」は事故元になりやすいので fail-fast。両方明示 or 両方未指定 (= デフォルト適用) のいずれか。
+		if (out.parseFailureLog === true) {
+			const hasPath = out.parseFailureLogJsonlPath !== undefined;
+			const hasBlockedPath = out.parseFailureLogBlockedJsonlPath !== undefined;
+			if (hasPath !== hasBlockedPath) {
+				throw new RangeError(
+					'config: diagnostics.parseFailureLogJsonlPath と diagnostics.parseFailureLogBlockedJsonlPath は'
+					+ ' ペアで指定するか、両方とも未指定 (デフォルトパス適用) にしてください。'
+					+ ` (現在: parseFailureLogJsonlPath = ${hasPath}, parseFailureLogBlockedJsonlPath = ${hasBlockedPath})`,
+				);
+			}
+			if (!hasPath && !hasBlockedPath) {
+				out.parseFailureLogJsonlPath = DEFAULT_PARSE_FAILURE_LOG_JSONL_PATH;
+				out.parseFailureLogBlockedJsonlPath = DEFAULT_PARSE_FAILURE_LOG_BLOCKED_JSONL_PATH;
+			}
 		}
 	}
 

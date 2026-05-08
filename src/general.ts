@@ -218,7 +218,7 @@ export type GeneralScrapingOptions = {
 
 	/**
 	 * @internal
-	 * Fastify モードの `[server].publicUrl` を反映した embed エンドポイントのベース URL
+	 * Fastify モードの `[embed].publicUrl` を反映した embed エンドポイントのベース URL
 	 * (phase13.1 Step 3 → 2026-05-08 補正)。`SummalyOptions.embedBaseUrl` を `summaly()` レイヤから
 	 * プラグインの `summarize()` に透過伝搬するための internal フィールド。
 	 * `syosetu` のような renderEmbed 対応プラグインが `Summary.player.url` を組み立てるのに使う。

@@ -278,7 +278,7 @@ export type SummalyOptions = {
 	 * Summary の `player.url` を `<embedBaseUrl>/embed?url=<encoded>` として組み立てる。
 	 * 未設定の場合は player は無効化 (library mode のデフォルト挙動と同じ)。
 	 *
-	 * Fastify モードでは `[server].publicUrl` から自動投入される。
+	 * Fastify モードでは `[embed].publicUrl` から自動投入される (phase16.3 で server から embed に移動)。
 	 *
 	 * @see embedConfig
 	 */
@@ -662,6 +662,18 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 			consecutiveFailureThreshold: strategyCacheOpts.consecutiveFailureThreshold,
 			compactionThreshold: strategyCacheOpts.compactionThreshold,
 		}));
+	}
+
+	// phase16.3: `embedConfig.allowedPlugins` を auto-fill。`renderEmbed` を実装した builtinPlugins のうち
+	// `[plugins].allowed` (= options.allowedPlugins) に含まれるものをすべて embed 対応として登録する。
+	// 「embed 対応プラグインを部分的に絞り込む」という低頻度ニーズは `[plugins].allowed` から外すことで実現する
+	// 設計に統一し、TOML キーの二重管理 (旧 `[embed].allowedPlugins`) を撤廃した。
+	if (options.embedConfig != null && options.embedConfig.enabled) {
+		const allowed = options.allowedPlugins;
+		const autoFilled = builtinPlugins
+			.filter(p => p.name != null && p.renderEmbed != null && (allowed === undefined || allowed.includes(p.name)))
+			.map(p => p.name as string);
+		options.embedConfig = { ...options.embedConfig, allowedPlugins: autoFilled };
 	}
 
 	function respondWithEntry(reply: FastifyReply, entry: CacheEntry) {

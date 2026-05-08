@@ -475,26 +475,24 @@ compactionThreshold = 1000
 `/embed` エンドポイント (phase13.1)
 ----------------------------------------------------------------
 
-プレイヤー iframe として読まれる **JS なし HTML+CSS** を返すエンドポイント。Misskey の URL preview の player iframe で表示される前提。`renderEmbed` を実装したプラグイン (現状は `syosetu` のみ) が対象 URL に対して当該 HTML を返す。
+プレイヤー iframe として読まれる **JS なし HTML+CSS** を返すエンドポイント。Misskey の URL preview の player iframe で表示される前提。`renderEmbed` を実装したプラグイン (現状 `syosetu` / `kakuyomu`) が対象 URL に対して当該 HTML を返す。
 
 ### 設定 (`config.toml`)
 
 ```toml
-[server]
-publicUrl = "https://summaly.example.com"   # https: 必須 (browser から直接 iframe で読まれるため)
-
 [embed]
 enabled = true                              # /embed エンドポイントを有効化
-allowedPlugins = ["syosetu"]                # embed 対応プラグインの allowlist (空配列禁止 = fail-close)
+publicUrl = "https://summaly.example.com"   # https: 必須 (browser から直接 iframe で読まれるため、phase16.3 で server から embed に移動)
 frameAncestors = ["https://misskey.example.com"]   # 商用は明示制限推奨。["*"] でも可だが stderr 警告
 ```
 
 | 設定キー | 説明 | デフォルト |
 |:--|:--|:--|
-| `[server].publicUrl` | summaly 自身の公開 URL ベース。**https: 必須** (中間者攻撃で iframe HTML を改竄されてフィッシング・XSS 経路化されるリスク) | （指定必須、未設定で embed 機能は実質無効）|
 | `[embed].enabled` | embed エンドポイントを有効化 | `true` (セクション省略時は `embedConfig` 自体が `undefined` になり実質無効) |
-| `[embed].allowedPlugins` | embed 対応プラグインの allowlist。空配列禁止 (fail-close) | （指定必須） |
+| `[embed].publicUrl` | summaly 自身の公開 URL ベース (phase16.3 で `[server].publicUrl` から移動)。**https: 必須** | (指定必須、未設定で embed 機能は実質無効) |
 | `[embed].frameAncestors` | iframe を読み込んで良いオリジン (CSP `frame-ancestors`) | `["*"]` (stderr に警告、商用は明示制限) |
+
+> **phase16.3**: 旧 `[embed].allowedPlugins` は廃止。`[plugins].allowed` に含まれるプラグインで `renderEmbed` 実装済のものが自動で embed 対応される。詳細は [DEPRECATED.md](../DEPRECATED.md#embedallowedplugins-phase163-で削除) を参照。
 
 ### CSP / セキュリティ設計
 
@@ -517,7 +515,7 @@ Cache-Control: public, max-age=600
 
 ### 運用上の注意
 
-- `publicUrl` 未設定 (Fastify サーバが閉域 / VPC 内など browser から到達不可) では embed は使えない。`[embed].enabled = false` で完全無効化を推奨
+- `[embed].publicUrl` 未設定 (Fastify サーバが閉域 / VPC 内など browser から到達不可) では embed は使えない。`[embed].enabled = false` で完全無効化を推奨
 - `frameAncestors = ["*"]` のまま運用すると stderr に警告。商用運用では Misskey インスタンスのオリジンに明示制限すること
 - カスタムプラグイン (`opts.plugins` 経由) は `/embed` から呼ばれない (組み込みプラグインのみ dispatch)。カスタムサイトで embed を使いたい場合は fork でビルド必要
 

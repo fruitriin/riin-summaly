@@ -10,6 +10,12 @@ riin-summaly の進化過程で削除された機能・設定の一覧と、運�
 | `/__diagnostics/parse-failures` HTTP エンドポイント | phase11.5 | `parseFailureLogJsonlPath` (JSONL + `cat \| jq`) | [↓](#__diagnosticsparse-failures-http-エンドポイント-phase115-で廃止) |
 | `parseFailureLogEndpoint` TOML 設定キー | phase11.5 | (silent ignore、移行不要) | [↓](#parsefailurelogendpoint-toml-設定キー-phase115-で廃止) |
 | `forceCurlCffiFallback` / `forceProxyFallback` プラグインフラグ | phase14 Step 4 | `data/domain-strategy-bootstrap.jsonl` のエントリ | [↓](#forcecurlcffifallback--forceproxyfallback-プラグインフラグ-phase14-step-4-で廃止) |
+| `[server].publicUrl` TOML キー | phase16.3 | `[embed].publicUrl` | [↓](#serverpubliurl-phase163-で-embedpubliurl-に移動) |
+| `[embed].allowedPlugins` TOML キー | phase16.3 | `[plugins].allowed` × `renderEmbed` 実装プラグインから auto-fill | [↓](#embedallowedplugins-phase163-で削除) |
+| `[scraping.proxy].categories` / `domains` TOML キー | phase16.3 | コード側 default 固定 + bootstrap.jsonl から自動導出 | [↓](#scrapingproxycategories--domains--scrapingcurl_cfficategories--domains--scrapingfallbackcategories-phase163-で削除) |
+| `[scraping.curl_cffi].categories` / `domains` TOML キー | phase16.3 | 同上 | [↑](#scrapingproxycategories--domains--scrapingcurl_cfficategories--domains--scrapingfallbackcategories-phase163-で削除) |
+| `[scraping.fallback].categories` TOML キー | phase16.3 | コード側 default 固定 | [↑](#scrapingproxycategories--domains--scrapingcurl_cfficategories--domains--scrapingfallbackcategories-phase163-で削除) |
+| 旧キー silent ignore (smol-toml の標準挙動) | phase16.3 | 全セクション expectKnownKeys で起動失敗化 | [↓](#旧キー-silent-ignore-phase163-で-fail-fast-起動失敗-に変更) |
 
 ---
 
@@ -207,3 +213,143 @@ bootstrapPath = "/path/to/your-custom-bootstrap.jsonl"
 組み込みプラグインの `yodobashi` / `sqex` は phase14 Step 4 完了時点で **bootstrap エントリ + extraction-only に整理済み** で移行サンプルとして参照できます ([src/plugins/yodobashi.ts](src/plugins/yodobashi.ts) / [src/plugins/sqex.ts](src/plugins/sqex.ts))。
 
 関連: [phase14 Plan](docs/plans/phase14-domain-strategy-cache.md) / [data/README.md](data/README.md) / [knowhow/domain-strategy-cache.md](docs/knowhow/domain-strategy-cache.md)
+
+---
+
+## `[server].publicUrl` (phase16.3 で `[embed].publicUrl` に移動)
+
+### 旧
+
+```toml
+[server]
+host = "127.0.0.1"
+port = 3000
+publicUrl = "https://summaly.example.com"
+```
+
+### 新 (移行先)
+
+```toml
+[server]
+host = "127.0.0.1"
+port = 3000
+
+[embed]
+enabled = true
+publicUrl = "https://summaly.example.com"
+```
+
+### 廃止理由
+
+`publicUrl` は `/embed` エンドポイント (phase13.1) でしか使われていないため、概念的に `[embed]` セクション配下に置くのが自然。`[server]` セクションは Fastify の listen 設定 (host/port) だけに整理。
+
+### 移行手順
+
+`config.toml` の `[server].publicUrl` を `[embed].publicUrl` に書き換える (1 行移動)。phase16.3 で `[server]` の未知キー検出が起動失敗化されているため、移行漏れがあれば即時エラーで検知できる。
+
+---
+
+## `[embed].allowedPlugins` (phase16.3 で削除)
+
+### 旧
+
+```toml
+[embed]
+enabled = true
+allowedPlugins = ["syosetu", "kakuyomu"]
+```
+
+### 新 (移行先)
+
+```toml
+[embed]
+enabled = true
+# allowedPlugins は不要 (削除済み)。`[plugins].allowed` で有効化されたプラグインのうち
+# renderEmbed を実装しているものが自動で embed 対応される。
+
+[plugins]
+allowed = ["syosetu", "kakuyomu", ...]
+```
+
+### 廃止理由
+
+`[embed].allowedPlugins` と `[plugins].allowed` の二重管理を撤廃。embed 対応プラグインは `renderEmbed` を実装している builtinPlugins から判定でき、`[plugins].allowed` で有効化されたものだけを Fastify auto-init 側で自動構成する設計に変更。「embed 対応プラグインを部分的に embed では除外したい」という低頻度ニーズは `[plugins].allowed` から外すことで実現する。
+
+### 移行手順
+
+`config.toml` の `[embed].allowedPlugins` 行を削除。`[plugins].allowed` に該当プラグイン (syosetu / kakuyomu) が含まれていれば自動で embed 対応される。
+
+---
+
+## `[scraping.proxy].categories` / `domains` / `[scraping.curl_cffi].categories` / `domains` / `[scraping.fallback].categories` (phase16.3 で削除)
+
+### 旧
+
+```toml
+[scraping.proxy]
+enabled = true
+url = "https://x.workers.dev"
+categories = ["origin_error", "bot_blocked"]
+domains = ["amazon.co.jp", "store.jp.square-enix.com"]
+
+[scraping.curl_cffi]
+enabled = true
+projectDir = "/path/to/curl-cffi-fetcher"
+categories = ["timeout", "connection_dropped", "bot_blocked"]
+domains = ["yodobashi.com"]
+
+[scraping.fallback]
+enabled = true
+categories = ["bot_blocked", "connection_dropped"]
+```
+
+### 新 (移行先)
+
+```toml
+[scraping.proxy]
+enabled = true
+url = "https://x.workers.dev"
+# categories はコード側 default `['origin_error', 'bot_blocked']` 固定
+# domains は data/domain-strategy-bootstrap.jsonl から `strategy === "proxy"` の host を自動導出
+
+[scraping.curl_cffi]
+enabled = true
+projectDir = "/path/to/curl-cffi-fetcher"
+# 同上 (domains は bootstrap から自動導出)
+
+[scraping.fallback]
+enabled = true
+# categories はコード側 default `['bot_blocked', 'connection_dropped']` 固定
+```
+
+### 廃止理由
+
+運用者が `categories` / `domains` を個別に override する実用ニーズがほぼ無く、ほぼ全員がコード側 default 値を使っていた。設定責任を運用者から外しコード側に集約することで:
+
+- TOML が短くシンプルになる (新規セットアップが楽)
+- `domains` 不整合 (Worker `ALLOWED_DOMAINS` と TOML の二重管理ミス) のリスク撤廃
+- bootstrap.jsonl を 1 ソース管理 (新サイト救援は bootstrap に 1 行追加するだけ、TOML 編集不要)
+
+### 移行手順
+
+`config.toml` から該当キーを削除するだけ。新サイトを `proxy` / `curl_cffi` 経路で救援したい場合は `data/domain-strategy-bootstrap.jsonl` に エントリ追加 + `[plugins].allowed` 反映 + 経路 `enabled = true`。
+
+### 経路依存 fail-fast (関連)
+
+phase16.3 では bootstrap × `enabled` の不整合 (= bootstrap が proxy 経路を要求するけど `[scraping.proxy].enabled = false`) を起動失敗にする変更も入れた。「動かないが破壊的でもない」沈黙バグを構造的に防ぐ。エラーメッセージで「(a) 該当経路を有効化、(b) `[scraping.strategy_cache].enabled = false`、(c) bootstrap entry を削除」の 3 択を案内する。
+
+---
+
+## 旧キー silent ignore (phase16.3 で fail-fast 起動失敗 に変更)
+
+### 旧
+
+smol-toml は unknown key を silent ignore する仕様だったため、phase11.5 で削除された `parseFailureLogEndpoint = true` 等が `config.toml` に残っていても起動成功し、機能だけ無効化されている状態だった。
+
+### 新 (phase16.3)
+
+各 TOML セクションで `expectKnownKeys` を実装し、未知キーを **起動失敗** で検出する。エラーメッセージで「DEPRECATED.md を参照」と案内。
+
+### 移行手順
+
+phase16.3 にアップグレード後、起動失敗エラーで未知キーを案内されたらそのキーを `config.toml` から削除する (本ドキュメントの移行手順に従う)。

@@ -1678,7 +1678,23 @@ describe('local tests', () => {
 				expect(receivedRange).toMatch(/^bytes=0-\d+$/);
 			});
 
-			test('useRange: false のとき Range ヘッダは送信されない', async () => {
+			test('useRange: false を明示すると Range ヘッダは送信されない (phase16.3 で internal default が true に変更)', async () => {
+				let receivedRange: string | undefined;
+				app = fastify();
+				app.get('/', (request, reply) => {
+					receivedRange = request.headers['range'];
+					const content = fs.readFileSync(_dirname + '/htmls/basic.html');
+					reply.header('content-length', content.length);
+					reply.header('content-type', 'text/html');
+					return reply.send(content);
+				});
+				await app.listen({ port });
+
+				await summaly(host, { useRange: false });
+				expect(receivedRange).toBeUndefined();
+			});
+
+			test('useRange 未指定のとき Range ヘッダがデフォルトで送信される (phase16.3)', async () => {
 				let receivedRange: string | undefined;
 				app = fastify();
 				app.get('/', (request, reply) => {
@@ -1691,7 +1707,7 @@ describe('local tests', () => {
 				await app.listen({ port });
 
 				await summaly(host);
-				expect(receivedRange).toBeUndefined();
+				expect(receivedRange).toMatch(/^bytes=0-\d+$/);
 			});
 		});
 

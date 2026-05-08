@@ -1,84 +1,50 @@
-# summaly Fastify モードの設定例（deploy 向け）。
+# summaly Fastify モードの設定例 (deploy 向け、phase16.3 整理版)。
 # `pnpm serve /etc/summaly/config.toml` で読み込む想定。
 # 詳細は /config.example.toml またはリポジトリの docs/SETUP.md を参照。
 
 [server]
 host = "127.0.0.1"
 port = 3000
-# 自身が外部に公開されている URL (https: 必須、phase13.1)。/embed エンドポイントの player.url 組み立てに使う。
-# publicUrl = "https://summaly.example.com"
 
 [summaly]
-responseTimeout = 20000
-operationTimeout = 60000
-contentLengthLimit = 10485760
-useRange = true
+# 全項目デフォルト値があるので、必要な値だけ override する。
+# useRange は phase16.3 で internal default を true に変更済。
 
 [summaly.cache]
 maxAge = 604800
-errorMaxAge = 3600
 inMemory = true
-inMemoryMaxEntries = 1000
 inFlightDedup = true
 
 [summaly.pdf]
 enabled = false
 
-[scraping.fallback]
-# bot block (4xx / WAF 黙殺) に当たったら別 UA で 1 回リトライ (phase11.9)
-enabled = true
-userAgent = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
-categories = ["bot_blocked", "connection_dropped"]
+[scraping.strategy_cache]
+# 経路学習キャッシュ (phase14)。bootstrap (`data/domain-strategy-bootstrap.jsonl`、yodobashi → curl_cffi、
+# sqex → proxy 等) を npm 同梱しており、新規環境でも初日から最適経路で動く。
+# **経路依存 fail-fast (phase16.3)**: bootstrap 経路と対応セクションの enabled が不整合だと起動失敗。
+# proxy + curl_cffi の両方を有効化してから enabled = true に切り替える。
+enabled = false
+# runtimePath = "/var/cache/summaly/domain-strategy.jsonl"  # 学習結果の永続化先 (省略時 in-memory)
 
 [scraping.proxy]
 # CF Workers proxy 経由の救援 (phase12.1)。Amazon class IP block 用。
-# secret は env SUMMALY_PROXY_SECRET 経由で渡すこと推奨（TOML 直書きを避ける）。
+# secret は env SUMMALY_PROXY_SECRET 経由で渡す (TOML 直書き避け)。
 # Worker のデプロイ手順は tools/cf-proxy-worker/README.md 参照。
-# `bot_blocked` には Amazon が 200 + content-type 欠落で弾くケース
-# (`Rejected by type filter undefined`) も含まれる。
+# 発火対象 host は bootstrap.jsonl から自動導出される (phase16.3、`domains` 設定不要)。
 enabled = false
-# 有効化時に必須 (enabled = false なら未設定で OK):
 # url = "https://summaly-proxy.<your>.workers.dev"
-categories = ["origin_error", "bot_blocked"]
-domains = []                                       # Worker 側 ALLOWED_DOMAINS と同期させる。例:
-                                                    # ["amazon.co.jp", "amazon.com",
-                                                    #  "amzn.asia", "amzn.to", "a.co",
-                                                    #  "store.jp.square-enix.com"]
-timeoutMs = 30000
 
 [scraping.curl_cffi]
-# curl_cffi (libcurl-impersonate) を使った TLS layer bot block 救援 (phase12.5)。
-# proxy fallback でも救えない TLS フィンガープリント層の切断 (yodobashi 等) を、
-# `tools/curl-cffi-fetcher/` の Python CLI を spawn して Chrome TLS フィンガープリント偽装で救援する。
-# **運用要件**: production server に `uv` を別途インストール + `uv sync` 必須。
-# 詳細は tools/curl-cffi-fetcher/README.md 参照。
+# curl_cffi (libcurl-impersonate) で TLS フィンガープリント偽装救援 (phase12.5、yodobashi 等)。
+# **運用要件**: production server に `uv` インストール + `cd tools/curl-cffi-fetcher && uv sync` 必須。
+# 発火対象 host は bootstrap.jsonl から自動導出される (phase16.3、`domains` 設定不要)。
 enabled = false
-# 有効化時に必須 (enabled = false なら未設定で OK):
 # projectDir = "/path/to/summaly/tools/curl-cffi-fetcher"
-uvPath = "uv"                                      # PATH 上の `uv` を使う場合は変更不要
-impersonate = "chrome120"                          # firefox120 / safari17_0 等も可
-categories = ["timeout", "connection_dropped", "bot_blocked"]
-domains = []                                       # 任意 URL ブラウザ偽装の悪用防止 allowlist。例: ["yodobashi.com"]
-timeoutMs = 30000
 
-[scraping.strategy_cache]
-# 経路学習キャッシュ (phase14)。host + path prefix 1〜2 段ごとに成功経路を学習・永続化。
-# bootstrap (`data/domain-strategy-bootstrap.jsonl`) に yodobashi → curl_cffi、
-# amazon.co.jp/dp → proxy 等の主要救援経路が初期登録されており、起動時に自動ロードされる。
-# **重要**: bootstrap が機能するには `[scraping.proxy]` または `[scraping.curl_cffi]` の
-# いずれかを `enabled = true` にしておく必要あり (発射経路がないと救援不可)。
+[scraping.fallback]
+# bot block (4xx / WAF 黙殺) に当たったら別 UA で 1 回リトライ (phase11.9)。
+# 省略時 UA は `facebookexternalhit/1.1`。
 enabled = true
-# runtimePath = "/var/cache/summaly/domain-strategy.jsonl"  # 学習結果の永続化先 (省略時 in-memory のみ)
-# bootstrapPath = "data/domain-strategy-bootstrap.jsonl"    # 省略時は npm 同梱から自動解決
-maxEntries = 5000
-consecutiveFailureThreshold = 3                    # N 連続失敗で破棄
-compactionThreshold = 1000
-
-[diagnostics]
-# 迂回候補ログ (phase11.6) を有効化したい場合の例:
-# parseFailureLog = true
-# parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
-# parseFailureLogBlockedJsonlPath = "/var/log/summaly/parse-failures-blocked.jsonl"
 
 [plugins]
 allowed = [
@@ -102,11 +68,15 @@ allowed = [
   # "nijie",
 ]
 
+[diagnostics]
+# パース失敗ログ集約 (phase10.1)。phase16.3 で parseFailureLog = true なら Path 自動デフォルト適用。
+parseFailureLog = false
+# parseFailureLogJsonlPath = "/var/log/summaly/parse-failures.jsonl"
+# parseFailureLogBlockedJsonlPath = "/var/log/summaly/parse-failures-blocked.jsonl"
+
 [embed]
-# `/embed` エンドポイント設定 (phase13.1)。renderEmbed を実装したプラグインで iframe HTML を返す。
-# **必須** (enabled = true にするとき): [server].publicUrl が https: で設定されていること。
-# 商用運用では frameAncestors を Misskey インスタンスのオリジンに明示制限すること。
+# `/embed` エンドポイント (phase13.1)。renderEmbed 実装プラグイン (syosetu / kakuyomu) で
+# iframe HTML を返す。phase16.3 で publicUrl が embed 配下に移動、allowedPlugins は廃止。
 enabled = false
-# 有効化時に必須 (enabled = false なら未設定で OK):
-# allowedPlugins = ["syosetu", "kakuyomu"]
-# frameAncestors = ["*"]                # 商用運用は ["https://misskey.example.com"] 等で制限
+# publicUrl = "https://summaly.example.com"   # https: 必須
+# frameAncestors = ["*"]                      # 商用運用は ["https://misskey.example.com"] 等で制限
