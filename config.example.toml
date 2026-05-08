@@ -2,11 +2,15 @@
 # 運用時は `cp config.example.toml config.toml` で複製して値を調整する。
 # `pnpm serve [config.toml]` で読み込まれる。
 #
-# **基本方針** (phase16.3):
+# **基本方針** (phase16.3 + phase16.4):
 # - 各機能は `enabled = true/false` で有効化を明示する (デフォルト値で動かしたいなら enabled だけ書けば OK)
 # - 旧バージョンとの互換性は維持しない。未知キーは起動失敗 (DEPRECATED.md 参照)
 # - 経路依存 fail-fast: `[scraping.strategy_cache]` の bootstrap が proxy/curl_cffi 経路を要求する場合、
 #   該当セクションが `enabled = true` でないと起動失敗する (黙って動かない状態を防ぐ)
+# - **起動時 healthcheck (phase16.4)**: 各機能の `enabled = true` 時、`url` / `secret` /
+#   `projectDir` / `uvPath` が placeholder のままだったり、uv が PATH に無い等を起動時に検出して
+#   fail-fast。本ファイルでは「enabled = true 時に必須な項目」を placeholder 値のまま (コメント無し)
+#   で書いてあるので、`enabled = true` にして起動 → 具体的なエラーで何を埋めるべきか分かる UX。
 #
 # 環境変数との関係:
 #   - `SUMMALY_CONFIG_PATH`           : ファイルパスを上書き (CLI 引数 > env > "./config.toml")
@@ -83,7 +87,7 @@ secret = "..."                          # 推奨: env SUMMALY_PROXY_SECRET 経�
 # `cd tools/curl-cffi-fetcher && uv sync` で依存解決しておく必要がある。
 enabled = false
 projectDir = "/path/to/summaly/tools/curl-cffi-fetcher"   # 絶対パス推奨
-uvPath = "/user/bin/uv"                                              # PATH 上に `uv` があれば変更不要
+uvPath = "/root/.local/bin/uv"                            # summaly実行ユーザー PATH 上に `uv` があればコメントアウトしてOK。 systemd で実行するならフルパス推奨
 # impersonate = "chrome120"                                  # `firefox120` / `safari17_0` 等も可
 
 [scraping.fallback]
@@ -147,5 +151,5 @@ parseFailureLog = false
 # - allowedPlugins は廃止。`[plugins].allowed` × `renderEmbed` 実装プラグインから自動構成される。
 #   embed 対応プラグインを部分的に除外したい場合は `[plugins].allowed` から外す
 enabled = false
-# publicUrl = "https://summaly.example.com"   # https: 必須。embed 機能を使う場合は必須
+publicUrl = "https://summaly.example.com"   # https: 必須。embed 機能を使う場合は必須
 # frameAncestors = ["*"]                      # iframe を読み込んで良いオリジン (CSP frame-ancestors)。商用は明示制限推奨

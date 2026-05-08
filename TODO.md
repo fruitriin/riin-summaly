@@ -36,7 +36,9 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 16.1 | [docs/plans/phase16.1-docs-route-strategy.md](docs/plans/phase16.1-docs-route-strategy.md) — ドキュメント網羅性更新 (経路優先システムを目玉特徴に位置づけ)。README に「経路優先システム」セクション新設 + 4 経路 (Summaly UA / SNS Bot UA / Proxy / curl_cffi) + 経路学習キャッシュの俯瞰、プラグイン表に kakuyomu 行 + 経路列追加、test/readme-plugins.test.ts で同期漏れを構造的にガード | S〜M | 完了 (2026-05-08) |
 | — | 16.2 | [docs/plans/phase16.2-deprecated-md.md](docs/plans/phase16.2-deprecated-md.md) — 廃止された機能の経緯記述を `DEPRECATED.md` に集約。旧 fastify-cli / 診断エンドポイント / parseFailureLogEndpoint / forceX プラグインフラグの 4 機能について「旧 / 新 / 廃止理由 / 移行手順」を一貫構成で記載、各 docs からは 1 行サマリ + リンクに簡素化 | S〜M | 完了 (2026-05-09) |
 | — | 16.3 | [docs/plans/phase16.3-config-cleanup.md](docs/plans/phase16.3-config-cleanup.md) — config 整理 + 経路依存 fail-fast (breaking)。`[server].publicUrl` → `[embed].publicUrl` 移動 / `[embed].allowedPlugins` 削除 / `[scraping.proxy]` / `[scraping.curl_cffi]` / `[scraping.fallback]` の `categories` / `domains` TOML キー削除 (コード側固定 + bootstrap 自動導出) / `expectKnownKeys` 全セクション起動失敗化 / 経路依存 fail-fast / `useRange` default true / `parseFailureLog` ペア + デフォルト | M〜L | 完了 (2026-05-09) |
-| 低 | 16.4 | docs/SETUP.md の `[scraping.proxy]` / `[scraping.curl_cffi]` / `[scraping.fallback]` セクションの詳細表 (`categories` / `domains` 設定例) を全面整理。phase16.3 で表面的整合性のみ取った状態のため、内部仕様の説明として残すか / 削除するか判断 | S | 未着手 |
+| — | 16.4 | [docs/plans/phase16.4-startup-healthcheck.md](docs/plans/phase16.4-startup-healthcheck.md) — 起動時 healthcheck (placeholder + 疎通検証)。`enabled = true` の各機能設定値が placeholder のまま (`<your>` / `/path/to/` / `...`) や uv が PATH に無い等を起動時 fail-fast。example で必須キーを placeholder で残しておけるようにする UX 改善 | S〜M | 完了 (2026-05-09) |
+| 低 | 16.5 | docs/SETUP.md の `[scraping.proxy]` / `[scraping.curl_cffi]` / `[scraping.fallback]` セクションの詳細表 (`categories` / `domains` 設定例) を全面整理。phase16.3 で表面的整合性のみ取った状態のため、内部仕様の説明として残すか / 削除するか判断 | S | 未着手 |
+| 低 | 16.6 | proxy 実 HTTP 疎通テスト。Worker 側に `/health` endpoint 追加 + summaly 起動時に HMAC なしで GET → 200 確認。phase16.4 では placeholder 検出のみで止めた、実 HTTP は別 phase | S〜M | 未着手 |
 
 ### 将来検討メモ (Plan は未起票)
 

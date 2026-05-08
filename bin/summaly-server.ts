@@ -18,6 +18,7 @@ import process from 'node:process';
 import Fastify from 'fastify';
 import Summaly from '../src/index.js';
 import { parseTomlConfig } from './config-loader.js';
+import { runConfigHealthchecks } from './healthcheck.js';
 
 const configPath = process.argv[2] ?? process.env.SUMMALY_CONFIG_PATH ?? './config.toml';
 
@@ -26,6 +27,15 @@ try {
 	cfg = parseTomlConfig(configPath);
 } catch (e) {
 	console.error(`[summaly-server] failed to load config: ${e instanceof Error ? e.message : String(e)}`);
+	process.exit(1);
+}
+
+// phase16.4: 起動時 healthcheck (placeholder + 疎通検証)。
+// `enabled = true` の各セクション設定値が placeholder のままだったり、uv が PATH に無い等を fail-fast。
+try {
+	runConfigHealthchecks(cfg);
+} catch (e) {
+	console.error(`[summaly-server] healthcheck failed:\n${e instanceof Error ? e.message : String(e)}`);
 	process.exit(1);
 }
 
