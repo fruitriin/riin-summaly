@@ -150,7 +150,7 @@ describe('composeDescription', () => {
 	test('連載中 + 残酷描写 + 作者 + ジャンル + あらすじ', () => {
 		const desc = composeDescription(SAMPLE_WORK, '山田太郎');
 		expect(desc).toContain('作者: 山田太郎');
-		expect(desc).toContain('異世界恋愛'); // LOVE_STORY → 異世界恋愛
+		expect(desc).toContain('恋愛'); // LOVE_STORY → 恋愛 (公式ジャンルページ確認済)
 		expect(desc).toContain('連載中 (169話)');
 		expect(desc).toContain('[残酷描写]');
 		expect(desc).toContain('あらすじ:');
@@ -258,6 +258,16 @@ describe('composeEmbedHtml', () => {
 		const html = composeEmbedHtml(SAMPLE_WORK, '" onmouseover="alert(1)');
 		expect(html).not.toMatch(/" onmouseover="alert/);
 		expect(html).toContain('&quot;');
+	});
+
+	test('XSS: introduction に onerror= を含む img タグも escape される (knowhow 推奨 3 ケース目)', () => {
+		// docs/knowhow/embed-endpoint-design.md 推奨「<script> / 属性破壊 / onerror= の 3 ケース」の onerror 担保
+		const html = composeEmbedHtml(
+			{ ...SAMPLE_WORK, introduction: '<img src=x onerror="alert(1)">' },
+			'山田',
+		);
+		expect(html).not.toMatch(/onerror="alert/);
+		expect(html).toContain('&lt;img'); // < が entity 化されている
 	});
 
 	test('introduction が長い場合は 300 文字で clip', () => {

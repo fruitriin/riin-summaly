@@ -106,34 +106,43 @@ function parseNextData(raw: string): unknown {
  * - 該当エンティティが見つかれば `{ work, state }` を返す (state は author lookup 用)
  * - 見つからなければ null
  */
+// Apollo 正規化キャッシュは構造上フラット (実ネスト深さ 3〜5 程度) のため 50 で十分。
+// 悪意ある深いネスト JSON で stack overflow を起こさせない構造的防御 (security review M-1)。
+const APOLLO_WALK_MAX_DEPTH = 50;
+
 export function findWorkInApolloState(state: unknown, workId: string): { work: KakuyomuWork; state: unknown } | null {
 	const target = `Work:${workId}`;
 	const visited = new WeakSet<object>();
 
-	function walk(o: unknown): KakuyomuWork | null {
+	function walk(o: unknown, depth: number): KakuyomuWork | null {
+		if (depth > APOLLO_WALK_MAX_DEPTH) return null;
 		if (o == null || typeof o !== 'object') return null;
 		if (visited.has(o)) return null;
 		visited.add(o);
 		if (Array.isArray(o)) {
 			for (const x of o) {
-				const r = walk(x);
+				const r = walk(x, depth + 1);
 				if (r !== null) return r;
 			}
 			return null;
 		}
 		const obj = o as Record<string, unknown>;
-		const direct = obj[target];
-		if (direct != null && typeof direct === 'object' && (direct as KakuyomuWork).__typename === 'Work') {
-			return direct as KakuyomuWork;
+		// `target` は `Work:<数字>` 形式なのでプロトタイプキー (`__proto__` 等) と衝突しない。
+		// 念のため hasOwnProperty で構造的に絞る (security review L-1 / 一貫性のため)。
+		if (Object.prototype.hasOwnProperty.call(obj, target)) {
+			const direct = obj[target];
+			if (direct != null && typeof direct === 'object' && (direct as KakuyomuWork).__typename === 'Work') {
+				return direct as KakuyomuWork;
+			}
 		}
 		for (const v of Object.values(obj)) {
-			const r = walk(v);
+			const r = walk(v, depth + 1);
 			if (r !== null) return r;
 		}
 		return null;
 	}
 
-	const work = walk(state);
+	const work = walk(state, 0);
 	return work != null ? { work, state } : null;
 }
 
@@ -144,31 +153,37 @@ export function findWorkInApolloState(state: unknown, workId: string): { work: K
 export function lookupAuthorName(state: unknown, userAccountRef: string): string | null {
 	const visited = new WeakSet<object>();
 
-	function walk(o: unknown): string | null {
+	function walk(o: unknown, depth: number): string | null {
+		if (depth > APOLLO_WALK_MAX_DEPTH) return null;
 		if (o == null || typeof o !== 'object') return null;
 		if (visited.has(o)) return null;
 		visited.add(o);
 		if (Array.isArray(o)) {
 			for (const x of o) {
-				const r = walk(x);
+				const r = walk(x, depth + 1);
 				if (r !== null) return r;
 			}
 			return null;
 		}
 		const obj = o as Record<string, unknown>;
-		const direct = obj[userAccountRef];
-		if (direct != null && typeof direct === 'object') {
-			const name = (direct as Record<string, unknown>).name;
-			if (typeof name === 'string' && name !== '') return name;
+		// `userAccountRef` が `__proto__` 等のプロトタイプキーだった場合に `Object.prototype` を
+		// 参照しないよう、`hasOwnProperty` で自身プロパティのみに絞る (security review L-1)。
+		// 別経路でプロトタイプ汚染が起きていても構造的に防げる defense-in-depth。
+		if (Object.prototype.hasOwnProperty.call(obj, userAccountRef)) {
+			const direct = obj[userAccountRef];
+			if (direct != null && typeof direct === 'object') {
+				const name = (direct as Record<string, unknown>).name;
+				if (typeof name === 'string' && name !== '') return name;
+			}
 		}
 		for (const v of Object.values(obj)) {
-			const r = walk(v);
+			const r = walk(v, depth + 1);
 			if (r !== null) return r;
 		}
 		return null;
 	}
 
-	return walk(state);
+	return walk(state, 0);
 }
 
 /**
@@ -340,17 +355,33 @@ export function buildSummaryFromWork(
 
 /**
  * episode URL から各話タイトルを抽出する (chapter description 上書き用)。
- * - `<title>` または `og:title` から `"<EpisodeTitle> - <WorkTitle> - カクヨム"` を split
- * - 失敗時 null (= 各話タイトル無し、作品レベル description のみ)
+ *
+ * og:title は `"<EpisodeTitle> - <WorkTitle> - カクヨム"` の固定書式。EpisodeTitle / WorkTitle が
+ * ` - ` を含む可能性があるため、以下の順で safe に抽出する:
+ *
+ * 1. 末尾の `' - カクヨム'` を suffix 削除 (固定文字列、安全)
+ * 2. 残った `<EpisodeTitle> - <WorkTitle>` を **末尾の `' - '`** で 2 つに split
+ *    (作品タイトルに ` - ` が含まれる方が、各話タイトルに含まれるよりレアなため、後者寄りに倒す)
+ * 3. 先頭側を EpisodeTitle として返す
+ *
+ * 失敗 (og:title 不在 / 書式不一致) 時は null。完全な解は無いが旧実装の「最初の ` - ` で split」より
+ * 多くのケースで正しい (W-1 review feedback)。
  */
 async function fetchEpisodeTitle(episodeUrl: URL, opts: GeneralScrapingOptions | undefined): Promise<string | null> {
 	try {
 		const res = await scpaping(episodeUrl.href, { ...opts, userAgent: 'Twitterbot/1.0' });
-		const ogTitle = res.$('meta[property="og:title"]').attr('content') ?? '';
-		// "EpisodeTitle - WorkTitle - カクヨム" → 最初の " - " で split して先頭を取る
-		const parts = ogTitle.split(' - ');
-		if (parts.length >= 2 && parts[0] !== '') return parts[0].trim();
-		return null;
+		const ogTitle = res.$('meta[property="og:title"]').attr('content')?.trim() ?? '';
+		if (ogTitle === '') return null;
+		// 1. 末尾の ' - カクヨム' を suffix 削除
+		const SITE_SUFFIX = ' - カクヨム';
+		const withoutSuffix = ogTitle.endsWith(SITE_SUFFIX)
+			? ogTitle.slice(0, -SITE_SUFFIX.length)
+			: ogTitle;
+		// 2. 末尾の ' - ' で split (= 残り = `<EpisodeTitle> - <WorkTitle>` の最後の ' - ')
+		const lastSep = withoutSuffix.lastIndexOf(' - ');
+		if (lastSep <= 0) return null;
+		const episodeTitle = withoutSuffix.slice(0, lastSep).trim();
+		return episodeTitle !== '' ? episodeTitle : null;
 	} catch {
 		return null;
 	}
@@ -358,6 +389,12 @@ async function fetchEpisodeTitle(episodeUrl: URL, opts: GeneralScrapingOptions |
 
 /**
  * work URL の HTML から Apollo state を取って Work エンティティを返す。
+ *
+ * **`Twitterbot/1.0` UA 固定の設計** (security review I-4): nintendo-store (`facebookexternalhit/1.1`
+ * 固定) と同パターンで、UA allowlist を持つサイト向けに意図的に固定する。これにより
+ * `scpaping` 内の bot block fallback リトライ機構 (phase11.9) は **発動しない** (UA を上書きすると
+ * categorize → リトライ経路でも同 UA で叩かれる)。カクヨムが `Twitterbot/1.0` を弾くようになった
+ * 場合は本ファイルの UA を差し替えて対処する前提。
  */
 async function fetchWorkData(workUrl: URL, opts: GeneralScrapingOptions | undefined): Promise<{ work: KakuyomuWork; authorName: string | null } | null> {
 	const res = await scpaping(workUrl.href, { ...opts, userAgent: 'Twitterbot/1.0' });
@@ -395,7 +432,11 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	const embedBaseUrl = opts?._embedBaseUrl;
 	const summary = buildSummaryFromWork(workData.work, workData.authorName, url, embedBaseUrl);
 
-	// chapter URL では description 末尾に各話タイトルを付与 (なろう phase13.1 と同パターン)
+	// chapter URL では description 末尾に各話タイトルを付与 (なろう phase13.1 と同パターン)。
+	// **escape 不要の理由** (security review I-2): `summary.description` はプレーンテキストとして
+	// Misskey クライアント側で textContent / v-text 相当で表示されるため、HTML として解釈されない。
+	// embed HTML には `description` ではなく `introduction` が流入する (composeEmbedHtml 参照) ので
+	// XSS 経路にもならない。各話タイトルは Misskey 側でエスケープされる前提で生のまま連結する。
 	if (episodeTitle != null) {
 		summary.description = `${summary.description} / ${episodeTitle}`;
 	}

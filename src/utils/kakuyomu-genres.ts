@@ -1,36 +1,43 @@
 /**
- * カクヨム ジャンル enum (`Work.genre`) → 日本語ラベルのマッピング (phase15.2)。
+ * カクヨム ジャンル enum (`Work.genre`) → 日本語ラベルのマッピング (phase15.2、2026-05-08 検証反映)。
  *
  * カクヨムの `Work` エンティティには `genre: 'LOVE_STORY'` のような大文字スネーク enum が入っている。
- * 公式の網羅リストは公開されていないため、実観測 + 公式ジャンル URL (`/genres/<slug>`) から推測した
- * 集合を初期マップとする。未知 enum は `'その他'` にフォールバックする (なろうの `getGenreName` と同パターン)。
+ * 本マッピングは **公式ジャンルページ** (`https://kakuyomu.jp/genres/<slug>/recent_works` の
+ * `itemprop="genre">` 内テキスト) から実取得した正確な対応関係。
  *
- * 不足が見つかったら本ファイルにエントリを追加する (本番 parse-failure-log で「未知 enum」を観測しやすい設計)。
+ * 検証ソース: `https://kakuyomu.jp/contests` ページに各ジャンル別の作品が載っており、
+ * `/genres/<slug>` URL と日本語ラベルがセットで取れる。enum 値は URL slug を大文字化したものという
+ * 仮説に基づく (実 `__NEXT_DATA__` で `genre: 'LOVE_STORY'` を観測済、URL slug `love_story` と一致)。
+ *
+ * 未知 enum は `'その他'` にフォールバックする (なろうの `getGenreName` と同パターン)。
+ * 不足が見つかったら本ファイルにエントリを追加する。
  */
 
 const GENRE_NAMES: Record<string, string> = {
-	// 恋愛系
-	LOVE_STORY: '異世界恋愛',
-	ROMANCE: '現代恋愛',
-	// ファンタジー系
+	// /genres/love_story → 恋愛 (カクヨムは「異世界恋愛」「現代恋愛」を区別せず単一カテゴリ)
+	LOVE_STORY: '恋愛',
+	// /genres/romance → ラブコメ (恋愛と別枠で存在する)
+	ROMANCE: 'ラブコメ',
+	// /genres/fantasy → 異世界ファンタジー
 	FANTASY: '異世界ファンタジー',
-	HIGH_FANTASY: '異世界ファンタジー',
-	LOW_FANTASY: '現代ファンタジー',
-	// 主要ジャンル
+	// /genres/action → 現代ファンタジー (注意: enum 名は ACTION だが日本語は「現代ファンタジー」)
+	ACTION: '現代ファンタジー',
+	// /genres/sf → SF
 	SF: 'SF',
-	ACTION: 'アクション',
+	// /genres/horror → ホラー
 	HORROR: 'ホラー',
+	// /genres/mystery → ミステリー
 	MYSTERY: 'ミステリー',
-	HISTORY: '歴史・時代・伝奇',
-	HUMOR: 'ユーモア・コメディ',
+	// /genres/drama → 現代ドラマ
 	DRAMA: '現代ドラマ',
-	// その他系
-	ESSAY_NONFICTION: 'エッセイ・ノンフィクション',
-	NONFICTION: 'ノンフィクション',
-	CRITIQUE: '創作論・評論',
-	POEM_FAIRY_OTHER: '詩・童話・その他',
-	OTHERS: 'その他',
-	OTHER: 'その他',
+	// /genres/history → 歴史・時代・伝奇
+	HISTORY: '歴史・時代・伝奇',
+	// /genres/criticism → 創作論・評論
+	CRITICISM: '創作論・評論',
+	// /genres/nonfiction → エッセイ・ノンフィクション
+	NONFICTION: 'エッセイ・ノンフィクション',
+	// /genres/others → 詩・童話・その他
+	OTHERS: '詩・童話・その他',
 };
 
 /**
