@@ -68,22 +68,27 @@ describe('syosetu test() (URL マッチ)', () => {
 describe('extractNcodeAndR18', () => {
 	test('通常作品 URL', () => {
 		const r = extractNcodeAndR18(new URL('https://ncode.syosetu.com/n7587fe/'));
-		expect(r).toEqual({ ncode: 'n7587fe', isR18: false });
+		expect(r).toEqual({ ncode: 'n7587fe', isR18: false, chapter: null });
 	});
 
-	test('chapter URL → 作品 ncode に正規化', () => {
+	test('chapter URL → 作品 ncode + chapter 番号', () => {
 		const r = extractNcodeAndR18(new URL('https://ncode.syosetu.com/n7587fe/2/'));
-		expect(r).toEqual({ ncode: 'n7587fe', isR18: false });
+		expect(r).toEqual({ ncode: 'n7587fe', isR18: false, chapter: '2' });
+	});
+
+	test('chapter URL (末尾スラッシュ無し)', () => {
+		const r = extractNcodeAndR18(new URL('https://ncode.syosetu.com/n7587fe/123'));
+		expect(r).toEqual({ ncode: 'n7587fe', isR18: false, chapter: '123' });
 	});
 
 	test('R-18 ドメインで isR18 = true', () => {
 		const r = extractNcodeAndR18(new URL('https://novel18.syosetu.com/n9999zz/'));
-		expect(r).toEqual({ ncode: 'n9999zz', isR18: true });
+		expect(r).toEqual({ ncode: 'n9999zz', isR18: true, chapter: null });
 	});
 
 	test('大文字 ncode は小文字に正規化', () => {
 		const r = extractNcodeAndR18(new URL('https://ncode.syosetu.com/N7587FE/'));
-		expect(r).toEqual({ ncode: 'n7587fe', isR18: false });
+		expect(r).toEqual({ ncode: 'n7587fe', isR18: false, chapter: null });
 	});
 });
 

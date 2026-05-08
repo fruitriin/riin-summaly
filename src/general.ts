@@ -215,6 +215,16 @@ export type GeneralScrapingOptions = {
 	 * library 利用者は触らない (型シグネチャ上は optional だが運用上は内部専用)。
 	 */
 	_cacheRecording?: import('@/utils/domain-strategy-cache.js').CacheRecordingState;
+
+	/**
+	 * @internal
+	 * Fastify モードの `[server].publicUrl` を反映した embed エンドポイントのベース URL
+	 * (phase13.1 Step 3 → 2026-05-08 補正)。`SummalyOptions.embedBaseUrl` を `summaly()` レイヤから
+	 * プラグインの `summarize()` に透過伝搬するための internal フィールド。
+	 * `syosetu` のような renderEmbed 対応プラグインが `Summary.player.url` を組み立てるのに使う。
+	 * library mode では SummalyOptions に embedBaseUrl を直接渡せばこのフィールドに反映される。
+	 */
+	_embedBaseUrl?: string;
 };
 
 export async function general(_url: URL | string, opts?: GeneralScrapingOptions): Promise<Summary | null> {

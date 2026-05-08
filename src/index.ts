@@ -536,6 +536,7 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		proxyFallback: opts.proxyFallback,
 		curlCffiFallback: opts.curlCffiFallback,
 		_cacheRecording: cacheRecording,
+		_embedBaseUrl: opts.embedBaseUrl,
 	};
 
 	let summary: Awaited<ReturnType<typeof general>>;

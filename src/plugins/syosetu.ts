@@ -37,7 +37,11 @@ const NCODE_HOST_R18 = /^novel18\.syosetu\.com$/;
 // 誤マッチさせないため `n + 数字 1+ + 英字 1+` を最低条件にする (純英字列の他パスを構造的に除外)。
 // `/i` フラグは大文字 URL (`/N7587FE/`) も受け入れるため、抽出後の `extractNcodeAndR18` で
 // `.toLowerCase()` 正規化が必要 (S-4 review feedback)。
-const NCODE_PATH = /^\/(n\d+[a-z][0-9a-z]*)(?:\/.*)?$/i;
+//
+// **chapter 番号の抽出**: `/<ncode>/<num>/` 形式の各話 URL では、第 2 グループに chapter 番号が入る。
+// 第 1 alt (`\/(\d+)\/?`) が優先で、純数字以外のサブパス (`/novelview/` 等) は第 2 alt (`\/.*`) で
+// 受けて chapter=undefined になる。
+const NCODE_PATH = /^\/(n\d+[a-z][0-9a-z]*)(?:\/(\d+)\/?|\/.*)?$/i;
 
 const SITE_LOGO = 'https://syosetu.com/img/syosetu_logo.png';
 const SITE_FAVICON = 'https://syosetu.com/favicon.ico';
@@ -54,18 +58,26 @@ export function test(url: URL): boolean {
 }
 
 /**
- * URL から `{ ncode, isR18 }` を抽出する。
+ * URL から `{ ncode, isR18, chapter }` を抽出する。
  * `test()` を通った前提だが防衛的に null チェックする。
  *
  * **大文字対応 (S-4 review feedback)**: NCODE_PATH 正規表現は `/i` フラグで大文字 URL
  * (`/N7587FE/`) もマッチさせるが、なろう ncode の正規形は小文字なので抽出後に `.toLowerCase()`
  * で正規化する。これによりキャッシュキーや API 呼出が大文字小文字違いで重複しない。
+ *
+ * **chapter**: `/<ncode>/<num>/` 形式の各話 URL のとき chapter 番号 (string)、それ以外 (作品トップ
+ * URL や `/<ncode>/<非数字>/` 等のサブパス) では null。chapter URL では `summarize()` 側で
+ * description を「各話タイトル」に上書きする分岐に使う。
  */
-export function extractNcodeAndR18(url: URL): { ncode: string; isR18: boolean } | null {
+export function extractNcodeAndR18(url: URL): { ncode: string; isR18: boolean; chapter: string | null } | null {
 	const isR18 = NCODE_HOST_R18.test(url.hostname);
 	const m = NCODE_PATH.exec(url.pathname);
 	if (m === null) return null;
-	return { ncode: m[1].toLowerCase(), isR18 };
+	// 第 2 alt (`\/.*`) で受けたとき m[2] は undefined。RegExp 仕様上「unmatched optional group」は
+	// undefined だが TS は strict noUncheckedIndexedAccess なしでは string 型に推論するため `?? null`
+	// で正規化する (実際は undefined を null に置換)。
+	const chapter = (m[2] as string | undefined) ?? null;
+	return { ncode: m[1].toLowerCase(), isR18, chapter };
 }
 
 /**
@@ -342,35 +354,80 @@ async function fetchNovelFromHtml(url: URL, opts?: GeneralScrapingOptions): Prom
 	return extractNovelDataFromHtml(res.$);
 }
 
+/**
+ * chapter URL (`/<ncode>/<num>/`) のページから「各話タイトル」を抽出する。
+ *
+ * - 1st choice: `<h1 class="p-novel__title">` (chapter ページではここが各話タイトル)。
+ *   `p-novel__title--rensai` 修飾が付くがクラスセレクタは含む方向で動く。
+ * - 2nd choice: `og:title` は `"WorkTitle - ChapterTitle"` 結合形式。最初の ` - ` で split する
+ *   (作品タイトルに ` - ` が含まれる場合は誤抽出するが、h1 が取れている前提で fallback としてのみ使用)。
+ *
+ * 戻り値: 各話タイトル / 取得失敗時 null。
+ */
+export async function fetchChapterTitle(url: URL, opts?: GeneralScrapingOptions): Promise<string | null> {
+	const res = await scpaping(url.href, { ...opts, userAgent: 'Twitterbot/1.0' });
+	const fromH1 = res.$('h1.p-novel__title').first().text().trim();
+	if (fromH1 !== '') return fromH1;
+	const ogTitle = res.$('meta[property="og:title"]').attr('content')?.trim() ?? '';
+	const sepIdx = ogTitle.indexOf(' - ');
+	if (sepIdx >= 0) {
+		const right = ogTitle.slice(sepIdx + 3).trim();
+		return right !== '' ? right : null;
+	}
+	return null;
+}
+
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
 	const extracted = extractNcodeAndR18(url);
 	if (extracted === null) return null;
 	const apiUrl = buildApiUrl(extracted.ncode, extracted.isR18);
-	const body = await getJson(apiUrl, undefined, opts);
+
+	// **chapter URL では API + chapter HTML を並列取得** して 1 round-trip 分節約する。
+	// chapter 番号が無い (= 作品トップ URL) ときは chapterTitle は null のままで従来通り。
+	const [body, chapterTitle] = await Promise.all([
+		getJson(apiUrl, undefined, opts),
+		extracted.chapter != null
+			? fetchChapterTitle(url, opts).catch(() => null)
+			: Promise.resolve(null),
+	]);
+
 	const novel = parseNovelApiResponse(body);
-	if (novel === null) {
+	// `_embedBaseUrl` は `summaly()` が `SummalyOptions.embedBaseUrl` を transparent 伝搬する
+	// internal フィールド (`GeneralScrapingOptions` の JSDoc 参照、phase13.1 Step 3 → 2026-05-08 補正)。
+	// 設定されていれば `Summary.player.url` を `<base>/embed?url=...` で組み立てる。
+	const embedBaseUrl = opts?._embedBaseUrl;
+	let summary: Summary;
+	if (novel !== null) {
+		summary = buildSummaryFromApi(novel, url, extracted.isR18, embedBaseUrl);
+	} else {
 		// allcount=0 = なろう公式 API の index に載っていない。古い作品 / API インデックス漏れ等で
 		// HTML ページは正常に存在し OGP も完備しているケースがある (本番ログで `n3862be` 等で観測)。
 		//
-		// **HTML 専用 scrape にフォールバック**: なろうの HTML 構造はほぼ統一されているため、
-		// `<h1 class="p-novel__title">` / `.p-novel__author` / `#novel_ex` 等から API と概ね同等の
-		// 構造化情報が取れる (genre / novel_type / end は HTML から取れないが、それ以外は再現可)。
-		// `Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (phase13.1 の API 直叩き精神を維持)。
-		// HTML 構造が変わって抽出失敗した場合は最終 fallback として `general()` で OGP scrape する。
-		// renderEmbed (/embed) は API データに完全依存するため allcount=0 では throw のまま。
-		const fromHtml = await fetchNovelFromHtml(url, opts);
+		// **HTML 専用 scrape にフォールバック**: chapter URL の場合は chapter ページの HTML だと
+		// h1 が「各話タイトル」になってしまい作品メタが取れないため、作品トップ URL に切り替えて
+		// fetch する。chapter なしの場合は url そのまま (=作品トップ)。
+		// 最終 fallback として `general()` で OGP scrape する。renderEmbed (/embed) は API データに
+		// 完全依存するため allcount=0 では throw のまま。
+		const fallbackUrl = extracted.chapter != null
+			? new URL(`https://${url.hostname}/${extracted.ncode}/`)
+			: url;
+		const fromHtml = await fetchNovelFromHtml(fallbackUrl, opts);
 		if (fromHtml !== null) {
-			return buildSummaryFromApi(fromHtml, url, extracted.isR18, undefined);
+			summary = buildSummaryFromApi(fromHtml, url, extracted.isR18, embedBaseUrl);
+		} else {
+			return general(url, { ...opts, userAgent: 'Twitterbot/1.0' });
 		}
-		return general(url, { ...opts, userAgent: 'Twitterbot/1.0' });
 	}
-	// embedBaseUrl は SummalyOptions 経由で渡るが、`GeneralScrapingOptions` 型には含まれていない
-	// (Fastify モード専用フィールド)。本プラグインは scpaping を経由しないため `opts` 経由では受け取れない。
-	// **設計判断**: summarize() の opts には embedBaseUrl を含めない。Fastify モードで player.url を
-	// 組み立てたい場合は `summaly()` 呼出側で別途処理するか、本フェーズでは player.url=null で許容する。
-	// (Step 3 範囲では player.url 機能は library mode の責務外、Fastify mode 経由でのみ意味を持つが
-	//  `opts._embedBaseUrl` のような internal 拡張は次フェーズで検討)
-	return buildSummaryFromApi(novel, url, extracted.isR18, undefined);
+
+	// **chapter URL では description を「各話タイトル」に上書き**。card preview で
+	// 「タイトル=作品名 / Description=各話タイトル」と並べて表示することで、各話 URL がどの作品の
+	// どの話かが一目で分かるようにする。chapter HTML 取得失敗 (null) のときは作品トップと同じ
+	// description (composeDescription の作品メタ) のままにする。
+	if (chapterTitle !== null) {
+		summary.description = chapterTitle;
+	}
+
+	return summary;
 }
 
 export async function renderEmbed(url: URL, opts?: GeneralScrapingOptions): Promise<EmbedRenderResult> {
