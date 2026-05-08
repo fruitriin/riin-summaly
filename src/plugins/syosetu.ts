@@ -277,9 +277,14 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 		// allcount=0 = なろう公式 API の index に載っていない。古い作品 / API インデックス漏れ等で
 		// HTML ページは正常に存在し OGP も完備しているケースがある (本番ログで `n3862be` 等で観測)。
 		// API 直叩きを諦めて general() に fallback して OGP scrape で救援する。
-		// PV カウントに影響しうるが (phase13.1 で API 直叩きを選んだ理由を一部譲る)、preview 不能で
-		// 502 を返すよりはユーザー体験が良い。renderEmbed (/embed) 側は OGP では再現できないため throw のまま。
-		return general(url, opts);
+		//
+		// **SNS bot UA で叩く理由**: なろうのアクセス解析は一般的に SNS bot UA を PV カウントから
+		// 除外している前提で、PV カウント影響を最小化する (phase13.1 で API 直叩きを選んだ理由を
+		// 構造的に保つ)。`Twitterbot/1.0` を選ぶ理由: SNS preview bot として最も認識度が高く、
+		// なろう側の bot allowlist に登録されている可能性が高い。phase12.3 (nintendo-store) で
+		// `facebookexternalhit/1.1` を採用した類似パターン。renderEmbed (/embed) は OGP では
+		// 再現できないため throw のまま。
+		return general(url, { ...opts, userAgent: 'Twitterbot/1.0' });
 	}
 	// embedBaseUrl は SummalyOptions 経由で渡るが、`GeneralScrapingOptions` 型には含まれていない
 	// (Fastify モード専用フィールド)。本プラグインは scpaping を経由しないため `opts` 経由では受け取れない。
