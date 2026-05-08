@@ -10,7 +10,7 @@ import { categorizeError, type SummalyErrorCategory } from '@/utils/parse-failur
 import { getActiveCache, pathKeysOf, type DomainStrategy } from '@/utils/domain-strategy-cache.js';
 
 /**
- * cascade 内で「どの段で成功したか」を呼出側に伝えるための mutable holder (phase14 Step 2b)。
+ * cascade 内で「どの段で成功したか」を呼出側に伝えるための mutable holder。
  *
  * cache miss 時に `scpaping()` が `cache.recordSuccess(pathKey, strategy)` を呼ぶために、
  * cascade の各段が成功時に `tracker.value = '<strategy>'` をセットする。
@@ -81,7 +81,7 @@ function isPdfEnabled(enablePdf: boolean | undefined): boolean {
 export const DEFAULT_RESPONSE_TIMEOUT = 20 * 1000;
 export const DEFAULT_OPERATION_TIMEOUT = 60 * 1000;
 export const DEFAULT_MAX_RESPONSE_SIZE = 10 * 1024 * 1024;
-// Mozilla プレフィックス必須の WAF を底上げで通すために複合 UA を採用 (phase11.9)。
+// Mozilla プレフィックス必須の WAF を底上げで通すために複合 UA を採用。
 // 「`SummalyBot` 文字列で WAF が弾く」サイトには別途 fallback UA リトライ機構があり、
 // このデフォルトはそれと併用する想定。自己同定 (`SummalyBot/<ver>` + URL) は維持。
 // URL は riin-summaly fork のリポジトリを指す（運用者が問い合わせ可能な場所）。
@@ -112,7 +112,7 @@ export function getGotOptions(url: string, opts?: GeneralScrapingOptions): Omit<
 			// useRange: true のときは Range ヘッダで先頭領域だけ取得する。
 			// サーバが Range をサポートしていなければ 200 OK でフルボディが返るため
 			// 既存の contentLengthLimit ガードで保護される。
-			// **phase16.3**: internal default を true に変更。明示 false で off。
+			// internal default は true。明示 false で off。
 			...((opts?.useRange ?? true) ? { range: `bytes=0-${maxSize - 1}` } : {}),
 		},
 		typeFilter,
@@ -153,7 +153,7 @@ export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, mes
 }
 
 /**
- * 経路学習キャッシュのヒット時に該当 strategy を直接呼ぶ fast path 実装 (phase14 Step 2a)。
+ * 経路学習キャッシュのヒット時に該当 strategy を直接呼ぶ fast path 実装。
  *
  * - `'default'` / `'fallback_ua'`: `getResponse` を呼ぶ (UA を切り替えるだけ)
  * - `'proxy'`: `viaProxyWorker` を直接呼ぶ (cascade を経由しない)
@@ -212,11 +212,11 @@ async function fetchByStrategy(
 }
 
 /**
- * `scpaping()` 内のレスポンス取得部分を切り出した内部関数 (phase14 Step 2a + Step 2b 前半 + Step 2b 後半 + Step 4)。
+ * `scpaping()` 内のレスポンス取得部分を切り出した内部関数。
  *
  * **設計**: scpaping は `cache.recordX` を直接呼ばず、`opts._cacheRecording` (mutable side-channel)
  * に context を埋めて `summaly()` レイヤに伝達する。`summaly()` が Summary 確定後に thin 判定して
- * `recordSuccess` / `recordFailure` を一括判定する設計に統合済み (Step 2b 後半)。
+ * `recordSuccess` / `recordFailure` を一括判定する。
  *
  * 優先順位 (Step 4 で `forceCurlCffiFallback` / `forceProxyFallback` フラグを廃止し、cache + bootstrap に統合):
  * 1. 経路学習キャッシュにヒットがあれば fast path で該当 strategy を直接呼ぶ (Step 2a)
@@ -252,7 +252,7 @@ async function fetchResponse(
 	proxyCfg: import('@/utils/proxy-fallback.js').ProxyFallbackConfig | undefined,
 	curlCffiCfg: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig | undefined,
 ): Promise<Got.Response<string>> {
-	// 経路学習キャッシュ fast path (phase14 Step 2a + Step 2b 後半)
+	// 経路学習キャッシュ fast path
 	//
 	// **設計**: scpaping は `cache.recordX` を直接呼ばず、`opts._cacheRecording` に context を埋めて
 	// summaly() に伝達する。summaly() が Summary 確定後 (thin 判定込みで) 一括判定して record する。
@@ -295,7 +295,7 @@ async function fetchResponse(
 		}
 	}
 
-	// 通常 4 段カスケード (phase14 Step 2b: tracker で成功 strategy を捕捉して context に埋める)
+	// 通常 4 段カスケード (tracker で成功 strategy を捕捉して context に埋める)
 	const tracker: StrategyTracker | undefined = cache != null ? {} : undefined;
 	const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
 	const response = await getResponseWithCurlCffiFallback({
@@ -323,7 +323,7 @@ export async function scpaping(
 	// 動的 import で循環参照を避ける（proxy-fallback.ts / curl-cffi-fetch.ts は got.ts の
 	// getResponseWithFallback を import している）。
 	// 初回ロード以降は Node.js のモジュールキャッシュにより同期的に解決されるため hot path のコストはほぼゼロ。
-	// 段階構造: ① default UA → ② fallback UA (phase11.9) → ③ proxy worker (phase12.1) → ④ curl_cffi (phase12.5)
+	// 段階構造: ① default UA → ② fallback UA → ③ proxy worker → ④ curl_cffi
 	const curlCffiCfg = opts?.curlCffiFallback;
 	const proxyCfg = opts?.proxyFallback;
 	const response = await fetchResponse(args, opts, fallback, proxyCfg, curlCffiCfg);
@@ -509,7 +509,7 @@ export async function getResponse(args: GotOptions) {
 }
 
 /**
- * フォールバック UA リトライ設定 (phase11.9)。
+ * フォールバック UA リトライ設定。
  *
  * 1 度目のリクエストが `categories` に含まれるエラーカテゴリで失敗したら、
  * UA を `userAgent` に差し替えて 1 度だけ再試行する。
@@ -539,7 +539,7 @@ export function buildFallbackConfig(opts?: GeneralScrapingOptions): FallbackUaCo
 }
 
 /**
- * `getResponse` のラッパで、bot block 検出時に別 UA で 1 回だけリトライする (phase11.9)。
+ * `getResponse` のラッパで、bot block 検出時に別 UA で 1 回だけリトライする。
  *
  * - `fallback === undefined` のときは通常の `getResponse(args)` 1 回呼び出しと等価
  * - 1 回目失敗 → `categorizeError` でカテゴリ判定 → `fallback.categories` に含まれていれば

@@ -1,5 +1,5 @@
 /**
- * TOML ベースの設定ファイル loader（phase8.1）。
+ * TOML ベースの設定ファイル loader。
  *
  * `parseTomlConfig(path)` で TOML を読み、`SummalyOptions` と `[server]` 設定にマッピングする。
  * 不正値は早期に `RangeError` / `TypeError` で fail するため、cryptic な runtime エラーを防げる。
@@ -65,11 +65,11 @@ function expectPositiveInteger(value: number, key: string): void {
 }
 
 /**
- * セクション内の未知キーを起動失敗で検出する (phase16.3)。
+ * セクション内の未知キーを起動失敗で検出する。
  *
  * smol-toml は unknown key を silent ignore するため、旧キー (`[scraping.proxy].domains` 等) や
- * typo を黙って受け流してしまう。phase16.3 で削除/移動されたキーを「動かないが気付けない」
- * 状態で残す方が運用上のコストが大きいため、各セクションで allowed キーを明示する fail-fast 設計に変更。
+ * typo を黙って受け流してしまう。「動かないが気付けない」状態を防ぐため、各セクションで
+ * allowed キーを明示する fail-fast 設計を採用。
  *
  * `[plugins.<name>]` のような placeholder セクションは unknown キーになるため例外的に skip する場合がある。
  */
@@ -78,14 +78,14 @@ function expectKnownKeys(obj: Record<string, Toml>, allowed: readonly string[], 
 		if (!allowed.includes(k)) {
 			throw new RangeError(
 				`config: unknown key '${path}.${k}'. valid keys: ${allowed.join(', ')}. `
-				+ `(phase16.3 で削除/移動された可能性があります — DEPRECATED.md を参照してください)`,
+				+ `(削除/移動された可能性があります — DEPRECATED.md を参照してください)`,
 			);
 		}
 	}
 }
 
 /**
- * bootstrap JSONL を読み、strategy 別に host (pathKey の最初のセグメント) を集約する (phase16.3)。
+ * bootstrap JSONL を読み、strategy 別に host (pathKey の最初のセグメント) を集約する。
  *
  * proxy / curl_cffi の `domains` allowlist を bootstrap entry から自動導出するために使う。
  * 1 ソース管理 (bootstrap.jsonl だけ更新すればよい) を実現するための内部ヘルパ。
@@ -123,10 +123,10 @@ function loadBootstrapHostsByStrategy(bootstrapPath: string): Map<string, Set<st
 }
 
 /**
- * proxy / curl_cffi の `categories` デフォルト値 (phase16.3 でコード側固定化、TOML キーは廃止)。
+ * proxy / curl_cffi の `categories` デフォルト値 (コード側固定、TOML キーは持たない)。
  *
- * 旧設計では運用者が config.toml で個別に override 可能だったが、運用上ほぼ全員が同じ値を使っていた。
- * 設定責任を運用者から外しコード側に集約する判断 (Feedback.md の orientation に従う)。
+ * 運用上ほぼ全員が同じ値を使うため、設定責任を運用者から外しコード側に集約する判断
+ * (Feedback.md の orientation に従う)。
  */
 const DEFAULT_PROXY_CATEGORIES: NonNullable<SummalyOptions['proxyFallback']>['categories']
 	= ['origin_error', 'bot_blocked'];
@@ -136,7 +136,7 @@ const DEFAULT_FALLBACK_CATEGORIES: NonNullable<SummalyOptions['fallbackRetryCate
 	= ['bot_blocked', 'connection_dropped'];
 
 /**
- * `parseFailureLog = true` 時のデフォルトパス (phase16.3)。
+ * `parseFailureLog = true` 時のデフォルトパス。
  *
  * 運用者が `parseFailureLog = true` だけ書けば集約が動くようにペア制御 + デフォルト適用。
  * cwd 相対の `./data/` (bootstrap.jsonl と同階層) で grep / jq しやすく一貫性確保。
@@ -160,7 +160,7 @@ export function parseTomlConfigString(toml: string): ParsedConfig {
 		throw new ConfigError('config: top-level must be a TOML table');
 	}
 
-	// phase16.3: トップレベルの未知キーも fail-fast。`[plugins.<name>]` のような placeholder
+	// トップレベルの未知キーも fail-fast。`[plugins.<name>]` のような placeholder
 	// (将来拡張用) も含むため `plugins` だけは例外的に許容する判断はしない (placeholder は plugins 配下のみ)。
 	expectKnownKeys(parsed, TOP_LEVEL_KEYS, '');
 
@@ -175,16 +175,13 @@ export function parseTomlConfigString(toml: string): ParsedConfig {
 const TOP_LEVEL_KEYS = ['server', 'summaly', 'scraping', 'plugins', 'diagnostics', 'embed'] as const;
 
 /**
- * `[embed]` セクションを処理し、`SummalyOptions.embedBaseUrl` / `embedConfig` にマップする (phase13.1, phase16.3 改修)。
+ * `[embed]` セクションを処理し、`SummalyOptions.embedBaseUrl` / `embedConfig` にマップする。
  *
  * - `enabled` が省略 / true で `publicUrl` が設定済なら embed 有効化、`embedBaseUrl` を投入
  * - `enabled = false` なら `embedConfig.enabled = false` で完全無効化 (= /embed が 404、player.url も生成しない)
  * - `publicUrl` 未設定なら embed は実質無効 (embedConfig は作るが embedBaseUrl は undefined のまま)
  * - `frameAncestors` 省略時は `["*"]` (デフォルト全許可、商用は config で制限推奨)
- *
- * **phase16.3 変更**:
- * - `[server].publicUrl` → `[embed].publicUrl` 移動 (embed でしか使わない)
- * - `[embed].allowedPlugins` 削除。`renderEmbed` 実装プラグインで `[plugins].allowed` に含まれるものを
+ * - `allowedPlugins` は持たない。`renderEmbed` 実装プラグインで `[plugins].allowed` に含まれるものを
  *   src/index.ts の Fastify auto-init 側で自動構成 (詳細は src/index.ts 参照)
  */
 const EMBED_KEYS = ['enabled', 'publicUrl', 'frameAncestors'] as const;
@@ -273,7 +270,7 @@ function parseEmbedSection(rawEmbed: Toml, summaly: SummalyOptions): void {
 
 /**
  * `[scraping.fallback]` セクションを処理し、`SummalyOptions` の
- * `fallbackUserAgent` / `fallbackRetryCategories` にマップする (phase11.9)。
+ * `fallbackUserAgent` / `fallbackRetryCategories` にマップする。
  *
  * - `enabled = false` のときは何もマップしない（リトライ無効）
  * - `enabled = true` (or undefined) で `userAgent` 指定があれば `fallbackUserAgent` に
@@ -293,7 +290,7 @@ function parseScrapingSection(rawScraping: Toml, out: SummalyOptions): void {
 	}
 	expectKnownKeys(rawScraping, SCRAPING_KEYS, 'scraping');
 
-	// phase16.3: bootstrap.jsonl から strategy 別 host set を導出 → proxy/curl_cffi の domains に注入。
+	// bootstrap.jsonl から strategy 別 host set を導出 → proxy/curl_cffi の domains に注入。
 	// **bootstrap は `[scraping.strategy_cache]` セクション明示時のみ読む** (元の parseStrategyCacheSection
 	// 設計「section 無ければ何もマップしない」と整合)。section 無し = strategy_cache 無効 = 経路依存チェック不要。
 	// strategy_cache.bootstrapPath が明示されていればそれを、未指定なら getDefaultBootstrapPath() で同梱解決。
@@ -339,7 +336,7 @@ function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void
 	}
 	if (!enabled) return;
 	// `userAgent` 省略時は `DEFAULT_FALLBACK_UA` (`facebookexternalhit/1.1`) を採用。
-	// 「`enabled = true` を書いたのにリトライしない」サイレントバグを防ぐため (phase11.9 W-2)。
+	// 「`enabled = true` を書いたのにリトライしない」サイレントバグを防ぐため。
 	if (fallback.userAgent !== undefined) {
 		expectType(fallback.userAgent, 'string', 'scraping.fallback.userAgent');
 		const ua = (fallback.userAgent as string).trim();
@@ -350,21 +347,21 @@ function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void
 	} else {
 		out.fallbackUserAgent = DEFAULT_FALLBACK_UA;
 	}
-	// phase16.3: `categories` TOML キーは削除。コード側 default 固定 (DEFAULT_FALLBACK_CATEGORIES)。
+	// `categories` は TOML キーを持たずコード側 default 固定 (DEFAULT_FALLBACK_CATEGORIES)。
 	out.fallbackRetryCategories = DEFAULT_FALLBACK_CATEGORIES;
 }
 
 /**
- * `[scraping.proxy]` セクションを処理し、`SummalyOptions.proxyFallback` にマップする (phase12.1, phase16.3 改修)。
+ * `[scraping.proxy]` セクションを処理し、`SummalyOptions.proxyFallback` にマップする。
  *
  * シークレットの解決順:
  * 1. `process.env.SUMMALY_PROXY_SECRET`
  * 2. `config.toml` の `[scraping.proxy].secret`
- * 3. どちらも無ければ起動失敗 (phase16.3 で warning + 無効化を fail-fast に変更)
+ * 3. どちらも無ければ起動失敗
  *
- * **phase16.3 変更**:
- * - `categories` TOML キー削除 → コード側 default 固定 (`DEFAULT_PROXY_CATEGORIES`)
- * - `domains` TOML キー削除 → bootstrap.jsonl から strategy=proxy の host を自動導出
+ * **設計**:
+ * - `categories` は TOML キーを持たずコード側 default 固定 (`DEFAULT_PROXY_CATEGORIES`)
+ * - `domains` は TOML キーを持たず bootstrap.jsonl から strategy=proxy の host を自動導出
  * - 経路依存 fail-fast: bootstrap に proxy entry があるけど `enabled = false` なら起動失敗
  *
  * @param bootstrapHostsByStrategy bootstrap.jsonl から導出した strategy 別 host set
@@ -418,14 +415,13 @@ function parseProxySection(
 	const envSecret = process.env.SUMMALY_PROXY_SECRET;
 	const secret = (envSecret != null && envSecret !== '') ? envSecret : (configSecret ?? '');
 	if (secret === '') {
-		// phase16.3: 旧 warning + 無効化を fail-fast に変更
 		throw new RangeError(
 			'config: scraping.proxy.enabled = true ですが secret が未設定です。'
 			+ ' 環境変数 SUMMALY_PROXY_SECRET または `[scraping.proxy].secret` のいずれかを設定してください',
 		);
 	}
 
-	// domains は bootstrap から自動導出 (phase16.3)
+	// domains は bootstrap から自動導出
 	const domains = Array.from(proxyHosts);
 	if (domains.length === 0) {
 		throw new RangeError(
@@ -451,7 +447,7 @@ function parseProxySection(
 }
 
 /**
- * bootstrap 依存エラーのメッセージ生成 (phase16.3 経路依存 fail-fast)。
+ * bootstrap 依存エラーのメッセージ生成 (経路依存 fail-fast)。
  * 利用者に「どちらかを修正すべきか」を明示する。
  */
 function buildBootstrapDependencyError(strategy: 'proxy' | 'curl_cffi', hosts: Set<string>, condition: string): string {
@@ -470,15 +466,15 @@ function buildBootstrapDependencyError(strategy: 'proxy' | 'curl_cffi', hosts: S
 }
 
 /**
- * `[scraping.curl_cffi]` セクションを処理し、`SummalyOptions.curlCffiFallback` にマップする (phase12.5, phase16.3 改修)。
+ * `[scraping.curl_cffi]` セクションを処理し、`SummalyOptions.curlCffiFallback` にマップする。
  *
  * - `enabled === false` のときは何もマップしない（curl_cffi 無効）
  * - `enabled === true` で `projectDir` 必須（`tools/curl-cffi-fetcher/` の絶対 or 相対パス）
  * - `uvPath` / `impersonate` / `timeoutMs` は省略可能（妥当なデフォルトを採用）
  *
- * **phase16.3 変更**:
- * - `categories` TOML キー削除 → コード側 default 固定
- * - `domains` TOML キー削除 → bootstrap.jsonl から strategy=curl_cffi の host を自動導出
+ * **設計**:
+ * - `categories` は TOML キーを持たずコード側 default 固定
+ * - `domains` は TOML キーを持たず bootstrap.jsonl から strategy=curl_cffi の host を自動導出
  * - 経路依存 fail-fast: bootstrap に curl_cffi entry あり + enabled = false → 起動失敗
  */
 const SCRAPING_CURL_CFFI_KEYS = ['enabled', 'projectDir', 'uvPath', 'impersonate', 'timeoutMs'] as const;
@@ -541,7 +537,7 @@ function parseCurlCffiSection(
 		impersonate = v;
 	}
 
-	// domains は bootstrap から自動導出 (phase16.3)
+	// domains は bootstrap から自動導出
 	const domains = Array.from(curlCffiHosts);
 	if (domains.length === 0) {
 		throw new RangeError(
@@ -569,7 +565,7 @@ function parseCurlCffiSection(
 }
 
 /**
- * `[scraping.strategy_cache]` セクションを処理し、`SummalyOptions.domainStrategyCache` にマップする (phase14 Step 1)。
+ * `[scraping.strategy_cache]` セクションを処理し、`SummalyOptions.domainStrategyCache` にマップする。
  *
  * - `enabled === false` のときは何もマップしない (従来カスケードのみ)
  * - `enabled === true` (or undefined when section present) でデフォルト値を採用する
@@ -684,7 +680,7 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 	}
 	expectKnownKeys(summaly, SUMMALY_KEYS, 'summaly');
 
-	// phase16.3: useRange の internal default を true に変更。明示 false で off。
+	// useRange の internal default は true。明示 false で off。
 	out.useRange = true;
 
 	if (summaly.userAgent !== undefined) {
@@ -778,7 +774,7 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 		}
 	}
 
-	// [diagnostics] (phase10.1)
+	// [diagnostics]
 	if (rawDiagnostics !== undefined) {
 		if (!isObject(rawDiagnostics)) {
 			throw new TypeError('config: `[diagnostics]` must be a table');
@@ -799,7 +795,7 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 			expectPositiveInteger(d.parseFailureLogSamplesPerGroup as number, 'diagnostics.parseFailureLogSamplesPerGroup');
 			out.parseFailureLogSamplesPerGroup = d.parseFailureLogSamplesPerGroup as number;
 		}
-		// `parseFailureLogEndpoint` は phase11.5 で削除済み + phase16.3 で expectKnownKeys が起動失敗化。
+		// `parseFailureLogEndpoint` は廃止済 (詳細は DEPRECATED.md 参照)。expectKnownKeys が起動失敗で検出する。
 		if (d.parseFailureLogJsonlPath !== undefined) {
 			expectType(d.parseFailureLogJsonlPath, 'string', 'diagnostics.parseFailureLogJsonlPath');
 			const path = (d.parseFailureLogJsonlPath as string).trim();
@@ -813,7 +809,7 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 			expectNonNegativeFiniteNumber(d.parseFailureLogJsonlMaxBytes as number, 'diagnostics.parseFailureLogJsonlMaxBytes');
 			out.parseFailureLogJsonlMaxBytes = d.parseFailureLogJsonlMaxBytes as number;
 		}
-		// 迂回候補ログ (phase11.6)
+		// 迂回候補ログ
 		if (d.parseFailureLogBlockedJsonlPath !== undefined) {
 			expectType(d.parseFailureLogBlockedJsonlPath, 'string', 'diagnostics.parseFailureLogBlockedJsonlPath');
 			const path = (d.parseFailureLogBlockedJsonlPath as string).trim();
@@ -828,7 +824,7 @@ function parseSummalySection(rawSummaly: Toml, rawPlugins: Toml, rawDiagnostics:
 			out.parseFailureLogBlockedJsonlMaxBytes = d.parseFailureLogBlockedJsonlMaxBytes as number;
 		}
 
-		// phase16.3: parseFailureLog = true のとき、Path のペア制御 + デフォルト適用。
+		// parseFailureLog = true のとき、Path のペア制御 + デフォルト適用。
 		// 「片方だけ Path を指定」は事故元になりやすいので fail-fast。両方明示 or 両方未指定 (= デフォルト適用) のいずれか。
 		if (out.parseFailureLog === true) {
 			const hasPath = out.parseFailureLogJsonlPath !== undefined;

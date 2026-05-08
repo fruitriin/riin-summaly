@@ -182,7 +182,7 @@ export type SummalyOptions = {
 	parseFailureLogJsonlMaxBytes?: number;
 
 	/**
-	 * 迂回候補ログ JSONL の出力先 (phase11.6)。`isFilteredFailure` 対象（4xx/5xx, timeout,
+	 * 迂回候補ログ JSONL の出力先。`isFilteredFailure` 対象（4xx/5xx, timeout,
 	 * SSRF block, type filter, network, connection_dropped）の失敗を 1 行ずつ append する。
 	 * プラグイン候補ログ (`parseFailureLogJsonlPath`) とは別ファイルで純度を保つ設計。
 	 *
@@ -212,7 +212,7 @@ export type SummalyOptions = {
 	enablePdf?: boolean;
 
 	/**
-	 * Bot block 検出時のフォールバック UA (phase11.9)。
+	 * Bot block 検出時のフォールバック UA。
 	 *
 	 * `summaly()` の内部リクエストが `fallbackRetryCategories` に含まれるエラーカテゴリで失敗したとき、
 	 * UA をこの値に差し替えて 1 回だけ再試行する。`undefined` または空文字列ならリトライ無効
@@ -225,13 +225,13 @@ export type SummalyOptions = {
 	fallbackUserAgent?: string;
 
 	/**
-	 * `fallbackUserAgent` が発火するエラーカテゴリ (phase11.9)。
+	 * `fallbackUserAgent` が発火するエラーカテゴリ。
 	 * デフォルト: `['bot_blocked', 'connection_dropped']`。
 	 */
 	fallbackRetryCategories?: SummalyErrorCategory[];
 
 	/**
-	 * Outbound proxy フォールバック設定 (phase12.1)。
+	 * Outbound proxy フォールバック設定。
 	 *
 	 * UA fallback でも救えなかった IP レピュテーション層の遮断
 	 * （Vultr Tokyo IP からの amazon.co.jp 等）に対し、Cloudflare Workers にデプロイした
@@ -242,7 +242,7 @@ export type SummalyOptions = {
 	proxyFallback?: import('@/utils/proxy-fallback.js').ProxyFallbackConfig;
 
 	/**
-	 * curl_cffi (libcurl-impersonate) フォールバック設定 (phase12.5)。
+	 * curl_cffi (libcurl-impersonate) フォールバック設定。
 	 *
 	 * proxy fallback でも救えなかった **TLS layer bot block** (yodobashi 級の
 	 * HTTP/2 INTERNAL_ERROR / 即時切断) に対し、`tools/curl-cffi-fetcher/` の
@@ -257,35 +257,32 @@ export type SummalyOptions = {
 	curlCffiFallback?: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig;
 
 	/**
-	 * 経路学習キャッシュ設定 (phase14 Step 1)。
+	 * 経路学習キャッシュ設定。
 	 *
 	 * ドメイン (host + path prefix 1〜2 段) ごとに「成功した取得経路」を学習・永続化し、
 	 * 次回以降のリクエストで第一選択肢として使うことで「初回 default UA で 20 秒空回り
 	 * → fallback で成功」の時間損失を回避する。`enabled === false` なら従来カスケードのみ。
 	 *
 	 * 詳細は `docs/plans/phase14-domain-strategy-cache.md` 参照。
-	 *
-	 * **注**: phase14 Step 1 ではストレージ層と TOML 設定パスのみが導入される。
-	 * `scpaping()` への統合は Step 2 で行う。
 	 */
 	domainStrategyCache?: import('@/utils/domain-strategy-cache.js').DomainStrategyCacheOptions;
 
 	/**
-	 * **Fastify モードの自身が公開されている URL ベース** (phase13.1)。
+	 * **Fastify モードの自身が公開されている URL ベース**。
 	 * 例: `https://summaly.example.com`
 	 *
 	 * 設定すると、`renderEmbed` を実装したプラグイン (現在は `syosetu` のみ) が
 	 * Summary の `player.url` を `<embedBaseUrl>/embed?url=<encoded>` として組み立てる。
 	 * 未設定の場合は player は無効化 (library mode のデフォルト挙動と同じ)。
 	 *
-	 * Fastify モードでは `[embed].publicUrl` から自動投入される (phase16.3 で server から embed に移動)。
+	 * Fastify モードでは `[embed].publicUrl` から自動投入される。
 	 *
 	 * @see embedConfig
 	 */
 	embedBaseUrl?: string;
 
 	/**
-	 * **`/embed` エンドポイント設定** (phase13.1、Fastify モード専用)。
+	 * **`/embed` エンドポイント設定** (Fastify モード専用)。
 	 *
 	 * `[embed]` TOML セクションから自動投入される。`enabled === false` なら `/embed` は 404 を返し、
 	 * 対応プラグインが `renderEmbed` を実装していても player.url は組み立てられない (= 機能完全無効)。
@@ -330,7 +327,7 @@ function normalizeCacheKey(url: string, lang: string | undefined): string | null
 }
 
 /**
- * Fastify モードのエラーレスポンスに乗せるシリアライズ済みエラー (phase11.2)。
+ * Fastify モードのエラーレスポンスに乗せるシリアライズ済みエラー。
  * - `message` / `name`: 既存フィールド（後方互換）
  * - `category`: クライアント (Misskey 等) が UI 出し分けに使う公開カテゴリ
  * - `statusCode`: `StatusError` のときのみ。HTTP 由来のエラーが上流のどのコードか分かる
@@ -407,7 +404,7 @@ function buildResolveRequestOptions(opts: SummalyOptions) {
  *
  * 1. まず HEAD を試す（軽量、body を受信しない）
  * 2. HEAD が失敗した場合は GET に fallback する。`amzn.asia` のように HEAD には 404 を返すが
- *    GET には 301 でリダイレクトを返すサーバが存在するため (phase9.1)。GET には `Range: bytes=0-0` を
+ *    GET には 301 でリダイレクトを返すサーバが存在するため。GET には `Range: bytes=0-0` を
  *    付けて body 受信量を最小化する（リダイレクトされる場合は body は無いし、最終ターゲットが
  *    Range を尊重すれば 1 バイトだけで済む）
  * 3. どちらも失敗した場合は元の URL をそのまま返す（既存挙動互換）
@@ -436,7 +433,7 @@ export const summalyDefaultOptions = {
 } as SummalyOptions;
 
 /**
- * 経路学習キャッシュへ record する内部ヘルパ (phase14 Step 2b 後半)。
+ * 経路学習キャッシュへ record する内部ヘルパ。
  * `cache != null && recordKey != null && !gateFailedNeutral` のときだけ動作する。
  *
  * - `recordCacheSuccess`: strategy も必須 (= cache hit success / cascade success のいずれかを経由した)
@@ -490,7 +487,7 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 	} catch { /* malformed URL は後続の new URL で throw する */ }
 
 	// **`skipRedirectResolution = true` を宣言したプラグイン**が初期 URL にマッチする場合は、
-	// HEAD/GET probe をスキップする (phase12.5)。yodobashi のように TLS layer で bot 切断する
+	// HEAD/GET probe をスキップする。yodobashi のように TLS layer で bot 切断する
 	// 終端確定 URL に対して、resolveRedirect の HEAD/GET probe が timeout (20 秒) まで空回りする
 	// 純損失を回避する。terminal URL を持つプラグインのみが宣言する想定 (短縮 URL 系プラグインでは
 	// 絶対に有効化しないこと、その場合 resolveRedirect が必須)。
@@ -514,10 +511,10 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 	// summaly レイヤのフラグであり、scpaping (本体取得) の got リクエストには伝播させない。
 	// もし伝播させると、Fastify モードのように `followRedirects: false` を明示する利用形態で
 	// scpaping のリダイレクトすら follow されなくなり、Amazon の `/dp/<ASIN>` 301 等で
-	// 中間レスポンス（content-type 無し）が typeFilter で reject されて落ちる (phase11.3)。
+	// 中間レスポンス（content-type 無し）が typeFilter で reject されて落ちる。
 	// scrape 中のリダイレクト追跡は got のデフォルト (true) に任せる。SSRF チェインは
 	// `maxRedirects: 5` とプライベート IP ガードで別途抑制している。
-	// 経路学習キャッシュの記録 context (phase14 Step 2b 後半)。
+	// 経路学習キャッシュの記録 context。
 	// scpaping が読み書きし、summaly() が Summary 確定後にこの値を見て recordX を実行する。
 	// 設計詳細は `CacheRecordingState` の JSDoc 参照。
 	const cacheRecording: CacheRecordingState = {};
@@ -580,7 +577,7 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		url: actualUrl,
 	});
 
-	// 経路学習キャッシュ記録 (phase14 Step 2b 後半):
+	// 経路学習キャッシュ記録:
 	// Summary が thin (= OG/Twitter Card/<title> いずれも取れず) なら strategy が不適切 → recordFailure。
 	// Summary が good なら recordSuccess。gate-fail neutrality は recordCacheSuccess / Failure の中で守られる。
 	// **重要 (S-4 review feedback)**: `isThinSummary` 内部は `summary.url` を `URL.hostname` として参照して
@@ -629,7 +626,7 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 	// X-Cache ヘッダはキャッシュか dedup のどちらか有効なときに付与する（既存挙動: 両方無効なら付かない）
 	const emitCacheHeader = cache != null || inFlight != null;
 
-	// パース失敗ログ集約（プラグインスコープ singleton、phase10.1 + 11.6 で迂回候補ログを追加）
+	// パース失敗ログ集約（プラグインスコープ singleton、迂回候補ログを併設）
 	const parseFailureLog: ParseFailureLog | null = options.parseFailureLog
 		? new ParseFailureLog({
 			maxGroups: options.parseFailureLogMaxGroups ?? DEFAULT_PARSE_FAILURE_LOG_MAX_GROUPS,
@@ -641,7 +638,7 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		})
 		: null;
 
-	// 経路学習キャッシュの自動インスタンス化 (phase14 Step 2b-4)。
+	// 経路学習キャッシュの自動インスタンス化。
 	// `[scraping.strategy_cache].enabled = true` を読み取って `DomainStrategyCache` を作成し、
 	// モジュールレベル singleton (`setActiveCache`) に登録する。`scpaping()` は `getActiveCache()` で
 	// 取得して lookup する。Fastify サーバ起動時に 1 回だけ実行される (プラグインスコープ singleton)。
@@ -651,7 +648,7 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 	// 既存の `setAgent` パターンと同じ前提。
 	const strategyCacheOpts = options.domainStrategyCache;
 	if (strategyCacheOpts != null && strategyCacheOpts.enabled) {
-		// `bootstrapPath` 未指定時はリポ同梱 `data/domain-strategy-bootstrap.jsonl` を自動解決する (phase14 Step 3)。
+		// `bootstrapPath` 未指定時はリポ同梱 `data/domain-strategy-bootstrap.jsonl` を自動解決する。
 		// 同梱ファイルが見つからない (= カスタムビルド等) なら `undefined` のまま → bootstrap なし扱い。
 		// `runtimePath` 未指定時は永続化なし (in-memory のみ) として解釈される。
 		// W-1 review feedback: `cache` の中間変数を省いてシャドーイング (Fastify cache LRU との衝突) を回避
@@ -664,7 +661,7 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		}));
 	}
 
-	// phase16.3: `embedConfig.allowedPlugins` を auto-fill。`renderEmbed` を実装した builtinPlugins のうち
+	// `embedConfig.allowedPlugins` を auto-fill。`renderEmbed` を実装した builtinPlugins のうち
 	// `[plugins].allowed` (= options.allowedPlugins) に含まれるものをすべて embed 対応として登録する。
 	// 「embed 対応プラグインを部分的に絞り込む」という低頻度ニーズは `[plugins].allowed` から外すことで実現する
 	// 設計に統一し、TOML キーの二重管理 (旧 `[embed].allowedPlugins`) を撤廃した。
@@ -734,14 +731,14 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 				});
 				return { kind: 'success', value: summary };
 			} catch (e) {
-				// pino へエラーを構造化ログ出力 (phase11.8)。
+				// pino へエラーを構造化ログ出力。
 				// MISS 経路でしか呼ばれないので LRU/dedup HIT 時は再ログされない（spam 抑制）。
 				// ログレベルは chooseLogLevel で category 由来 (4xx=info / 5xx・timeout=warn / 想定外=error)。
 				// URL は sanitizeUrlForLog で query/fragment/auth を除去（PII 漏洩防止）。
 				//
 				// **err は手動シリアライズ**: pino のデフォルト `errSerializer` は got の `RequestError`
 				// の `options.url` などを列挙可能プロパティとして含めて出力するため、対象 URL のクエリ
-				// （token / session 等）が漏れる経路がある (phase11.8 review W-1)。
+				// （token / session 等）が漏れる経路がある。
 				// `name` / `message` / `stack` / `statusCode` だけを明示的に渡すことで漏洩経路を遮断する。
 				// `type` は pino の慣例フィールド（errSerializer 互換）。Error クラス名を入れることで
 				// jq での grep が `select(.err.type == "StatusError")` の形で書けるようになる。
@@ -781,7 +778,7 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		}
 
 		// パース失敗ログ記録 — MISS 経路で実際に summaly() を呼んだケースだけ記録（cache/inflight HIT は重複記録しない）。
-		// phase11.6 以降は `record()` 内部で振り分け:
+		// `record()` 内部で振り分け:
 		//   - thin / 非フィルタ throw → プラグイン候補（in-memory + candidate JSONL）
 		//   - フィルタ対象 throw（4xx/5xx, timeout, SSRF, type filter, network, connection_dropped）
 		//     → 迂回候補（blocked JSONL のみ、in-memory には混ぜない）
@@ -804,10 +801,9 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		return respondWithEntry(reply, entry);
 	});
 
-	// 診断エンドポイント `/__diagnostics/parse-failures` は phase11.5 で削除済み
-	// (プライバシーリスク撤去)。集約データの参照は `parseFailureLogJsonlPath` で書き出される
-	// JSONL ファイルを `cat | jq` する運用に移行。`ParseFailureLog.snapshot()` メソッドは
-	// テスト・デバッグ用に残置。
+	// 診断エンドポイント `/__diagnostics/parse-failures` は廃止済 (詳細は DEPRECATED.md 参照)。
+	// 集約データの参照は `parseFailureLogJsonlPath` で書き出される JSONL を `cat | jq` する運用に移行。
+	// `ParseFailureLog.snapshot()` メソッドはテスト・デバッグ用に残置。
 
 	// バージョン確認エンドポイント。デプロイされている summaly のコミットハッシュと
 	// コミットメッセージを返す。「いま動いているのは何のバージョン?」を確認する用途。
@@ -821,7 +817,7 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		};
 	});
 
-	// **`/embed?url=<URL>` エンドポイント** (phase13.1):
+	// **`/embed?url=<URL>` エンドポイント**:
 	// 対応プラグインが `renderEmbed` を実装している URL に対して、JS なし HTML+CSS で
 	// プレイヤー iframe 用のページを返す。Misskey の embed 表示に直接埋め込まれる前提。
 	//

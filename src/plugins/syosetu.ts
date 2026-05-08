@@ -1,5 +1,5 @@
 /**
- * 小説家になろう プラグイン (phase13.1 Step 3)。
+ * 小説家になろう プラグイン。
  *
  * `https://ncode.syosetu.com/n7587fe/2/` 等の URL に対し、なろう小説 API
  * (`api.syosetu.com/{novelapi|novel18api}/api/`) を直叩きして作品メタを取得し、
@@ -343,7 +343,7 @@ export function extractNovelDataFromHtml($: CheerioAPI): SyosetuNovelData | null
 
 /**
  * なろう作品トップページの HTML から `SyosetuNovelData` を取得する。
- * `Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (phase13.1 の API 直叩き精神を維持)。
+ * `Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (API 直叩きの精神を維持)。
  *
  * 戻り値:
  * - 構造化データが取れた → SyosetuNovelData (一部フィールド undefined 許容)
@@ -393,7 +393,7 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 
 	const novel = parseNovelApiResponse(body);
 	// `_embedBaseUrl` は `summaly()` が `SummalyOptions.embedBaseUrl` を transparent 伝搬する
-	// internal フィールド (`GeneralScrapingOptions` の JSDoc 参照、phase13.1 Step 3 → 2026-05-08 補正)。
+	// internal フィールド (`GeneralScrapingOptions` の JSDoc 参照)。
 	// 設定されていれば `Summary.player.url` を `<base>/embed?url=...` で組み立てる。
 	const embedBaseUrl = opts?._embedBaseUrl;
 	let summary: Summary;

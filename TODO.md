@@ -39,6 +39,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 16.4 | [docs/plans/phase16.4-startup-healthcheck.md](docs/plans/phase16.4-startup-healthcheck.md) — 起動時 healthcheck (placeholder + 疎通検証)。`enabled = true` の各機能設定値が placeholder のまま (`<your>` / `/path/to/` / `...`) や uv が PATH に無い等を起動時 fail-fast。example で必須キーを placeholder で残しておけるようにする UX 改善 | S〜M | 完了 (2026-05-09) |
 | 低 | 16.5 | docs/SETUP.md の `[scraping.proxy]` / `[scraping.curl_cffi]` / `[scraping.fallback]` セクションの詳細表 (`categories` / `domains` 設定例) を全面整理。phase16.3 で表面的整合性のみ取った状態のため、内部仕様の説明として残すか / 削除するか判断 | S | 未着手 |
 | 低 | 16.6 | proxy 実 HTTP 疎通テスト。Worker 側に `/health` endpoint 追加 + summaly 起動時に HMAC なしで GET → 200 確認。phase16.4 では placeholder 検出のみで止めた、実 HTTP は別 phase | S〜M | 未着手 |
+| 低 | 17.1 | [docs/plans/phase17.1-addf-upstream-prune-stale-markers.md](docs/plans/phase17.1-addf-upstream-prune-stale-markers.md) — `prune-stale-markers` スキルを ADDF 本体に upstream。summaly 側で実証済 (src/+bin/ で 156→5 件、96.8% 削減)。ADDF 利用プロジェクト全般の履歴マーカー累積問題への横展開 | S〜M | 未着手 (着手トリガー: ADDF 本体への寄与タイミング、急がない) |
 
 ### 将来検討メモ (Plan は未起票)
 

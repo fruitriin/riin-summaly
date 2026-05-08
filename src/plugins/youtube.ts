@@ -13,7 +13,7 @@ const HOST_PATTERNS = /^(www\.|m\.)?youtube\.com$/;
 // - `/v/<id>` (古い埋め込み URL)
 // - `/playlist` (再生リスト)
 // - `/shorts/<id>` (Shorts)
-// - `/live/<id>` (ライブ配信。oEmbed エンドポイントが正しく動画情報を返す、phase12.2)
+// - `/live/<id>` (ライブ配信。oEmbed エンドポイントが正しく動画情報を返す)
 const PATH_PATTERNS = /^\/(watch|v|playlist|shorts|live)(\/|$)/;
 
 export function test(url: URL): boolean {

@@ -1,5 +1,5 @@
 /**
- * カクヨム ジャンル enum (`Work.genre`) → 日本語ラベルのマッピング (phase15.2、2026-05-08 検証反映)。
+ * カクヨム ジャンル enum (`Work.genre`) → 日本語ラベルのマッピング。
  *
  * カクヨムの `Work` エンティティには `genre: 'LOVE_STORY'` のような大文字スネーク enum が入っている。
  * 本マッピングは **公式ジャンルページ** (`https://kakuyomu.jp/genres/<slug>/recent_works` の

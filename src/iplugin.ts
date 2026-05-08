@@ -11,7 +11,7 @@ export interface SummalyPlugin {
 	test: (url: URL) => boolean;
 	summarize: (url: URL, opts?: GeneralScrapingOptions) => Promise<Summary | null>;
 	/**
-	 * **`summaly()` の初期 `resolveRedirect` (HEAD/GET probe) をスキップさせる宣言** (phase12.5)。
+	 * **`summaly()` の初期 `resolveRedirect` (HEAD/GET probe) をスキップさせる宣言**。
 	 *
 	 * `true` を宣言すると、URL が初期段階で本プラグインの `test()` にマッチした場合に限り、
 	 * `summaly()` 冒頭の HEAD/GET によるリダイレクト解決を **完全にスキップ**する。
@@ -27,7 +27,7 @@ export interface SummalyPlugin {
 	skipRedirectResolution?: boolean;
 
 	/**
-	 * **`/embed` エンドポイント用 HTML 生成** (phase13.1)。
+	 * **`/embed` エンドポイント用 HTML 生成**。
 	 *
 	 * 実装すると summaly Fastify モードが `GET /embed?url=<URL>` にマッチした URL に対して、
 	 * 本関数の HTML をレスポンスとして返すようになる。プラグインが `test(url) === true`
@@ -49,7 +49,7 @@ export interface SummalyPlugin {
 }
 
 /**
- * `SummalyPlugin.renderEmbed` の戻り値 (phase13.1)。
+ * `SummalyPlugin.renderEmbed` の戻り値。
  */
 export interface EmbedRenderResult {
 	/**

@@ -1,5 +1,5 @@
 /**
- * X (旧 Twitter) プラグイン (phase6.1)。
+ * X (旧 Twitter) プラグイン。
  *
  * `(twitter|x).com/<user>/status/<id>` 形式の URL について、
  * `cdn.syndication.twimg.com/tweet-result` から JSON を取得して description / thumbnail /

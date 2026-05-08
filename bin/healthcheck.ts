@@ -1,5 +1,5 @@
 /**
- * 起動時 healthcheck (phase16.4)。
+ * 起動時 healthcheck。
  *
  * `[scraping.proxy]` / `[scraping.curl_cffi]` / `[embed]` の `enabled = true` 時、
  * 設定値が placeholder のままだったり実体が存在しない (uv が PATH に無い、projectDir が無い等)
@@ -25,7 +25,7 @@ const PLACEHOLDER_PATTERN = /<[^>]+>/;
 
 /**
  * `enabled = true` 時の各セクションの設定値を検証し、placeholder / 実体不在を fail-fast で検出する。
- * proxy の実 HTTP 疎通テスト (Worker が deploy されているか) は phase16.4 のスコープ外、別 phase で対応。
+ * proxy の実 HTTP 疎通テスト (Worker が deploy されているか) は別タスクで対応 (TODO.md phase16.6)。
  */
 export function runConfigHealthchecks(config: ParsedConfig): void {
 	checkProxy(config);
@@ -44,7 +44,7 @@ function checkProxy(config: ParsedConfig): void {
 			+ `[scraping.proxy].url または env SUMMALY_PROXY_URL に設定してください`,
 		);
 	}
-	// secret は phase16.3 で既に「未設定で起動失敗」になっているが、placeholder 文字列も検出
+	// secret は config-loader 段で「未設定で起動失敗」を担保済だが、placeholder 文字列も検出
 	if (cfg.secret === '...' || PLACEHOLDER_PATTERN.test(cfg.secret)) {
 		throw new Error(
 			`config: scraping.proxy.secret が placeholder のままです\n`

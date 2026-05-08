@@ -1,5 +1,5 @@
 /**
- * Fastify モードのパース失敗ログ集約 (phase10.1)。
+ * Fastify モードのパース失敗ログ集約。
  *
  * - `summaly()` が throw した場合 → `reason: 'throw'`
  * - 結果が「汎用パスでスカスカ」（`description == null && thumbnail == null && player.url == null`、
@@ -76,14 +76,14 @@ export function sanitizeUrlForLog(url: string): string {
  * Summary が「汎用パスで取れたスカスカ」かを判定する。
  *
  * - description があれば false
- * - thumbnail があり、かつ `thumbnail !== icon` (= favicon フォールバック発動以外) であれば false (phase11.7)
+ * - thumbnail があり、かつ `thumbnail !== icon` (= favicon フォールバック発動以外) であれば false
  * - player.url / medias[] があれば false
  * - title が null / 空文字 / hostname と一致 → 「実質取れていない」とみなして true
  *
  * プラグインがマッチして取得した結果（title が `<user> on X` 等）は false 判定になる。
  * 完璧な判定ではないが、プラグイン化候補を取りこぼすよりノイズが少し増える方を許容する設計。
  *
- * **phase11.7 補正**: `thumbnail === icon` は parseGeneral の favicon フォールバック発動状態
+ * **`thumbnail === icon` の意味**: parseGeneral の favicon フォールバック発動状態
  * （OG/Twitter/image_src/apple-touch-icon が全部無く favicon を thumbnail に流用したケース）なので、
  * thumbnail があっても thin 候補として継続判定する。「favicon あり + title だけ」は依然として
  * プラグイン化候補のシグナル。
@@ -105,7 +105,7 @@ export function isThinSummary(summary: SummalyResult): boolean {
 }
 
 /**
- * `summaly` Fastify モードの **エラーレスポンス用カテゴリ**（phase11.2）。
+ * `summaly` Fastify モードの **エラーレスポンス用カテゴリ**。
  * `error.category` フィールドで Misskey 等の利用側に渡し、UI の出し分けに使う。
  *
  * - `timeout` 取得タイムアウト / abort
@@ -163,7 +163,7 @@ export function categorizeError(
 		// `Rejected by type filter undefined` (= content-type ヘッダが欠落) は IP block 系の
 		// malformed response の典型 (Amazon が Vultr Tokyo IP に対して 200 + 空 content-type を返す等)。
 		// 真の非 HTML (`Rejected by type filter application/pdf`) と区別して `bot_blocked` に振り分け、
-		// proxy fallback (phase12.1) で救援できる経路に乗せる (phase12.1 followup)。
+		// proxy fallback で救援できる経路に乗せる。
 		if (/Rejected by type filter undefined/i.test(errorMessage)) return 'bot_blocked';
 		if (/Rejected by type filter/i.test(errorMessage)) return 'unsupported_type';
 		if (/maxSize exceeded/i.test(errorMessage)) return 'content_too_large';
@@ -252,7 +252,7 @@ export interface ParseFailureLogConfig {
 	 */
 	jsonlMaxBytes?: number;
 	/**
-	 * 迂回候補ログ JSONL のパス (phase11.6)。`isFilteredFailure` 対象 (4xx/5xx, timeout, SSRF block 等)
+	 * 迂回候補ログ JSONL のパス。`isFilteredFailure` 対象 (4xx/5xx, timeout, SSRF block 等)
 	 * を 1 行ずつ append する。プラグイン候補ログとは別ファイルで純度を保つ。
 	 *
 	 * 用途: npm のように「公開 HTML はブロックだが別 API で同等情報が取れる」パターンを後から発見する。
@@ -272,7 +272,7 @@ export function serializeJsonlLine(key: string, sample: ParseFailureSample): str
 }
 
 /**
- * 迂回候補ログ用の 1 行を JSONL シリアライズ (phase11.6)。
+ * 迂回候補ログ用の 1 行を JSONL シリアライズ。
  * プラグイン候補ログと違って `errorName` と `category` を必ず含める（ブロック理由の機械可読タグ）。
  *
  * 注: 将来 `ParseFailureSample` に `errorName` フィールドが追加されたとき spread 順序で
@@ -296,7 +296,7 @@ export function serializeBlockedJsonlLine(
 }
 
 /**
- * JSONL ファイルへの append + サイズ cap + I/O エラー連発抑制を担う内部ヘルパ (phase11.6 で抽出)。
+ * JSONL ファイルへの append + サイズ cap + I/O エラー連発抑制を担う内部ヘルパ。
  *
  * - `path == null` なら no-op
  * - 起動時に既存ファイルサイズを読み、cap 到達後の append を skip
@@ -388,8 +388,7 @@ export class ParseFailureLog {
 	 * Fastify の async ハンドラから複数の record が並行に呼ばれても Map の中間状態は競合しない。
 	 * 将来 await を含む変更を加える場合は呼び出し側との競合を再検討すること。
 	 *
-	 * `errorName` / `statusCode` (phase11.6 で追加) は迂回候補ログのカテゴリ判定に使う。
-	 * 旧シグネチャ互換のため optional。
+	 * `errorName` / `statusCode` は迂回候補ログのカテゴリ判定に使う。旧シグネチャ互換のため optional。
 	 *
 	 * 振り分けロジック:
 	 * - `reason === 'thin'`: 必ずプラグイン候補（in-memory + candidate JSONL）
@@ -418,7 +417,7 @@ export class ParseFailureLog {
 		// `throw` でフィルタ対象 (4xx/5xx/timeout/SSRF/type filter/network/connection_dropped) は
 		// 迂回候補ログ専用。in-memory 集約には混ぜず、blocked JSONL のみに append する。
 		// `categorizeError` を 1 回だけ呼んで `FILTERED_CATEGORIES` を直接参照することで
-		// `isFilteredFailure` 経由の二重判定を避ける (phase11.6 W-1)。
+		// `isFilteredFailure` 経由の二重判定を避ける。
 		if (reason === 'throw') {
 			const category = categorizeError(errorMessage, errorName, statusCode);
 			if (FILTERED_CATEGORIES.has(category)) {

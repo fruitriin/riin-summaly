@@ -1,7 +1,7 @@
 /**
- * curl_cffi (libcurl-impersonate) フォールバック (phase12.5)。
+ * curl_cffi (libcurl-impersonate) フォールバック。
  *
- * `getResponseWithProxyFallback` (phase12.1 の Worker proxy フォールバック) でも救えなかった
+ * `getResponseWithProxyFallback` (Worker proxy フォールバック) でも救えなかった
  * **TLS layer の bot block** に対し、`tools/curl-cffi-fetcher/` の Python CLI を
  * `child_process.spawn` で呼び出してリトライする。
  *
@@ -62,7 +62,7 @@ export interface CurlCffiFallbackConfig {
 }
 
 // TLS layer 遮断は `connection_dropped` (HTTP/2 INTERNAL_ERROR) / `timeout`
-// (Vultr 等から `Timeout awaiting 'socket'`) / `bot_blocked` のいずれかで来る (phase12.4 yodobashi 観測)。
+// (Vultr 等から `Timeout awaiting 'socket'`) / `bot_blocked` のいずれかで来る (yodobashi 観測)。
 export const DEFAULT_CURL_CFFI_CATEGORIES: SummalyErrorCategory[] = [
 	'timeout',
 	'connection_dropped',
@@ -73,13 +73,13 @@ export const DEFAULT_CURL_CFFI_IMPERSONATE = 'chrome120';
 
 /**
  * `getResponseWithProxyFallback` のラッパで、proxy fallback でも救えなかったエラーが
- * curl_cffi 発火条件に合致するなら Python CLI 経由でリトライする (phase12.5)。
+ * curl_cffi 発火条件に合致するなら Python CLI 経由でリトライする。
  *
  * 段階構造:
  * 1. デフォルト UA で `getResponse`
- * 2. `getResponseWithFallback` で UA 切替リトライ (phase11.9)
- * 3. `getResponseWithProxyFallback` で CF Workers proxy 経由リトライ (phase12.1)
- * 4. **`getResponseWithCurlCffiFallback` で curl_cffi 経由リトライ (phase12.5、本関数)**
+ * 2. `getResponseWithFallback` で UA 切替リトライ
+ * 3. `getResponseWithProxyFallback` で CF Workers proxy 経由リトライ
+ * 4. **`getResponseWithCurlCffiFallback` で curl_cffi 経由リトライ (本関数)**
  *
  * - `curlCffiConfig === undefined` または `enabled === false` なら通常の proxy fallback 等価
  * - 1〜3 段全て失敗 → カテゴリ判定 + ドメイン allowlist チェック → curl_cffi 経由でリトライ
@@ -162,7 +162,7 @@ export async function viaCurlCffi(
 	if ('error' in cliResult) {
 		// CLI のエラー category を Node 側の StatusError / Error に変換。
 		// `category: 'timeout' | 'tls'` は categorizeError で `timeout` / `connection_dropped` 相当に分類される
-		// (phase11.2 で導入した SummalyErrorCategory との互換)。
+		// (`SummalyErrorCategory` との互換)。
 		throw new Error(`curl_cffi (${cliResult.category}): ${cliResult.error}`);
 	}
 

@@ -131,7 +131,7 @@ async function getOEmbedPlayer($: cheerio.CheerioAPI, pageUrl: string): Promise<
 }
 
 /**
- * favicon を thumbnail に流用してよいか判定する (phase11.7 favicon fallback の補強、2026-05-08)。
+ * favicon を thumbnail に流用してよいか判定する (favicon fallback の補強)。
  *
  * Misskey 等の preview UI は `<img>` タグで thumbnail を表示するため、`.ico` / `.cur` のような
  * `<img>` で描画できない形式を渡すと broken image アイコンになる。content-type を優先し、
@@ -190,14 +190,14 @@ export type GeneralScrapingOptions = {
 	fallbackRetryCategories?: import('@/utils/parse-failure-log.js').SummalyErrorCategory[];
 
 	/**
-	 * Outbound proxy フォールバック設定 (phase12.1)。`getResponseWithFallback` で救えなかった
+	 * Outbound proxy フォールバック設定。`getResponseWithFallback` で救えなかった
 	 * IP レピュテーション層の遮断（amazon.co.jp 等）を Cloudflare Workers 経由でリトライする。
 	 * `undefined` または `enabled === false` ならリトライ無効（既存挙動互換）。
 	 */
 	proxyFallback?: import('@/utils/proxy-fallback.js').ProxyFallbackConfig;
 
 	/**
-	 * curl_cffi (libcurl-impersonate) フォールバック設定 (phase12.5)。`getResponseWithProxyFallback`
+	 * curl_cffi (libcurl-impersonate) フォールバック設定。`getResponseWithProxyFallback`
 	 * でも救えなかった TLS layer bot block (yodobashi 級の HTTP/2 INTERNAL_ERROR / 即時切断) を
 	 * Python CLI (`tools/curl-cffi-fetcher/`) を spawn して Chrome TLS フィンガープリント偽装で
 	 * リトライする。`undefined` または `enabled === false` ならリトライ無効（既存挙動互換）。
@@ -209,7 +209,7 @@ export type GeneralScrapingOptions = {
 
 	/**
 	 * @internal
-	 * 経路学習キャッシュの記録 context を伝達する mutable side-channel (phase14 Step 2b 後半)。
+	 * 経路学習キャッシュの記録 context を伝達する mutable side-channel。
 	 * `summaly()` が `{}` を渡し、`scpaping()` が読み書きする。`summaly()` が Summary 確定後に
 	 * 値を読んで `cache.recordSuccess` / `recordFailure` を呼ぶ。
 	 * library 利用者は触らない (型シグネチャ上は optional だが運用上は内部専用)。
@@ -218,8 +218,8 @@ export type GeneralScrapingOptions = {
 
 	/**
 	 * @internal
-	 * Fastify モードの `[embed].publicUrl` を反映した embed エンドポイントのベース URL
-	 * (phase13.1 Step 3 → 2026-05-08 補正)。`SummalyOptions.embedBaseUrl` を `summaly()` レイヤから
+	 * Fastify モードの `[embed].publicUrl` を反映した embed エンドポイントのベース URL。
+	 * `SummalyOptions.embedBaseUrl` を `summaly()` レイヤから
 	 * プラグインの `summarize()` に透過伝搬するための internal フィールド。
 	 * `syosetu` のような renderEmbed 対応プラグインが `Summary.player.url` を組み立てるのに使う。
 	 * library mode では SummalyOptions に embedBaseUrl を直接渡せばこのフィールドに反映される。
@@ -233,19 +233,17 @@ export async function general(_url: URL | string, opts?: GeneralScrapingOptions)
 
 	const url = typeof _url === 'string' ? new URL(_url) : _url;
 
-	// **`{ ...opts, lang, followRedirects }` spread パターン (post-phase14)**: 以前は opts の
-	// フィールドを明示列挙していたが、`GeneralScrapingOptions` 拡張時に伝搬漏れが発生する構造
-	// リスクがあった (phase14 Step 2b 後半 で `_cacheRecording` の伝搬漏れを発見、phase14 Step 4
-	// review で構造リスクとして指摘)。spread で全フィールドを構造的に伝搬する。
+	// **`{ ...opts, lang, followRedirects }` spread パターン**: `GeneralScrapingOptions` 拡張時の
+	// 伝搬漏れを構造的に防ぐため、明示列挙ではなく spread で全フィールドを伝搬する。
 	//
 	// 個別の上書き:
 	// - `lang`: regex 検証後の値で上書き (string|null|undefined → string|undefined に正規化)
-	// - `followRedirects: undefined`: scpaping には伝播させない (phase11.3)。summaly レイヤの
-	//   初期 HEAD 解決オプションであって、scrape 中のリダイレクト追跡を無効化するためのもの
-	//   ではない。型上は `GeneralScrapingOptions` に含まれるが、現状すべての呼出経路で undefined
-	//   になっている (`src/index.ts` の `scrapingOptions` 構築で除外)。spread 経由で将来別の
-	//   呼出経路が `followRedirects: false` を渡したときに phase11.3 の bug が再発しないよう、
-	//   明示 override で構造的に防衛する。
+	// - `followRedirects: undefined`: scpaping には伝播させない。summaly レイヤの初期 HEAD 解決
+	//   オプションであって、scrape 中のリダイレクト追跡を無効化するためのものではない。型上は
+	//   `GeneralScrapingOptions` に含まれるが、現状すべての呼出経路で undefined になっている
+	//   (`src/index.ts` の `scrapingOptions` 構築で除外)。spread 経由で将来別の呼出経路が
+	//   `followRedirects: false` を渡したときに redirect 中間レスポンスが typeFilter で reject
+	//   される bug が再発しないよう、明示 override で構造的に防衛する。
 	const res = await scpaping(url.href, {
 		...opts,
 		lang: lang || undefined,
@@ -416,11 +414,11 @@ export async function parseGeneral(_url: URL | string, res: Awaited<ReturnType<t
 	}
 
 	// OG/Twitter Card/image_src/apple-touch-icon が全部無い場合、HEAD 検証済みの favicon を
-	// thumbnail フォールバックとして採用する (phase11.7, riin-summaly#3)。
+	// thumbnail フォールバックとして採用する。
 	// 「タイトルだけのスカスカプレビュー」を「サイトアイコン入りの最低限の見た目」に格上げ。
 	// favicon が HEAD 失敗 (`icon === null`) ならフォールバックも発動しない。
 	//
-	// **`.ico` / `.cur` の除外** (riin-summaly フィードバック 2026-05-08): `<img>` で表示できない
+	// **`.ico` / `.cur` の除外**: `<img>` で表示できない
 	// 画像形式 (主に Windows .ico) を thumbnail に流用すると Misskey 等の preview UI で broken
 	// image になる。content-type / 拡張子の双方で判定し、表示不能形式は thumbnail から除外。
 	// icon フィールド自体には残す (サイトアイコン表示は ico 対応の経路もあるため互換性維持)。

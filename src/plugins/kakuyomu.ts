@@ -1,5 +1,5 @@
 /**
- * カクヨム プラグイン (phase15.2)。
+ * カクヨム プラグイン。
  *
  * `https://kakuyomu.jp/works/<id>` および `https://kakuyomu.jp/works/<id>/episodes/<eid>` の URL に対し、
  * **HTML 内の `<script id="__NEXT_DATA__" type="application/json">`** に埋め込まれている Apollo
@@ -9,11 +9,11 @@
  * 設計詳細: docs/plans/phase15.2-kakuyomu-embed.md
  *
  * **PV カウント影響**: HTML 取得は必須だが `Twitterbot/1.0` UA で叩いて PV 除外を狙う
- * (phase12.3 nintendo-store / phase15.0 syosetu fallback と同類)。
+ * (nintendo-store / syosetu fallback と同類)。
  *
  * **chapter URL の扱い**: `/works/<id>/episodes/<eid>` でも作品レベルにメタ情報を集約。
  * episode 個別の HTML を別途叩いて `og:title` から各話タイトルだけ抽出し、card style description
- * 末尾に「<各話タイトル>」を付与する (なろう phase13.1 chapter 対応と同パターン)。
+ * 末尾に「<各話タイトル>」を付与する (なろう chapter 対応と同パターン)。
  *
  * **HTML エスケープ契約**: `renderEmbed` が返す `body` 内のすべてのユーザー入力 (title /
  * author / introduction / tagLabels 等) は `escapeHtml` を通すこと。
@@ -392,7 +392,7 @@ async function fetchEpisodeTitle(episodeUrl: URL, opts: GeneralScrapingOptions |
  *
  * **`Twitterbot/1.0` UA 固定の設計** (security review I-4): nintendo-store (`facebookexternalhit/1.1`
  * 固定) と同パターンで、UA allowlist を持つサイト向けに意図的に固定する。これにより
- * `scpaping` 内の bot block fallback リトライ機構 (phase11.9) は **発動しない** (UA を上書きすると
+ * `scpaping` 内の bot block fallback リトライ機構は **発動しない** (UA を上書きすると
  * categorize → リトライ経路でも同 UA で叩かれる)。カクヨムが `Twitterbot/1.0` を弾くようになった
  * 場合は本ファイルの UA を差し替えて対処する前提。
  */
@@ -428,11 +428,11 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	if (workData === null) return null;
 
 	// `_embedBaseUrl` は `summaly()` が `SummalyOptions.embedBaseUrl` を transparent 伝搬する
-	// internal フィールド (phase13.1 Step 3 → 2026-05-08 補正)。
+	// internal フィールド (`GeneralScrapingOptions` の JSDoc 参照)。
 	const embedBaseUrl = opts?._embedBaseUrl;
 	const summary = buildSummaryFromWork(workData.work, workData.authorName, url, embedBaseUrl);
 
-	// chapter URL では description 末尾に各話タイトルを付与 (なろう phase13.1 と同パターン)。
+	// chapter URL では description 末尾に各話タイトルを付与 (なろうと同パターン)。
 	// **escape 不要の理由** (security review I-2): `summary.description` はプレーンテキストとして
 	// Misskey クライアント側で textContent / v-text 相当で表示されるため、HTML として解釈されない。
 	// embed HTML には `description` ではなく `introduction` が流入する (composeEmbedHtml 参照) ので

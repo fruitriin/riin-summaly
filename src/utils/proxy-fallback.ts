@@ -1,9 +1,9 @@
 /**
- * Outbound proxy フォールバック (phase12.1)。
+ * Outbound proxy フォールバック。
  *
- * `getResponseWithFallback` (phase11.9 の UA 切替フォールバック) でも救えなかった
- * IP レピュテーション層の遮断（Vultr Tokyo IP からの amazon.co.jp 等）に対し、
- * Cloudflare Workers にデプロイした `tools/cf-proxy-worker/` 経由でリトライする。
+ * `getResponseWithFallback` (UA 切替フォールバック) でも救えなかった IP レピュテーション層の
+ * 遮断（Vultr Tokyo IP からの amazon.co.jp 等）に対し、Cloudflare Workers にデプロイした
+ * `tools/cf-proxy-worker/` 経由でリトライする。
  *
  * 発火条件:
  * - 1 回目 + UA fallback の両方が失敗
@@ -49,9 +49,9 @@ export interface ProxyFallbackConfig {
 
 // IP レピュテーション層の遮断は **複数のシグニチャ** で来うる:
 // - `origin_error` 5xx (Amazon が Vultr に対して 500 を返す古典パターン)
-// - `bot_blocked` 200 + content-type 欠落 (Amazon が malformed response で弾く新パターン、phase12.1 followup)
+// - `bot_blocked` 200 + content-type 欠落 (Amazon が malformed response で弾くパターン)
 // - `connection_dropped` TCP は通すが HTTP 応答前で切断 (将来的に proxy で救えるケース)
-// 既定では origin_error と bot_blocked の両方をカバー。connection_dropped は UA fallback (phase11.9) の射程と被るため除外
+// 既定では origin_error と bot_blocked の両方をカバー。connection_dropped は UA fallback の射程と被るため除外
 export const DEFAULT_PROXY_CATEGORIES: SummalyErrorCategory[] = ['origin_error', 'bot_blocked'];
 export const DEFAULT_PROXY_TIMEOUT_MS = 30000;
 
@@ -80,7 +80,7 @@ export function generateHmacSignature(secret: string, targetUrl: string, ts: num
 
 /**
  * `getResponseWithFallback` のラッパで、UA fallback でも救えなかったエラーが
- * proxy 発火条件に合致するなら Worker proxy 経由でリトライする (phase12.1)。
+ * proxy 発火条件に合致するなら Worker proxy 経由でリトライする。
  *
  * - `proxyConfig === undefined` または `enabled === false` なら通常の `getResponseWithFallback` 等価
  * - 1 回目 + UA fallback 失敗 → カテゴリ判定 + ドメイン allowlist チェック → proxy 経由でリトライ
@@ -130,8 +130,8 @@ export async function getResponseWithProxyFallback(
  * - `statusCode`, `statusMessage`, `headers`, `url`
  * - `ip`: 透過 proxy なので未取得 (プライベート IP ガード判定はバイパスされる、proxy が信頼境界の役割)
  *
- * phase12.6 で `scpaping()` の `forceProxyFallback: true` 経路から直接呼ぶため export 化した。
- * 通常経路 (`getResponseWithProxyFallback` のエラー発火型) でも内部的に同じ関数を使う。
+ * 経路学習キャッシュ fast path から直接呼ぶ用途と、`getResponseWithProxyFallback` のエラー
+ * 発火型で内部的に呼ばれる用途の両方で利用される。
  */
 export async function viaProxyWorker(args: GotOptions, cfg: ProxyFallbackConfig): Promise<Got.Response<string>> {
 	const ts = Date.now();
@@ -142,7 +142,7 @@ export async function viaProxyWorker(args: GotOptions, cfg: ProxyFallbackConfig)
 	const headerUA = args.headers['user-agent'];
 	const forwardUA = typeof headerUA === 'string' ? headerUA : 'Mozilla/5.0 (compatible; SummalyBot)';
 
-	// `throwHttpErrors: false` で 4xx/5xx を例外にせず、自前で StatusError に変換する (phase12.1 C-2)。
+	// `throwHttpErrors: false` で 4xx/5xx を例外にせず、自前で StatusError に変換する。
 	// got のデフォルト (`throwHttpErrors: true`) のままだと proxy 自身の 403 (HMAC 失敗等) が
 	// 生の `Got.HTTPError` で外側に伝播してしまい、`categorizeError` のシグナル品質が落ちる。
 	const proxyResponse = await got(proxyUrl, {
@@ -220,7 +220,7 @@ export async function viaProxyWorker(args: GotOptions, cfg: ProxyFallbackConfig)
 }
 
 /**
- * `process.env.SUMMALY_PROXY_SECRET` を最優先で読み、`config.toml` の `secret` を fallback とする (phase12.1)。
+ * `process.env.SUMMALY_PROXY_SECRET` を最優先で読み、`config.toml` の `secret` を fallback とする。
  * どちらも未指定なら `''` を返し、呼出側で `enabled = false` 扱いにする想定。
  */
 export function resolveProxySecret(configSecret?: string): string {

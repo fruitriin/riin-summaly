@@ -1,5 +1,5 @@
 /**
- * summaly のスタンドアロン Fastify サーバ起動スクリプト（phase8.1）。
+ * summaly のスタンドアロン Fastify サーバ起動スクリプト。
  *
  * 使い方:
  *   pnpm serve [config.toml]
@@ -30,7 +30,7 @@ try {
 	process.exit(1);
 }
 
-// phase16.4: 起動時 healthcheck (placeholder + 疎通検証)。
+// 起動時 healthcheck (placeholder + 疎通検証)。
 // `enabled = true` の各セクション設定値が placeholder のままだったり、uv が PATH に無い等を fail-fast。
 try {
 	runConfigHealthchecks(cfg);
@@ -44,7 +44,7 @@ app.log.info(`summaly-server: loaded config from ${configPath}`);
 
 // 想定外エラー (404 ハンドラ未登録 / register 失敗 / setErrorHandler に飛ぶ throw 等) の最終フォールバック。
 // summaly プラグイン本体のエラー (try/catch して return しているもの) はこのハンドラには飛ばないが、
-// 404 ハンドラ未マッチや plugin scope 外の throw を観測ログに残せる (phase11.8)。
+// 404 ハンドラ未マッチや plugin scope 外の throw を観測ログに残せる。
 app.setErrorHandler((err, req, reply) => {
 	req.log.error({ err, url: req.url }, 'unhandled fastify error');
 	reply.status(500).send({

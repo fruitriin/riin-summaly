@@ -5,7 +5,7 @@ import { scpaping } from '@/utils/got.js';
 export const name = 'nintendo-store';
 
 /**
- * My Nintendo Store (`store-jp.nintendo.com` および将来の `store.nintendo.com`) のプラグイン (phase12.3)。
+ * My Nintendo Store (`store-jp.nintendo.com` および将来の `store.nintendo.com`) のプラグイン。
  *
  * Nintendo Store は **Akamai Bot Manager の JS challenge** を入れていて、`Mozilla/5.0` ブラウザ UA や
  * `Twitterbot` / `Discordbot` UA で叩くと `*-wr.nintendo.com/?c=ncl&...kupver=akamai-5.0.1` という
@@ -16,7 +16,7 @@ export const name = 'nintendo-store';
  *
  * 「Akamai が SNS bot を一部許可している」のは「Nintendo は SNS で share されたい」 = OGP を意図的に
  * 整備していることの裏返しなので、SummalyBot から `facebookexternalhit` UA に切り替えて取得するのは
- * Nintendo の意図に沿う使い方。phase11.9 と同じ倫理判断で採用。
+ * Nintendo の意図に沿う使い方として採用 (UA fallback と同じ倫理判断)。
  */
 const FB_BOT_UA = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
 

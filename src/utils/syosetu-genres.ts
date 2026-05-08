@@ -1,5 +1,5 @@
 /**
- * 小説家になろう API のジャンル ID マッピング (phase13.1 Step 3)。
+ * 小説家になろう API のジャンル ID マッピング。
  *
  * 出典: https://dev.syosetu.com/man/api/#param-bigjanru / https://dev.syosetu.com/man/api/#param-janru
  *

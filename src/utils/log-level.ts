@@ -1,7 +1,7 @@
 /**
- * Fastify モードのエラー観測ログ用レベル判定 (phase11.8)。
+ * Fastify モードのエラー観測ログ用レベル判定。
  *
- * `categorizeError`（phase11.2）の結果からログレベルを派生させる：
+ * `categorizeError` の結果からログレベルを派生させる：
  *
  * - **info**: upstream 4xx（普通のことなので運用上は priority filter で除外可）
  *   - `not_found` / `bot_blocked`

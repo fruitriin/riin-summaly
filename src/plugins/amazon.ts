@@ -8,9 +8,8 @@ export const name = 'amazon';
  * Amazon ホスト名の正規表現。`amazon.co.jp` (bare) と `www.amazon.co.jp` の両方をマッチさせる。
  *
  * Amazon は両形式を運用しており、ユーザーが SNS で共有する URL には `www.` が付かないことも多い。
- * phase12.1 followup #3 までは `www.amazon.co.jp` 限定の `===` 比較だったため、bare 形式の URL が
- * general パスに流れて URL 正規化 (`normalizeAmazonUrl`) を経由せず、長い ref query 付きで
- * proxy fallback まで届いていなかった。
+ * bare 形式が general パスに流れると URL 正規化 (`normalizeAmazonUrl`) を経由せず、長い ref query
+ * 付きで proxy fallback まで届かない事故が起きるため、両形式をまとめて plugin で受ける。
  *
  * `^(?:www\\.)?amazon\\.<TLD>$` の anchored 形にすることで `aws.amazon.com` 等の AWS サブドメインを
  * 誤マッチさせない（plugin の責務は商品ページ専用）。
@@ -18,7 +17,7 @@ export const name = 'amazon';
 const AMAZON_HOST = /^(?:www\.)?amazon\.(?:com|co\.jp|ca|com\.br|com\.mx|co\.uk|de|fr|it|es|nl|cn|in|au)$/;
 
 /**
- * Amazon 短縮 URL ホスト (phase12.1 followup #4)。
+ * Amazon 短縮 URL ホスト。
  *
  * Vultr Tokyo IP からの amzn.asia GET は Amazon が 301 リダイレクトを返さず **200 + 軽量
  * preview HTML** を返してしまい (`og:title="Amazon"`, `og:image=previewdoh/amazon.png`)、
@@ -33,7 +32,7 @@ export function test(url: URL): boolean {
 }
 
 /**
- * Amazon URL を `/dp/<asin>` 等の最小形に正規化する (phase12.1 followup)。
+ * Amazon URL を `/dp/<asin>` 等の最小形に正規化する。
  *
  * 長い query (`?_encoding=UTF8&pd_rd_w=...&ref_=...`) が付くと、Cloudflare Workers proxy
  * 経由でも Amazon が 500 を返すケースが実証された。query は referral tracking で商品ページの
@@ -62,7 +61,7 @@ export function normalizeAmazonUrl(url: URL): URL {
 	const asin = (dpMatch ?? gpMatch)?.[1];
 	if (asin == null) return url;
 	const normalized = new URL(url.href);
-	// hostname も `www.` 付きの canonical 形に揃える（phase12.1 followup #3）。
+	// hostname も `www.` 付きの canonical 形に揃える。
 	// bare `amazon.co.jp` を Amazon が 301 で `www.` 付きにリダイレクトする挙動を summaly 側で
 	// 先回りして潰すことで、proxy fallback 経路でも余分なリダイレクトを避ける。
 	if (!normalized.hostname.startsWith('www.')) {
@@ -77,15 +76,15 @@ export function normalizeAmazonUrl(url: URL): URL {
 }
 
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<summary> {
-	// `opts` を伝播することで proxy fallback (phase12.1) と UA fallback (phase11.9) が
-	// Amazon プラグイン経由でも機能する。proxy fallback の主用途が Amazon なので **必須**。
+	// `opts` を伝播することで proxy fallback と UA fallback が Amazon プラグイン経由でも機能する。
+	// proxy fallback の主用途が Amazon なので **必須**。
 	//
-	// **URL 正規化 (phase12.1 followup)**: `?_encoding=...&pd_rd_w=...&ref_=...` のような長い query
-	// が付くと CF Workers proxy 経由でも Amazon が 500 を返すケースがあるため、`/dp/<asin>` 形式に
-	// 正規化してから取得する。referral tracking の query は商品ページの内容に影響しない。
+	// **URL 正規化**: `?_encoding=...&pd_rd_w=...&ref_=...` のような長い query が付くと CF Workers
+	// proxy 経由でも Amazon が 500 を返すケースがあるため、`/dp/<asin>` 形式に正規化してから取得する。
+	// referral tracking の query は商品ページの内容に影響しない。
 	let normalized = normalizeAmazonUrl(url);
 
-	// **短縮 URL の 2 段取得 (phase12.1 followup #4)**: `amzn.asia/d/<id>` は path から ASIN を
+	// **短縮 URL の 2 段取得**: `amzn.asia/d/<id>` は path から ASIN を
 	// 抽出できないので一旦 scpaping → final URL から ASIN 取得 → canonical で再 scpaping する。
 	// Vultr (本番) では Amazon が `amzn.asia` GET に対して 200 + 軽量 preview HTML を返してしまい、
 	// `res.response.url` が短縮ドメインのままになる。その場合 ASIN 抽出は不可能なので、preview HTML を

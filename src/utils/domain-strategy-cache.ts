@@ -1,5 +1,5 @@
 /**
- * 経路学習キャッシュ (phase14 Step 1)。
+ * 経路学習キャッシュ。
  *
  * ドメイン (host + path prefix 1〜2 段) ごとに「成功した取得経路」を学習し、
  * JSONL で永続化する。次回以降のリクエストで第一選択肢として使うことで、
@@ -26,8 +26,6 @@
  * 一時障害でエントリが破棄されないよう、N 連続失敗 (デフォルト 3) で破棄する。
  * 連続失敗中は学習した経路を引き続き第一選択肢として使う (= 一時障害なら次回成功で
  * `consecutiveFailures` リセット)。サイトの WAF ポリシー変更にも自然に追従する。
- *
- * **注**: phase14 Step 1 ではストレージ層のみを実装する。`scpaping()` への統合は Step 2。
  */
 
 import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -73,9 +71,9 @@ export interface DomainStrategyCacheConfig {
 
 /**
  * `SummalyOptions.domainStrategyCache` の型 (TOML config 由来の値を運ぶ)。
- * `enabled === true` なら summaly レイヤで `DomainStrategyCache` を 1 つ作って共有する想定 (phase14 Step 2)。
+ * `enabled === true` なら summaly レイヤで `DomainStrategyCache` を 1 つ作って共有する想定。
  *
- * `DomainStrategyCacheConfig` との違いは `enabled` フラグの有無のみ。Step 2 でインスタンス化時に
+ * `DomainStrategyCacheConfig` との違いは `enabled` フラグの有無のみ。インスタンス化時に
  * このオプションから `DomainStrategyCacheConfig` に詰め替える。
  */
 export interface DomainStrategyCacheOptions extends DomainStrategyCacheConfig {
@@ -93,7 +91,7 @@ const DEFAULT_COMPACTION_THRESHOLD = 1000;
  * - `https://example.com/` → `['example.com']`
  * - 不正 URL → `[]`
  *
- * **注**: `URL.hostname` は port を含まない。phase10.1 の `groupKeyOf` と同じ正規化方針。
+ * **注**: `URL.hostname` は port を含まない。`groupKeyOf` (parse-failure-log) と同じ正規化方針。
  */
 export function pathKeysOf(input: URL | string): string[] {
 	let u: URL;
@@ -103,7 +101,7 @@ export function pathKeysOf(input: URL | string): string[] {
 		return [];
 	}
 	// `data:` / `file:` / `javascript:` 等のスキームは `URL.origin === 'null'` 系で hostname も
-	// 空 / 不適切になるため学習対象外 (phase10.1 sanitizeUrlForLog の教訓)。http(s) のみ受け入れる。
+	// 空 / 不適切になるため学習対象外。http(s) のみ受け入れる。
 	if (u.protocol !== 'http:' && u.protocol !== 'https:') return [];
 	const host = u.hostname;
 	if (host === '') return [];
@@ -414,7 +412,7 @@ export class DomainStrategyCache {
 }
 
 /**
- * リポ同梱の bootstrap JSONL の絶対パスを返す (phase14 Step 3)。
+ * リポ同梱の bootstrap JSONL の絶対パスを返す。
  *
  * `data/domain-strategy-bootstrap.jsonl` は `package.json` `files: ["built", "data", "LICENSE"]`
  * で publish 対象に含まれており、利用者の `node_modules/@misskey-dev/summaly/data/` 配下に配備される。
@@ -476,13 +474,13 @@ export function tryStatJsonl(path: string): { size: number } | undefined {
 }
 
 /**
- * 現在 active な `DomainStrategyCache` インスタンス (phase14 Step 2a)。
+ * 現在 active な `DomainStrategyCache` インスタンス。
  *
  * `setActiveCache` で設定する。`scpaping()` は `getActiveCache()` で取得して lookup する。
  * 設計選択: `agent` (got.ts) と同じくモジュールレベル singleton。
  *
  * - **Fastify モード**: プラグイン setup 時に `[scraping.strategy_cache].enabled = true` なら
- *   インスタンス化して `setActiveCache` を呼ぶ (Step 2b で実装)
+ *   インスタンス化して `setActiveCache` を呼ぶ
  * - **ライブラリモード**: 利用者が `setActiveCache` を直接呼ぶ
  * - **テスト**: `beforeEach` / `afterEach` で `setActiveCache(undefined)` に戻して状態リセット
  */
@@ -497,8 +495,7 @@ export function getActiveCache(): DomainStrategyCache | undefined {
 }
 
 /**
- * `summaly()` レイヤと `scpaping()` レイヤ間で cache 記録 context を伝達する mutable side-channel
- * (phase14 Step 2b 後半)。
+ * `summaly()` レイヤと `scpaping()` レイヤ間で cache 記録 context を伝達する mutable side-channel。
  *
  * 設計理由: Summary の良し悪し判定 (`isThinSummary`) は `summaly()` の最後で行うが、
  * 記録すべき pathKey と成功 strategy は `scpaping()` レイヤでしか分からない。

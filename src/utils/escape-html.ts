@@ -1,5 +1,5 @@
 /**
- * HTML エスケープ utility (phase13.1)。
+ * HTML エスケープ utility。
  *
  * `/embed` エンドポイントでプラグインが HTML を組み立てる際、ユーザー入力 (API 由来の
  * title / writer / story 等) を **必ずエスケープしてから** 文字列連結する。Fastify 側は
