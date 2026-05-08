@@ -20,8 +20,8 @@
  */
 
 import type Summary from '@/summary.js';
-import type { GeneralScrapingOptions } from '@/general.js';
 import type { EmbedRenderResult } from '@/iplugin.js';
+import { general, type GeneralScrapingOptions } from '@/general.js';
 import { getJson } from '@/utils/got.js';
 import { clip } from '@/utils/clip.js';
 import { escapeHtml } from '@/utils/escape-html.js';
@@ -273,7 +273,14 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	const apiUrl = buildApiUrl(extracted.ncode, extracted.isR18);
 	const body = await getJson(apiUrl, undefined, opts);
 	const novel = parseNovelApiResponse(body);
-	if (novel === null) return null; // allcount=0 (作品が見つからない / 削除済み)
+	if (novel === null) {
+		// allcount=0 = なろう公式 API の index に載っていない。古い作品 / API インデックス漏れ等で
+		// HTML ページは正常に存在し OGP も完備しているケースがある (本番ログで `n3862be` 等で観測)。
+		// API 直叩きを諦めて general() に fallback して OGP scrape で救援する。
+		// PV カウントに影響しうるが (phase13.1 で API 直叩きを選んだ理由を一部譲る)、preview 不能で
+		// 502 を返すよりはユーザー体験が良い。renderEmbed (/embed) 側は OGP では再現できないため throw のまま。
+		return general(url, opts);
+	}
 	// embedBaseUrl は SummalyOptions 経由で渡るが、`GeneralScrapingOptions` 型には含まれていない
 	// (Fastify モード専用フィールド)。本プラグインは scpaping を経由しないため `opts` 経由では受け取れない。
 	// **設計判断**: summarize() の opts には embedBaseUrl を含めない。Fastify モードで player.url を
