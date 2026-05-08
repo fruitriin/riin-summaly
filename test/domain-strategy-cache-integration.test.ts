@@ -351,6 +351,59 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 		expect(after?.consecutiveFailures).toBe(1);
 	});
 
+	test('cache miss + default UA bot block → fallback UA で成功 → fallback_ua を学習し、2 回目は fast path 直行', async () => {
+		// シナリオ A の E2E 確認 (オーナー基準: 「他の優先経路にフォールバック → 2 回目以降 OK」)。
+		// cascade のどの段で成功してもその strategy が tracker 経由で学習され、次回 fast path で
+		// 直接呼ばれることを確認する。phase14 Step 2b 後半 で導入した tracker 機構の回帰防止が目的。
+		app = fastify();
+		let defaultUaRequests = 0;
+		let fallbackUaRequests = 0;
+		app.get('/', (req, reply) => {
+			const ua = req.headers['user-agent'];
+			if (typeof ua === 'string' && ua.includes('Twitterbot/1.0')) {
+				fallbackUaRequests++;
+				reply.header('content-type', 'text/html');
+				return reply.send('<html><head><title>fallbackOk</title></head></html>');
+			}
+			defaultUaRequests++;
+			return reply.code(403).send('blocked');
+		});
+		await app.listen({ port });
+
+		const cache = new DomainStrategyCache();
+		setActiveCache(cache);
+
+		// 1 回目: cache miss → cascade default 失敗 (403 = bot_blocked) → fallback UA 成功
+		const result1 = await summaly(host, {
+			followRedirects: false,
+			fallbackUserAgent: 'Twitterbot/1.0',
+		});
+		expect(result1.title).toBe('fallbackOk');
+		expect(defaultUaRequests).toBe(1);
+		expect(fallbackUaRequests).toBe(1);
+
+		// entry が `fallback_ua` strategy で学習されている (tracker.value 経由で recordSuccess が呼ばれた証拠)
+		const learned = cache.lookup(host);
+		expect(learned?.hitKey).toBe('localhost');
+		expect(learned?.entry.strategy).toBe('fallback_ua');
+		expect(learned?.entry.successCount).toBe(1);
+		expect(learned?.entry.consecutiveFailures).toBe(0);
+
+		// 2 回目: cache hit → fast path fallback_ua 直行 (default UA は試行されない)
+		const result2 = await summaly(host, {
+			followRedirects: false,
+			fallbackUserAgent: 'Twitterbot/1.0',
+		});
+		expect(result2.title).toBe('fallbackOk');
+		expect(defaultUaRequests).toBe(1); // 増えない = fast path で default をスキップしている
+		expect(fallbackUaRequests).toBe(2); // 増える = fast path で fallback UA を直接呼んでいる
+
+		// fast path 成功で successCount++ (= 学習が累積している)
+		const after = cache.lookup(host);
+		expect(after?.entry.strategy).toBe('fallback_ua');
+		expect(after?.entry.successCount).toBe(2);
+	});
+
 	test('閾値到達でエントリが破棄され、次回は cascade のみ', async () => {
 		app = fastify();
 		let requestCount = 0;
