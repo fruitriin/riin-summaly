@@ -20,9 +20,10 @@
  */
 
 import type Summary from '@/summary.js';
+import type { CheerioAPI } from 'cheerio';
 import type { EmbedRenderResult } from '@/iplugin.js';
 import { general, type GeneralScrapingOptions } from '@/general.js';
-import { getJson } from '@/utils/got.js';
+import { getJson, scpaping } from '@/utils/got.js';
 import { clip } from '@/utils/clip.js';
 import { escapeHtml } from '@/utils/escape-html.js';
 import { getBigGenreName, getGenreName } from '@/utils/syosetu-genres.js';
@@ -267,6 +268,80 @@ export function buildSummaryFromApi(
 	};
 }
 
+/**
+ * なろう作品トップページの HTML から `SyosetuNovelData` 相当を抽出する (export してテスト容易化)。
+ *
+ * 取れるフィールド: `title` / `writer` / `story` / `isr15` / `iszankoku` / `isbl` / `isgl` / `keyword`。
+ * 取れないフィールド (HTML には明示されていない): `biggenre` / `genre` / `novel_type` / `end`。
+ * `composeDescription` / `composeMarkers` は asString/asNumber が undefined を null として扱うため、
+ * 取れないフィールドは undefined のままで動作する。
+ *
+ * 構造依存: なろうの HTML 構造 (`p-novel__title` / `p-novel__author` / `#novel_ex` 等) が変わると壊れる。
+ * 各セレクタは fallback テキストマッチを併用して可能な限りメンテ耐性を高めている。
+ */
+export function extractNovelDataFromHtml($: CheerioAPI): SyosetuNovelData | null {
+	const title = $('h1.p-novel__title').first().text().trim()
+		|| $('meta[property="og:title"]').attr('content')?.trim()
+		|| undefined;
+
+	// 作者: `<div class="p-novel__author">作者：<a>writer</a></div>` 構造
+	// <a> がある場合は優先、なければテキスト全体から「作者：」prefix を除いた内容
+	let writer = $('.p-novel__author a').first().text().trim() || undefined;
+	if (writer == null) {
+		const authorText = $('.p-novel__author').first().text().trim();
+		const stripped = authorText.replace(/^作者[:：]\s*/, '').trim();
+		if (stripped !== '') writer = stripped;
+	}
+
+	// あらすじ: `<div id="novel_ex" class="p-novel__summary">...<br />...</div>`
+	const story = $('#novel_ex').first().text().trim() || undefined;
+
+	if (title == null && writer == null) return null;
+
+	// マーカー検出: ページ本文の「〔残酷描写〕が含まれています」等のテキストパターン。
+	// なろうは作品トップに `この作品には〔残酷描写〕が含まれています` を表示している。
+	const bodyText = $('body').text();
+	const isr15 = /〔R-?15〕/.test(bodyText) ? 1 : 0;
+	const iszankoku = /〔残酷描写〕/.test(bodyText) ? 1 : 0;
+	const isbl = /〔ボーイズラブ〕/.test(bodyText) ? 1 : 0;
+	const isgl = /〔ガールズラブ〕/.test(bodyText) ? 1 : 0;
+
+	// keyword: og:description にキーワードがスペース区切りで詰め込まれている形式
+	// (例: "残酷な描写あり 異世界転生 異世界転移 オリジナル戦記 ラブコメ 魔王 ..."。
+	// 先頭の `残酷な描写あり` / `R15` / `ボーイズラブ` 等のマーカー prefix は API の keyword フィールドには
+	// 含まれないため除外する。
+	const ogDescription = $('meta[property="og:description"]').attr('content') ?? '';
+	const keyword = ogDescription
+		.replace(/^(?:残酷な描写あり|R-?15|R-?18|ボーイズラブ|ガールズラブ)(?:\s+(?:残酷な描写あり|R-?15|R-?18|ボーイズラブ|ガールズラブ))*\s*/, '')
+		.trim() || undefined;
+
+	return {
+		title,
+		writer,
+		story,
+		// HTML から取れないフィールドは undefined (composeDescription 側で null として扱われる)
+		biggenre: undefined,
+		genre: undefined,
+		novel_type: undefined,
+		end: undefined,
+		isr15, iszankoku, isbl, isgl,
+		keyword,
+	};
+}
+
+/**
+ * なろう作品トップページの HTML から `SyosetuNovelData` を取得する。
+ * `Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (phase13.1 の API 直叩き精神を維持)。
+ *
+ * 戻り値:
+ * - 構造化データが取れた → SyosetuNovelData (一部フィールド undefined 許容)
+ * - 取れなかった (削除済 / 構造変更で壊れた) → null
+ */
+async function fetchNovelFromHtml(url: URL, opts?: GeneralScrapingOptions): Promise<SyosetuNovelData | null> {
+	const res = await scpaping(url.href, { ...opts, userAgent: 'Twitterbot/1.0' });
+	return extractNovelDataFromHtml(res.$);
+}
+
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
 	const extracted = extractNcodeAndR18(url);
 	if (extracted === null) return null;
@@ -276,14 +351,17 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	if (novel === null) {
 		// allcount=0 = なろう公式 API の index に載っていない。古い作品 / API インデックス漏れ等で
 		// HTML ページは正常に存在し OGP も完備しているケースがある (本番ログで `n3862be` 等で観測)。
-		// API 直叩きを諦めて general() に fallback して OGP scrape で救援する。
 		//
-		// **SNS bot UA で叩く理由**: なろうのアクセス解析は一般的に SNS bot UA を PV カウントから
-		// 除外している前提で、PV カウント影響を最小化する (phase13.1 で API 直叩きを選んだ理由を
-		// 構造的に保つ)。`Twitterbot/1.0` を選ぶ理由: SNS preview bot として最も認識度が高く、
-		// なろう側の bot allowlist に登録されている可能性が高い。phase12.3 (nintendo-store) で
-		// `facebookexternalhit/1.1` を採用した類似パターン。renderEmbed (/embed) は OGP では
-		// 再現できないため throw のまま。
+		// **HTML 専用 scrape にフォールバック**: なろうの HTML 構造はほぼ統一されているため、
+		// `<h1 class="p-novel__title">` / `.p-novel__author` / `#novel_ex` 等から API と概ね同等の
+		// 構造化情報が取れる (genre / novel_type / end は HTML から取れないが、それ以外は再現可)。
+		// `Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (phase13.1 の API 直叩き精神を維持)。
+		// HTML 構造が変わって抽出失敗した場合は最終 fallback として `general()` で OGP scrape する。
+		// renderEmbed (/embed) は API データに完全依存するため allcount=0 では throw のまま。
+		const fromHtml = await fetchNovelFromHtml(url, opts);
+		if (fromHtml !== null) {
+			return buildSummaryFromApi(fromHtml, url, extracted.isR18, undefined);
+		}
 		return general(url, { ...opts, userAgent: 'Twitterbot/1.0' });
 	}
 	// embedBaseUrl は SummalyOptions 経由で渡るが、`GeneralScrapingOptions` 型には含まれていない

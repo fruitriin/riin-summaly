@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, test } from 'vitest';
+import * as cheerio from 'cheerio';
 import {
 	test as syosetuTest,
 	extractNcodeAndR18,
@@ -15,6 +16,7 @@ import {
 	composeDescription,
 	composeEmbedHtml,
 	buildSummaryFromApi,
+	extractNovelDataFromHtml,
 	type SyosetuNovelData,
 } from '@/plugins/syosetu.js';
 
@@ -263,5 +265,112 @@ describe('composeEmbedHtml', () => {
 		const html = composeEmbedHtml({ ...SAMPLE_NOVEL, title: undefined, writer: undefined }, false);
 		expect(html).toContain('(タイトル不明)');
 		expect(html).toContain('(作者不明)');
+	});
+});
+
+describe('extractNovelDataFromHtml (API allcount=0 fallback)', () => {
+	// なろう作品トップ HTML の最小再現 fixture (実 HTML の n3862be 構造を簡略化)
+	const SAMPLE_HTML = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta property="og:title" content="俺たちの魔王はこれからだ。">
+<meta property="og:description" content="残酷な描写あり 異世界転生 異世界転移 オリジナル戦記 ラブコメ 魔王 勇者">
+<meta property="og:image" content="https://sbo.syosetu.com/n3862be/twitter.png">
+</head>
+<body>
+<h1 class="p-novel__title">俺たちの魔王はこれからだ。</h1>
+<div class="p-novel__author">作者：<a href="https://mypage.syosetu.com/183373/">かっぱ</a></div>
+<div id="novel_ex" class="p-novel__summary">高校生の透、真紀子、静は、前世にて異世界の三大魔王として君臨していた記憶を持っています。<br />詳細省略。</div>
+<p>この作品には<br>〔残酷描写〕が含まれています。</p>
+</body>
+</html>`;
+
+	test('title / writer / story が抽出される', () => {
+		const $ = cheerio.load(SAMPLE_HTML);
+		const data = extractNovelDataFromHtml($);
+		expect(data).not.toBeNull();
+		expect(data?.title).toBe('俺たちの魔王はこれからだ。');
+		expect(data?.writer).toBe('かっぱ');
+		expect(data?.story).toContain('高校生の透、真紀子、静');
+	});
+
+	test('〔残酷描写〕テキストパターンで iszankoku が立つ', () => {
+		const $ = cheerio.load(SAMPLE_HTML);
+		const data = extractNovelDataFromHtml($);
+		expect(data?.iszankoku).toBe(1);
+		expect(data?.isr15).toBe(0);
+		expect(data?.isbl).toBe(0);
+		expect(data?.isgl).toBe(0);
+	});
+
+	test('og:description から keyword 抽出 (先頭マーカー prefix を除去)', () => {
+		const $ = cheerio.load(SAMPLE_HTML);
+		const data = extractNovelDataFromHtml($);
+		// `残酷な描写あり` prefix が除外されて、キーワードだけ残る
+		expect(data?.keyword).toBe('異世界転生 異世界転移 オリジナル戦記 ラブコメ 魔王 勇者');
+		expect(data?.keyword).not.toContain('残酷な描写あり');
+	});
+
+	test('HTML 由来データで取れないフィールドは undefined (composeDescription が動く)', () => {
+		const $ = cheerio.load(SAMPLE_HTML);
+		const data = extractNovelDataFromHtml($);
+		expect(data?.biggenre).toBeUndefined();
+		expect(data?.genre).toBeUndefined();
+		expect(data?.novel_type).toBeUndefined();
+		expect(data?.end).toBeUndefined();
+		// composeDescription が undefined を null として処理し、ジャンル/連載状態 をスキップして動く
+		const desc = composeDescription(data!);
+		expect(desc).toContain('作者: かっぱ');
+		expect(desc).toContain('[残酷描写]');
+		expect(desc).toContain('あらすじ');
+	});
+
+	test('buildSummaryFromApi に流して Summary が組み立てられる', () => {
+		const $ = cheerio.load(SAMPLE_HTML);
+		const data = extractNovelDataFromHtml($);
+		const url = new URL('https://ncode.syosetu.com/n3862be/');
+		const summary = buildSummaryFromApi(data!, url, false, undefined);
+		expect(summary.title).toBe('俺たちの魔王はこれからだ。');
+		expect(summary.sitename).toBe('小説家になろう');
+		expect(summary.sensitive).toBe(false);
+		expect(summary.description).toContain('作者: かっぱ');
+	});
+
+	test('複数マーカー prefix (R15 + ボーイズラブ) を除去する', () => {
+		const html = `<html><head>
+<meta property="og:description" content="R15 ボーイズラブ 残酷な描写あり 異世界転生 学園 BL">
+</head><body>
+<h1 class="p-novel__title">test</h1>
+<div class="p-novel__author">作者：x</div>
+</body></html>`;
+		const $ = cheerio.load(html);
+		const data = extractNovelDataFromHtml($);
+		expect(data?.keyword).toBe('異世界転生 学園 BL');
+	});
+
+	test('writer の <a> が無くても「作者：xxx」テキストから抽出 (fallback)', () => {
+		const html = `<html><head></head><body>
+<h1 class="p-novel__title">test</h1>
+<div class="p-novel__author">作者：佐藤花子</div>
+</body></html>`;
+		const $ = cheerio.load(html);
+		const data = extractNovelDataFromHtml($);
+		expect(data?.writer).toBe('佐藤花子');
+	});
+
+	test('title も writer も無ければ null (構造変更で完全に壊れたケース)', () => {
+		const html = `<html><head></head><body><p>削除されました</p></body></html>`;
+		const $ = cheerio.load(html);
+		const data = extractNovelDataFromHtml($);
+		expect(data).toBeNull();
+	});
+
+	test('og:title から title フォールバック (h1 タグが無い場合)', () => {
+		const html = `<html><head><meta property="og:title" content="og titleのみ"></head><body>
+<div class="p-novel__author">作者：x</div>
+</body></html>`;
+		const $ = cheerio.load(html);
+		const data = extractNovelDataFromHtml($);
+		expect(data?.title).toBe('og titleのみ');
 	});
 });
