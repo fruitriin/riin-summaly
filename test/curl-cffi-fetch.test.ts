@@ -17,6 +17,7 @@ import path from 'node:path';
 import {
 	viaCurlCffi,
 	getResponseWithCurlCffiFallback,
+	pickOverrideHeaders,
 	type CurlCffiFallbackConfig,
 } from '@/utils/curl-cffi-fetch.js';
 import { StatusError } from '@/utils/status-error.js';
@@ -99,8 +100,10 @@ console.log(JSON.stringify({
 		const args = makeArgs({ url: 'https://example.com/x', responseTimeout: 15000, contentLengthLimit: 2 * 1024 * 1024 });
 		const res = await viaCurlCffi(args, cfg);
 		const argv = res.headers['x-argv'] as string;
-		// argv 順: 'run', 'fetch', URL, '--impersonate', 'firefox120', '--timeout', '15', '--max-bytes', '2097152'
-		expect(argv).toBe('run|fetch|https://example.com/x|--impersonate|firefox120|--timeout|15|--max-bytes|2097152');
+		// argv 順: 'run', 'fetch', URL, '--impersonate', 'firefox120', '--timeout', '15', '--max-bytes', '2097152', '--header', 'user-agent:SummalyBot'
+		// 末尾の --header は makeArgs() のデフォルト `headers: { 'user-agent': 'SummalyBot' }` が
+		// `pickOverrideHeaders` の allowlist (`user-agent`) を通って CLI に渡されることを示す。
+		expect(argv).toBe('run|fetch|https://example.com/x|--impersonate|firefox120|--timeout|15|--max-bytes|2097152|--header|user-agent:SummalyBot');
 	});
 
 	test('CLI が status >= 400 を返したら StatusError', async () => {
@@ -174,6 +177,115 @@ console.log(JSON.stringify({
 `);
 		const res = await viaCurlCffi(makeArgs({ url: 'https://example.com/start' }), makeConfig());
 		expect(res.url).toBe('https://example.com/start');
+	});
+
+	test('複数 --header が argv に追加される (Accept + Accept-Language の同時指定)', async () => {
+		writeMockCli(`#!/usr/bin/env node
+console.log(JSON.stringify({
+	status: 200,
+	final_url: 'https://example.com/api',
+	content_type: 'application/json',
+	headers: { 'content-type': 'application/json', 'x-argv': process.argv.slice(2).join('|') },
+	body: '{}',
+}));
+`);
+		const args = makeArgs({
+			url: 'https://example.com/api',
+			headers: {
+				accept: 'application/json',
+				'accept-language': 'ja',
+				'user-agent': 'SummalyBot',
+			},
+			typeFilter: /^application\/(?:json|.*\+json)/,
+		});
+		const res = await viaCurlCffi(args, makeConfig());
+		const argv = res.headers['x-argv'] as string;
+		expect(argv).toContain('--header|accept:application/json');
+		expect(argv).toContain('--header|accept-language:ja');
+		expect(argv).toContain('--header|user-agent:SummalyBot');
+	});
+
+	test('allowlist 外のヘッダ (Range / Content-Type 等) は CLI に渡らない', async () => {
+		writeMockCli(`#!/usr/bin/env node
+console.log(JSON.stringify({
+	status: 200,
+	final_url: 'https://example.com/api',
+	content_type: 'application/json',
+	headers: { 'content-type': 'application/json', 'x-argv': process.argv.slice(2).join('|') },
+	body: '{}',
+}));
+`);
+		const args = makeArgs({
+			url: 'https://example.com/api',
+			headers: {
+				accept: 'application/json',
+				range: 'bytes=0-1024',
+				'content-type': 'text/plain',
+				'x-custom': 'foo',
+			},
+			typeFilter: /^application\/(?:json|.*\+json)/,
+		});
+		const res = await viaCurlCffi(args, makeConfig());
+		const argv = res.headers['x-argv'] as string;
+		expect(argv).toContain('--header|accept:application/json');
+		expect(argv).not.toContain('range:');
+		expect(argv).not.toContain('content-type:');
+		expect(argv).not.toContain('x-custom:');
+	});
+});
+
+describe('pickOverrideHeaders (allowlist フィルタ)', () => {
+	test('allowlist (accept / accept-language / referer / user-agent) は通す', () => {
+		const result = pickOverrideHeaders({
+			accept: 'application/json',
+			'accept-language': 'ja',
+			referer: 'https://example.com/',
+			'user-agent': 'SummalyBot',
+		});
+		expect(result).toEqual({
+			accept: 'application/json',
+			'accept-language': 'ja',
+			referer: 'https://example.com/',
+			'user-agent': 'SummalyBot',
+		});
+	});
+
+	test('allowlist 外 (Range / Content-Type / X-Custom 等) は除外', () => {
+		const result = pickOverrideHeaders({
+			accept: 'application/json',
+			range: 'bytes=0-1024',
+			'content-type': 'text/plain',
+			'x-custom': 'foo',
+		});
+		expect(result).toEqual({ accept: 'application/json' });
+	});
+
+	test('大文字小文字を区別せず allowlist 判定', () => {
+		const result = pickOverrideHeaders({
+			Accept: 'application/json',
+			'User-Agent': 'SummalyBot',
+		});
+		expect(result).toEqual({
+			Accept: 'application/json',
+			'User-Agent': 'SummalyBot',
+		});
+	});
+
+	test('value が undefined / 空文字なら除外 (CLI 側の事故防止)', () => {
+		const result = pickOverrideHeaders({
+			accept: 'application/json',
+			'accept-language': undefined,
+			'user-agent': '',
+		});
+		expect(result).toEqual({ accept: 'application/json' });
+	});
+
+	test('header 名に `:` が含まれている不正値は除外 (CLI parse 衝突防止)', () => {
+		const result = pickOverrideHeaders({
+			'accept:weird': 'value',
+			accept: 'application/json',
+		});
+		expect(result).toEqual({ accept: 'application/json' });
 	});
 });
 

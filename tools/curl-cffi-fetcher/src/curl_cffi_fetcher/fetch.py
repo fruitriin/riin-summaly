@@ -54,14 +54,26 @@ DEFAULT_TIMEOUT_SEC = 20.0
 DEFAULT_MAX_BYTES = 5 * 1024 * 1024
 
 
-def fetch(url: str, impersonate: str, timeout: float, max_bytes: int) -> dict[str, Any]:
-    """curl_cffi で URL を取得して dict を返す。例外は呼び出し側でハンドル。"""
+def fetch(
+    url: str,
+    impersonate: str,
+    timeout: float,
+    max_bytes: int,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """curl_cffi で URL を取得して dict を返す。例外は呼び出し側でハンドル。
+
+    `extra_headers` は impersonate が生成するブラウザ風ヘッダを **個別に上書き** する用途。
+    特に `Accept: application/json` 等の API 取得時のコンテンツネゴシエーション制御に必須
+    (impersonate デフォルトの `Accept: text/html,...` だとサーバが HTML / XHTML を返してしまう)。
+    """
     response = requests.get(
         url,
         impersonate=impersonate,  # type: ignore[arg-type]
         timeout=timeout,
         allow_redirects=True,
         max_redirects=5,
+        headers=extra_headers or None,
     )
     body_bytes: bytes = response.content or b""
     if len(body_bytes) > max_bytes:
@@ -93,14 +105,38 @@ def main() -> None:
     )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SEC)
     parser.add_argument("--max-bytes", type=int, default=DEFAULT_MAX_BYTES)
+    parser.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        metavar="NAME:VALUE",
+        help="追加 / 上書きヘッダを `Name:Value` 形式で指定 (反復可)。"
+        "impersonate が生成するブラウザ風ヘッダを上書きする用途。"
+        "例: --header 'Accept:application/json' --header 'X-Custom:foo'",
+    )
     args = parser.parse_args()
 
     if not args.url.startswith("https://"):
         json.dump({"error": "https only", "category": "invalid_url"}, sys.stdout)
         sys.exit(2)
 
+    extra_headers: dict[str, str] = {}
+    for raw in args.header:
+        if ":" not in raw:
+            json.dump(
+                {"error": f"invalid --header format (expected NAME:VALUE): {raw!r}", "category": "invalid_url"},
+                sys.stdout,
+            )
+            sys.exit(2)
+        name, _, value = raw.partition(":")
+        # 空 name は意味が無く curl_cffi 側で例外になる可能性。早期にここで弾く
+        if name.strip() == "":
+            json.dump({"error": f"empty header name in --header: {raw!r}", "category": "invalid_url"}, sys.stdout)
+            sys.exit(2)
+        extra_headers[name.strip()] = value.strip()
+
     try:
-        result = fetch(args.url, args.impersonate, args.timeout, args.max_bytes)
+        result = fetch(args.url, args.impersonate, args.timeout, args.max_bytes, extra_headers)
     except requests.errors.RequestsError as e:  # type: ignore[attr-defined]
         msg = str(e)
         category = "network"

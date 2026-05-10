@@ -157,7 +157,13 @@ export async function viaCurlCffi(
 	const maxBytes = args.contentLengthLimit ?? DEFAULT_MAX_RESPONSE_SIZE;
 	const responseTimeoutSec = (args.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT) / 1000;
 
-	const cliResult = await runCurlCffiCli(args.url, cfg, responseTimeoutSec, maxBytes);
+	// 呼出側が指定した一部のヘッダのみ CLI に伝える (impersonate が生成するブラウザ風ヘッダ群と
+	// 衝突して TLS フィンガープリント検査が乱れる事故を避けるため、ホワイトリスト方式)。
+	// `accept` の上書きは API 取得時のコンテンツネゴシエーション (`Accept: application/json` 等)
+	// に必須。`user-agent` は impersonate 既定 (chrome120 風) を尊重するのが一般的だが、
+	// 例えば SNS bot UA で叩きたいケースの拡張余地として allowlist に含める。
+	const overrideHeaders = pickOverrideHeaders(args.headers);
+	const cliResult = await runCurlCffiCli(args.url, cfg, responseTimeoutSec, maxBytes, overrideHeaders);
 
 	if ('error' in cliResult) {
 		// CLI のエラー category を Node 側の StatusError / Error に変換。
@@ -225,6 +231,39 @@ export async function viaCurlCffi(
 }
 
 /**
+ * `viaCurlCffi` から CLI へ伝えるヘッダを絞り込むホワイトリスト。
+ *
+ * **設計**: impersonate は Chrome / Firefox / Safari の TLS + HTTP/2 ヘッダ群を完全再現する。
+ * Range / Content-Type / Accept-Encoding 等を呼出側から上書きすると、impersonate ブラウザの
+ * 振る舞いと矛盾し TLS / WAF 検査で弾かれるリスクがある。一方 `Accept` (API JSON 要求) /
+ * `Accept-Language` (lang 指定) / `Referer` (一部 API 必須) / `User-Agent` (SNS bot 偽装等) は
+ * 呼出側の意図を尊重する必然性がある。この 4 つのみ通す。
+ */
+const CURL_CFFI_OVERRIDE_HEADER_ALLOWLIST = new Set([
+	'accept',
+	'accept-language',
+	'referer',
+	'user-agent',
+]);
+
+export function pickOverrideHeaders(headers: GotOptions['headers']): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [rawName, value] of Object.entries(headers)) {
+		if (value === undefined) continue;
+		const name = rawName.toLowerCase();
+		if (!CURL_CFFI_OVERRIDE_HEADER_ALLOWLIST.has(name)) continue;
+		// CLI 側 `--header NAME:VALUE` parse は `:` を最初の 1 個で split する。
+		// value 内の `:` は問題ないが、name に `:` が含まれていれば不正なヘッダ名として無視。
+		if (rawName.includes(':')) continue;
+		// 空文字は impersonate が生成するヘッダを上書き「削除」する意味になりうるが
+		// curl_cffi (Python) 側で挙動が複雑なので、ここで弾いて事故を避ける。
+		if (value === '') continue;
+		out[rawName] = value;
+	}
+	return out;
+}
+
+/**
  * `uv run fetch <url>` を spawn で起動し、stdout JSON をパースして返す。
  * timeoutMs を超えたら SIGKILL で強制終了する。テストで mock 可能なよう関数として export。
  */
@@ -233,6 +272,7 @@ export async function runCurlCffiCli(
 	cfg: CurlCffiFallbackConfig,
 	responseTimeoutSec: number,
 	maxBytes: number,
+	overrideHeaders: Record<string, string> = {},
 ): Promise<CurlCffiCliResponse> {
 	const argv = [
 		'run',
@@ -245,6 +285,10 @@ export async function runCurlCffiCli(
 		'--max-bytes',
 		String(maxBytes),
 	];
+
+	for (const [name, value] of Object.entries(overrideHeaders)) {
+		argv.push('--header', `${name}:${value}`);
+	}
 
 	const { stdout, exitCode } = await new Promise<{ stdout: string; exitCode: number | null }>((resolve, reject) => {
 		const proc = spawn(cfg.uvPath, argv, {

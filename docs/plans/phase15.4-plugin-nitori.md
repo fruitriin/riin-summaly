@@ -1,6 +1,6 @@
 # Phase 15.4 — ニトリ (nitori-net.jp) プラグイン (公式 JSON API + curl_cffi 経路)
 
-> 状態: **完了 (2026-05-10)**
+> 状態: **本番動作確認待ち (2026-05-10、初回リリース後 followup #1 で curl_cffi CLI に headers 上書き機構追加)**
 > 種別: 機能拡張 / プラグイン追加
 > サイズ: **M**
 > 依存: [phase2.1](phase2.1-plugin-infrastructure.md) (`name` フィールド規約)、[phase12.5](phase12.5-curl-cffi-fetcher.md) (curl_cffi 統合)
@@ -215,3 +215,44 @@ SKU は英数字+`s` 等の suffix なので encodeURIComponent はほぼ no-op�
 5. **PV カウント**: 公式 JSON API は商品詳細 PV と独立か不明 (恐らく独立、API は SAP Commerce 標準 endpoint)。アクセス頻度急増時にニトリ側で気付かれる可能性は低いが、Cache-Control が `no-cache, no-store` なので毎回叩く前提
 6. **JSON エンコーディング契約**: `viaCurlCffi` は body を UTF-8 string で返す (Python `response.text` で decoded、Node 側で二重変換しない)。ニトリ API は `application/json;charset=UTF-8` で UTF-8 確定なので問題無し
 7. **エラー response の category 分類**: `INVALID_PRODUCT` を `StatusError(404)` で投げる → `categorizeError` で `not_found` に分類される (`statusCode === 404` で判定)。phase11.6 の `FILTERED_CATEGORIES` で blocked candidate ログから除外されるべき (404 は救援不要)
+
+## Followup #1 (2026-05-10): curl_cffi CLI の headers 上書き機構
+
+初回リリース後の本番ログで `curl_cffi (network): Failed to perform, curl: (92) HTTP/2 stream
+1 was not closed cleanly: INTERNAL_ERROR (err 2)` が観測された。**根本原因 2 つを特定**:
+
+1. **CLI が headers を一切受け取らない設計**: [tools/curl-cffi-fetcher/src/curl_cffi_fetcher/fetch.py](../../tools/curl-cffi-fetcher/src/curl_cffi_fetcher/fetch.py) は `requests.get(url, impersonate=...)` で叩いており、`viaCurlCffi` から渡した `accept: 'application/json'` ヘッダが完全に無視されていた。impersonate モードが生成する Chrome 風 Accept (`text/html,application/xhtml+xml,...`) が固定送信されるため、ローカル MacOS から叩いたときも実は **`content-type: application/xhtml+xml` で XHTML が返ってきていた** (本プラグインは typeFilter で弾く設計だったが Accept 上書きできないので JSON が取れない)
+2. **本番 Vultr IP からの TLS 切断 (推定)**: ローカル MacOS (家庭 IP) からは chrome120 / chrome131 どちらの impersonate でも HTTP 200 OK で通る。本番 Vultr Tokyo IP からは HTTP/2 INTERNAL_ERROR で切断される。これは TLS フィンガープリントの問題ではなく **datacenter IP block** (Akamai 系の評価) の可能性が濃厚
+
+### #1 の対処 (本 Followup)
+
+- [x] CLI に `--header NAME:VALUE` 反復引数を追加して headers 上書き可能化 (impersonate 生成ヘッダを個別に override する設計)
+- [x] `viaCurlCffi` から `pickOverrideHeaders` (allowlist: `accept` / `accept-language` / `referer` / `user-agent`) で抽出して CLI に渡す経路を実装
+- [x] `pickOverrideHeaders` の単体テスト + viaCurlCffi での Accept 反映テスト追加 (611 tests pass)
+- [x] ローカル検証: `uv run fetch <api> --impersonate chrome120 --header "Accept:application/json"` で `content-type: application/json;charset=UTF-8` + 完璧な JSON body 返却を確認
+
+**ホワイトリスト方針**: impersonate は TLS + HTTP/2 ヘッダ群を完全再現するため、Range / Content-Type /
+Accept-Encoding 等の上書きは TLS / WAF 検査と矛盾するリスクがある。`accept` (API 取得必須) /
+`accept-language` (lang 指定) / `referer` (一部 API 必須) / `user-agent` (SNS bot 偽装拡張余地) の 4 種に
+絞ることで defense-in-depth。
+
+### #2 の切り分け (本番デプロイ後の判断)
+
+本 Followup デプロイ後、本番ログで以下を観察:
+
+- **A. JSON 200 OK が返るようになる** → IP block 仮説は誤りで Accept ヘッダが原因だった。完了
+- **B. 引き続き HTTP/2 INTERNAL_ERROR** → datacenter IP block 確定。下記オプションで継続検討:
+  - **B-1. proxy 経由 (sqex パターン)**: `bootstrap.jsonl` を `nitori-net.jp → curl_cffi` から `proxy` に変更 + Worker `ALLOWED_DOMAINS` に `nitori-net.jp` を追加 + プラグインを `viaProxyWorker` 直叩きに書き換え。ただし Worker `fetch()` は TLS フィンガープリント固定 (CF 標準) なので Akamai が CF 経由を弾く可能性あり (要本番試行)
+  - **B-2. proxy + curl_cffi 複合経路 (新案)**: CF Workers 上で curl_cffi 相当の TLS 偽装はできない (Workers 環境は Python 不可、`fetch()` の TLS は固定)。代替: 別 datacenter (Vultr 以外、家庭 IP に近い ASN) に curl_cffi 専用 proxy を立てる構成。インフラコスト増大が代償
+  - **B-3. fail mode J として整理**: 「JSON API は素通しだがデータセンター IP からは TLS で塞がれる」を新カテゴリ化、Playwright モード (phase15.1) や上記 B-2 を待つ
+
+#### B-1 / B-2 を着手する場合 — phase15.4b 候補
+
+`docs/plans/phase15.4b-nitori-route-pivot.md` (仮) を起票し以下を検討:
+1. proxy 経由のローカル E2E 検証 (Worker dev サーバ + ニトリ API で `application/json` 返却するか)
+2. ニトリプラグインの経路選択を `bootstrap.jsonl` 駆動に切り替え (yodobashi → curl_cffi、sqex → proxy パターン)
+3. 失敗時 fall-through で curl_cffi を 2 段目として残すかも検討 (B-2 を視野に)
+
+**オーナー追加コメント (2026-05-10)**: 「proxy で IP ブロック回避パターンや、IP ブロックを回避しつつ
+curl_cffi 的なアプローチも組み合わせる的な方法も検討していいかもね」 — phase15.4b で B-1 + B-2 の
+両建てを設計検討すること。
