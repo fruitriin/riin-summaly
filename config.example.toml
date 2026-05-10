@@ -91,13 +91,18 @@ uvPath = "/root/.local/bin/uv"                            # summaly実行ユー�
 # impersonate = "chrome120"                                  # `firefox120` / `safari17_0` 等も可
 
 [scraping.fallback]
-# Bot block 検出時に別 UA で 1 回リトライする (phase11.9)。
+# Bot block 検出時に別 UA で経路として並列発火する (phase11.9 → phase18 で hedge race 対象経路に変更)。
 # `SummalyBot` 文字列を WAF が弾くサイト (`playing-games.com` 等) を救援する用途。
 # デフォルト UA は `Mozilla/5.0 (compatible; SummalyBot/<ver>; +<repo>)` 形式の複合 UA で、
-# Mozilla プレフィックス必須の WAF は通る。`SummalyBot` 文字列で弾くタイプは下記でリトライ。
+# Mozilla プレフィックス必須の WAF は通る。`SummalyBot` 文字列で弾くタイプは下記の fallback UA で並列発火。
 enabled = true
 # userAgent = "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
 # 省略時は `facebookexternalhit/1.1` がデフォルトで使われる (share link 発行用途として広く allowlist されている)。
+
+# phase18 hedged fallback: champion (経路学習キャッシュの第一候補、cache miss 時は default UA) が
+# このミリ秒以内に valid response を返さなければ、challenger (残り全 strategy) を並列発火する。
+# 0 にすると即時並列発火 (debug / explore 用)。enabled とは独立して機能する (常時有効)。
+# hedgedThresholdMs = 5000
 
 [plugins]
 # 利用許可するプラグイン名の配列。

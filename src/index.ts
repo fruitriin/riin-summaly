@@ -257,6 +257,13 @@ export type SummalyOptions = {
 	curlCffiFallback?: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig;
 
 	/**
+	 * Hedged race の champion 単独猶予期間 (ms)。phase18 で導入。
+	 * champion がこの時間内に valid な response を返さなければ、challengers (残り全 strategy) を
+	 * 並列発火する。デフォルト 5000 (5 秒)。0 にすると即時並列発火 (debug / explore 用)。
+	 */
+	hedgedThresholdMs?: number;
+
+	/**
 	 * 経路学習キャッシュ設定。
 	 *
 	 * ドメイン (host + path prefix 1〜2 段) ごとに「成功した取得経路」を学習・永続化し、
@@ -532,6 +539,7 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 		fallbackRetryCategories: opts.fallbackRetryCategories,
 		proxyFallback: opts.proxyFallback,
 		curlCffiFallback: opts.curlCffiFallback,
+		hedgedThresholdMs: opts.hedgedThresholdMs,
 		_cacheRecording: cacheRecording,
 		_embedBaseUrl: opts.embedBaseUrl,
 	};
@@ -896,6 +904,7 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 			fallbackRetryCategories: options.fallbackRetryCategories,
 			proxyFallback: options.proxyFallback,
 			curlCffiFallback: options.curlCffiFallback,
+			hedgedThresholdMs: options.hedgedThresholdMs,
 		};
 		let result;
 		try {

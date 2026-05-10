@@ -321,13 +321,23 @@ function parseScrapingSection(rawScraping: Toml, out: SummalyOptions): void {
 	parseStrategyCacheSection(rawScraping['strategy_cache'], out);
 }
 
-const SCRAPING_FALLBACK_KEYS = ['enabled', 'userAgent'] as const;
+const SCRAPING_FALLBACK_KEYS = ['enabled', 'userAgent', 'hedgedThresholdMs'] as const;
 function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void {
 	if (fallback === undefined) return;
 	if (!isObject(fallback)) {
 		throw new TypeError('config: `[scraping.fallback]` must be a table');
 	}
 	expectKnownKeys(fallback, SCRAPING_FALLBACK_KEYS, 'scraping.fallback');
+
+	// phase18: `hedgedThresholdMs` (default 5000) — `enabled` とは独立して機能 (常時有効)
+	if (fallback.hedgedThresholdMs !== undefined) {
+		expectType(fallback.hedgedThresholdMs, 'number', 'scraping.fallback.hedgedThresholdMs');
+		const ms = fallback.hedgedThresholdMs as number;
+		if (!Number.isFinite(ms) || ms < 0) {
+			throw new RangeError('config: `scraping.fallback.hedgedThresholdMs` must be a non-negative number');
+		}
+		out.hedgedThresholdMs = ms;
+	}
 
 	let enabled = true;
 	if (fallback.enabled !== undefined) {
@@ -336,7 +346,7 @@ function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void
 	}
 	if (!enabled) return;
 	// `userAgent` 省略時は `DEFAULT_FALLBACK_UA` (`facebookexternalhit/1.1`) を採用。
-	// 「`enabled = true` を書いたのにリトライしない」サイレントバグを防ぐため。
+	// phase18 hedge race では fallback_ua も並列発火対象の経路として機能する。
 	if (fallback.userAgent !== undefined) {
 		expectType(fallback.userAgent, 'string', 'scraping.fallback.userAgent');
 		const ua = (fallback.userAgent as string).trim();
@@ -347,7 +357,9 @@ function parseScrapingFallbackSection(fallback: Toml, out: SummalyOptions): void
 	} else {
 		out.fallbackUserAgent = DEFAULT_FALLBACK_UA;
 	}
-	// `categories` は TOML キーを持たずコード側 default 固定 (DEFAULT_FALLBACK_CATEGORIES)。
+	// `categories` は TOML キーを持たずコード側 default 固定。
+	// phase18: hedge race ではすべての retryable error で並列発火するため、`fallbackRetryCategories` の
+	// 機能上の意味はなくなった (旧 cascade 用に temporal 維持、Step 7 で deprecation 通知予定)。
 	out.fallbackRetryCategories = DEFAULT_FALLBACK_CATEGORIES;
 }
 

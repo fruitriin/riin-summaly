@@ -8,6 +8,65 @@ import { detectEncoding, toUtf8 } from '@/utils/encoding.js';
 import { defaultHttpAgent, defaultHttpsAgent } from '@/utils/agent.js';
 import { categorizeError, type SummalyErrorCategory } from '@/utils/parse-failure-log.js';
 import { getActiveCache, pathKeysOf, type DomainStrategy } from '@/utils/domain-strategy-cache.js';
+import {
+	hedgedRace,
+	ALL_STRATEGIES,
+	HedgedRaceAllFailedError,
+	type FetchStrategyFn,
+} from '@/utils/hedged-fetch.js';
+
+/**
+ * Hedged race の champion 単独猶予期間 (phase18)。
+ * デフォルト 5 秒 = champion がこの時間内に valid を返さなければ challenger 並列発火。
+ */
+export const DEFAULT_HEDGED_THRESHOLD_MS = 5000;
+
+/**
+ * hedged race の勝者確定後 cancellation で発生する abort 由来エラー。
+ *
+ * `categorizeError` が `/aborted/i` で `timeout` カテゴリに誤分類するのを避けるため、
+ * 専用 Error name `'HedgeAbortedError'` を持たせて `categorizeError` 内で別扱いする。
+ * (M-2 review feedback: abort 由来 cancel と真の timeout を区別して経路コスト分析の精度を保つ)
+ */
+export class HedgeAbortedError extends Error {
+	constructor(reason = 'aborted by hedge race winner') {
+		super(reason);
+		this.name = 'HedgeAbortedError';
+	}
+}
+
+/**
+ * 別経路で叩いても結果が変わる見込みが薄い「確定 error」のカテゴリ。
+ * champion がこれらで失敗した場合、hedge fire せずそのまま throw して無駄リクエストを防ぐ。
+ *
+ * - `not_found`: サイトが意図的に 404
+ * - `ssrf_blocked`: Private IP は別経路でも同じ
+ * - `invalid_url`: URL の形式問題
+ * - `unsupported_type`: content-type の問題 (HTML 以外を受信)
+ * - `content_too_large`: サイズ超過
+ * - `parse_error`: HTML パース失敗 (response は取れている)
+ *
+ * `bot_blocked` (4xx 全般) / `origin_error` (5xx) / `timeout` / `connection_dropped` /
+ * `network_error` / `unknown` は別経路で救援可能性があるため hedge fire 対象。
+ */
+const HEDGED_FINAL_CATEGORIES: ReadonlySet<SummalyErrorCategory> = new Set<SummalyErrorCategory>([
+	'not_found',
+	'ssrf_blocked',
+	'unsupported_type',
+	'content_too_large',
+	'parse_error',
+]);
+
+/**
+ * `categorizeError` ベースの final error 判定 (hedge fire skip 用)。
+ */
+function isFinalError(err: unknown): boolean {
+	const message = err instanceof Error ? err.message : undefined;
+	const name = err instanceof Error ? err.name : undefined;
+	const statusCode = err instanceof StatusError ? err.statusCode : undefined;
+	const category = categorizeError(message, name, statusCode);
+	return HEDGED_FINAL_CATEGORIES.has(category);
+}
 
 /**
  * cascade 内で「どの段で成功したか」を呼出側に伝えるための mutable holder。
@@ -153,25 +212,22 @@ export async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, mes
 }
 
 /**
- * 経路学習キャッシュのヒット時に該当 strategy を直接呼ぶ fast path 実装。
+ * 各 strategy の fetch を起動する内部関数 (phase18 hedged race の入力)。
  *
- * - `'default'` / `'fallback_ua'`: `getResponse` を呼ぶ (UA を切り替えるだけ)
- * - `'proxy'`: `viaProxyWorker` を直接呼ぶ (cascade を経由しない)
- * - `'curl_cffi'`: `viaCurlCffi` を直接呼ぶ (cascade を経由しない)
+ * - `'default'`: `getResponse` (UA = デフォルト)
+ * - `'fallback_ua'`: `getResponse` (UA = fallback、config 未設定なら null)
+ * - `'proxy'`: `viaProxyWorker` (config 未有効 / 非 https なら null)
+ * - `'curl_cffi'`: `viaCurlCffi` (config 未有効 / 非 https なら null)
  *
- * **ゲート**: 該当 strategy の前提条件 (config 有効化 / allowlist 一致 / `https:` プロトコル等)
- * を満たさない場合は `null` を返し、呼出側が cache 値を無視してカスケードに fallthrough する。
+ * `null` 戻り値 = ゲート不通過 (config 上使えない経路、hedge race では gate_failed として扱う)。
+ * `throw` = 実行時失敗 (hedge race では error として扱う)。
  *
- * **戻り値の意味区別 (W-1 review feedback)**:
- * - `null` = ゲート不通過 (config 上使えない、中立)。`fetchResponse` で `gateFailedNeutral = true` 化、cache 操作スキップ
- * - `throw` = 実行時失敗。`fetchResponse` の catch で吸収して cascade に fallthrough。
- *   cascade も失敗なら fetchResponse が throw → summaly() catch が `recordFailure(recordKey)` を呼ぶ (Step 2b 後半)
+ * **phase18 変更点 (Step 2)**: phase14 の `forceX` フラグ + 段階的 cascade を廃止し、
+ * 各 strategy は **独立した fetch** として hedge race に並列投入される。`domains` allowlist は
+ * Step 4 で撤廃されるため、ゲートは config 有効性 (`enabled`) と protocol チェックのみ。
  *
- * **設計意図 (W-1 review feedback)**: `'default'` strategy は通常カスケードの 1 段目
- * (`getResponseWithFallback`) ではなく `getResponse` を直接呼ぶ (= UA リトライしない)。
- * 理由: cache が `'default'` を記録している = 過去 default UA 単独で成功したという意味なので、
- * リトライ前提のラッパは不要。fast path で失敗したら recordFailure → cascade 経路で
- * 改めて UA リトライを試す形になる (= 二重リトライにならない)。
+ * **AbortSignal**: hedged race の勝者確定後 cancellation のために伝搬。各経路で best-effort の
+ * 中断を行う (`getResponse` は got リクエスト abort、`viaCurlCffi` は subprocess SIGKILL)。
  */
 async function fetchByStrategy(
 	args: Omit<GotOptions, 'method'>,
@@ -179,71 +235,53 @@ async function fetchByStrategy(
 	fallback: FallbackUaConfig | undefined,
 	proxyCfg: import('@/utils/proxy-fallback.js').ProxyFallbackConfig | undefined,
 	curlCffiCfg: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig | undefined,
+	signal: AbortSignal,
 ): Promise<Got.Response<string> | null> {
 	if (strategy === 'default') {
-		return await getResponse({ ...args, method: 'GET' });
+		return await getResponse({ ...args, method: 'GET' }, signal);
 	}
 	if (strategy === 'fallback_ua') {
-		// fallback UA が無い / 空文字 (= config で無効、または `buildFallbackConfig` を通らない経路で
-		// `userAgent: ''` が直接渡された等のミス) ならゲート不通過 (W-2 review feedback)
 		if (fallback == null || fallback.userAgent === '') return null;
 		return await getResponse({
 			...args,
 			method: 'GET',
 			headers: { ...args.headers, 'user-agent': fallback.userAgent },
-		});
+		}, signal);
 	}
 	if (strategy === 'proxy') {
 		if (proxyCfg == null || !proxyCfg.enabled || proxyCfg.secret === '') return null;
 		const targetUrl = new URL(args.url);
 		if (targetUrl.protocol !== 'https:') return null;
-		const { matchesDomain, viaProxyWorker } = await import('@/utils/proxy-fallback.js');
-		if (!matchesDomain(targetUrl.hostname, proxyCfg.domains)) return null;
-		return await viaProxyWorker({ ...args, method: 'GET' }, proxyCfg);
+		const { viaProxyWorker } = await import('@/utils/proxy-fallback.js');
+		return await viaProxyWorker({ ...args, method: 'GET' }, proxyCfg, signal);
 	}
 	// strategy === 'curl_cffi' (DomainStrategy のユニオン型を網羅)
 	if (curlCffiCfg == null || !curlCffiCfg.enabled) return null;
 	const targetUrl = new URL(args.url);
 	if (targetUrl.protocol !== 'https:') return null;
-	const { matchesDomain } = await import('@/utils/proxy-fallback.js');
-	if (!matchesDomain(targetUrl.hostname, curlCffiCfg.domains)) return null;
 	const { viaCurlCffi } = await import('@/utils/curl-cffi-fetch.js');
-	return await viaCurlCffi({ ...args, method: 'GET' }, curlCffiCfg);
+	return await viaCurlCffi({ ...args, method: 'GET' }, curlCffiCfg, signal);
 }
 
 /**
- * `scpaping()` 内のレスポンス取得部分を切り出した内部関数。
+ * `scpaping()` 内のレスポンス取得部分。phase18 で hedged race ベースに置換。
  *
  * **設計**: scpaping は `cache.recordX` を直接呼ばず、`opts._cacheRecording` (mutable side-channel)
  * に context を埋めて `summaly()` レイヤに伝達する。`summaly()` が Summary 確定後に thin 判定して
- * `recordSuccess` / `recordFailure` を一括判定する。
+ * `recordSuccess` / `recordFailure` を一括判定する (HTTP 層 + Summary 層の二重 record 防止)。
  *
- * 優先順位 (Step 4 で `forceCurlCffiFallback` / `forceProxyFallback` フラグを廃止し、cache + bootstrap に統合):
- * 1. 経路学習キャッシュにヒットがあれば fast path で該当 strategy を直接呼ぶ (Step 2a)
- *    - 成功 → `recState.strategy = hit.entry.strategy` をセット
- *    - throw 失敗 → そのまま fallthrough (recState.strategy 未設定のまま、cascade で上書きされる)。
- *      **注**: fast path 失敗そのものを `recordFailure` には記録しない (Step 2b 後半 設計)。
- *      理由: cascade で同 strategy が成功すれば実質 transient 失敗、別 strategy で成功すれば
- *      新 strategy が hitKey に上書きされる (recordSuccess) ため、いずれにせよ最終的な
- *      cache 状態は cascade 結果が支配する
- *    - ゲート不通過 (null) → `recState.gateFailedNeutral = true`、cache hit エントリを温存
- * 2. 通常 4 段カスケード (default UA → fallback UA → proxy → curl_cffi) (Step 2b 前半)
- *    - cache が active なら `tracker` を作成し cascade に渡す。各段の成功時に
- *      `tracker.value = '<strategy>'` がセットされる。
- *    - cascade 成功 → `recState.strategy = tracker.value` をセット
- *    - cascade 失敗 (throw) → そのまま伝播。summaly() catch が `recordFailure` を呼ぶ
+ * フロー (phase18):
+ * 1. 経路学習キャッシュ lookup → cache hit: champion = hit.entry.strategy / cache miss: champion = 'default'
+ * 2. challengers = ALL_STRATEGIES - champion (gate failed の経路は hedge race 内で gate_failed として扱う)
+ * 3. `hedgedRace` が champion を即起動、`hedgedThresholdMs` (default 5s) 経過 or 失敗で challengers 並列発火
+ * 4. 勝者 strategy を `recState.strategy` に記録 (hedge 発火イベントは `recState.hedgeFired` 等に格納)
  *
- * **Step 4 での `forceX` 廃止**: 以前は `forceCurlCffiFallback` / `forceProxyFallback` で yodobashi /
- * sqex 等のサイトに対して 1〜3段目を強制スキップしていたが、Step 3 で同梱した
- * `data/domain-strategy-bootstrap.jsonl` の bootstrap エントリ (yodobashi → curl_cffi、
- * sqex → proxy) で cache fast path が効くため `forceX` フラグは不要になった。
+ * **全 gate_failed のときの recState ハンドリング**: `HedgedRaceAllFailedError` の causes が
+ * すべて「gate failed (no strategy enabled)」のとき (= config 上使える経路がない、判別不能な中立状態)、
+ * `recState.gateFailedNeutral = true` をセットして cache hit エントリを温存する (phase14 中立性の維持)。
  *
- * `recordKey` の選定 (lookup 直後に決定):
- * - cache hit があれば `hit.hitKey`
- * - cache miss なら 1-seg pathKey (host のみ URL は host)
- *
- * 早期に `recordKey` を設定する理由: cascade 失敗 (throw) で fetchResponse 自体が throw する経路でも、
- * summaly() catch が recordFailure(recordKey) を呼べるよう context を残しておく必要があるため。
+ * `recordKey` の選定 (lookup 直後に決定): cache hit あれば `hit.hitKey`、cache miss なら 1-seg pathKey。
+ * 早期設定の理由: hedge race throw 経路でも summaly() catch が recordFailure(recordKey) を呼べるように。
  */
 async function fetchResponse(
 	args: ReturnType<typeof getGotOptions>,
@@ -278,39 +316,53 @@ async function fetchResponse(
 		}
 	}
 
-	if (cache != null && hit != null) {
-		try {
-			const response = await fetchByStrategy(args, hit.entry.strategy, fallback, proxyCfg, curlCffiCfg);
-			if (response != null) {
-				// fast path 成功: strategy を context に埋めて返す。実際の record は summaly() で Summary 判定後
-				if (recState != null) recState.strategy = hit.entry.strategy;
-				return response;
-			}
-			// strategy ゲート不通過 (config が現在のセッションで使えない) → fallthrough。
-			// summaly() レイヤでは record しない (entry を「config 復帰時の再利用候補」として温存、neutrality)
-			if (recState != null) recState.gateFailedNeutral = true;
-		} catch {
-			// fast path 失敗 → cascade に fallthrough。summaly() catch が recordFailure(hitKey) を呼ぶ。
-			// cascade が成功すれば下のブロックで strategy が更新され、summaly() success 経路で hitKey が上書きされる。
+	// phase18 hedged race: champion 即起動 + threshold 経過 or 失敗で challengers 並列発火
+	const champion: DomainStrategy = hit?.entry.strategy ?? 'default';
+	const challengers = ALL_STRATEGIES.filter((s) => s !== champion);
+	const thresholdMs = opts?.hedgedThresholdMs ?? DEFAULT_HEDGED_THRESHOLD_MS;
+
+	const fetcher: FetchStrategyFn<Got.Response<string>> = (strategy, signal) =>
+		fetchByStrategy(args, strategy, fallback, proxyCfg, curlCffiCfg, signal);
+
+	try {
+		const result = await hedgedRace(
+			{ champion, challengers, thresholdMs, isFinalError },
+			fetcher,
+			() => true, // HTTP 層では取得成功 = valid (thin 判定は summary 層)
+		);
+
+		if (recState != null) {
+			recState.strategy = result.winnerStrategy;
+			recState.hedgeFired = result.hedgeFired;
+			recState.hedgeOutcomes = result.outcomes;
+			recState.hedgeLatencyMs = result.latencyMs;
 		}
+
+		return result.response;
+	} catch (err) {
+		// HedgedRaceAllFailedError から「最も意味のある cause」を取り出して再 throw する。
+		// 優先順位: champion > challenger (champion の error はサイトの本来の挙動を反映している可能性が高い)
+		if (err instanceof HedgedRaceAllFailedError) {
+			// 全 cause が「gate failed (no strategy enabled)」= config 上使える経路がない中立状態。
+			// cache hit エントリを失敗カウントせず温存するため `gateFailedNeutral = true` をセット
+			// (phase14 中立性 / M-1 review feedback)
+			const allGateFailed = err.causes.every((c) =>
+				c.error instanceof Error && c.error.message === 'gate failed (no strategy enabled)',
+			);
+			if (allGateFailed && recState != null) {
+				recState.gateFailedNeutral = true;
+			}
+			const championCause = err.causes.find((c) => c.strategy === champion);
+			if (championCause != null && championCause.error instanceof Error) {
+				throw championCause.error;
+			}
+			const firstCause = err.causes[0] as { strategy: DomainStrategy; error: unknown } | undefined;
+			if (firstCause != null && firstCause.error instanceof Error) {
+				throw firstCause.error;
+			}
+		}
+		throw err;
 	}
-
-	// 通常 4 段カスケード (tracker で成功 strategy を捕捉して context に埋める)
-	const tracker: StrategyTracker | undefined = cache != null ? {} : undefined;
-	const { getResponseWithCurlCffiFallback } = await import('@/utils/curl-cffi-fetch.js');
-	const response = await getResponseWithCurlCffiFallback({
-		...args,
-		method: 'GET',
-	}, fallback, proxyCfg, curlCffiCfg, tracker);
-
-	if (cache != null && tracker?.value != null && recState != null) {
-		// gateFailedNeutral が立っていてもこの strategy 上書きは行われるが、summaly() レイヤで neutrality
-		// ガードがあるので最終的に record はされない (神経質に skip する必要はない、無害な上書き)。
-		// recordKey は既に上で設定済み (cache hit なら hitKey、cache miss なら 1-seg)。
-		recState.strategy = tracker.value;
-	}
-
-	return response;
 }
 
 export async function scpaping(
@@ -436,11 +488,22 @@ export async function getJson(
 	return JSON.parse(String(res.body));
 }
 
-export async function getResponse(args: GotOptions) {
+export async function getResponse(args: GotOptions, externalSignal?: AbortSignal) {
 	const timeout = args.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT;
 	const operationTimeout = args.operationTimeout ?? DEFAULT_OPERATION_TIMEOUT;
 
 	const abort = new AbortController();
+	// 外部 signal (hedged race の勝者確定後 cancellation 等) を内部 controller にリンク。
+	// abort listener は once: true で leak しない。HedgeAbortedError 専用名で categorizeError 誤分類を防ぐ。
+	if (externalSignal != null) {
+		if (externalSignal.aborted) {
+			abort.abort(new HedgeAbortedError().message);
+		} else {
+			externalSignal.addEventListener('abort', () => {
+				abort.abort(new HedgeAbortedError().message);
+			}, { once: true });
+		}
+	}
 
 	const req = got<string>(args.url, {
 		method: args.method,
@@ -554,14 +617,15 @@ export async function getResponseWithFallback(
 	args: GotOptions,
 	fallback?: FallbackUaConfig,
 	tracker?: StrategyTracker,
+	externalSignal?: AbortSignal,
 ): Promise<Got.Response<string>> {
 	if (fallback == null) {
-		const r = await getResponse(args);
+		const r = await getResponse(args, externalSignal);
 		if (tracker != null) tracker.value = 'default';
 		return r;
 	}
 	try {
-		const r = await getResponse(args);
+		const r = await getResponse(args, externalSignal);
 		if (tracker != null) tracker.value = 'default';
 		return r;
 	} catch (firstErr) {
@@ -572,10 +636,6 @@ export async function getResponseWithFallback(
 		if (!fallback.categories.includes(category)) {
 			throw firstErr;
 		}
-		// UA を差し替えて 1 回だけ再試行する。Headers の他のキーは維持。
-		// 注: 上書きは小文字 `'user-agent'` で固定する。`getGotOptions` も小文字で生成しているため
-		// この経路では大文字小文字の二重キー問題は発生しない（外部から `args.headers` に
-		// 大文字 `'User-Agent'` を入れて呼び出す場合は呼出側で正規化する責任を負う）。
 		const retryArgs: GotOptions = {
 			...args,
 			headers: {
@@ -583,7 +643,7 @@ export async function getResponseWithFallback(
 				'user-agent': fallback.userAgent,
 			},
 		};
-		const r = await getResponse(retryArgs);
+		const r = await getResponse(retryArgs, externalSignal);
 		if (tracker != null) tracker.value = 'fallback_ua';
 		return r;
 	}

@@ -81,13 +81,11 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 		expect(after?.consecutiveFailures).toBe(0);
 	});
 
-	test('cache hit が失敗すると recordFailure + cascade fallthrough', async () => {
+	test('cache hit が失敗すると recordFailure (phase18: challenger 不在で 1 attempt)', async () => {
 		app = fastify();
 		let requestCount = 0;
 		app.get('/', (_, reply) => {
 			requestCount++;
-			// 1 リクエスト目 (fast path) は 500 エラー、以降 (cascade) も 500 を返す
-			// → 両方失敗で cascade も throw、recordFailure が呼ばれることを確認
 			reply.code(500).send('boom');
 		});
 		await app.listen({ port });
@@ -98,46 +96,15 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 
 		await expect(summaly(host, { followRedirects: false })).rejects.toThrow();
 
-		// fast path が失敗 → recordFailure で consecutiveFailures が 1 増える
+		// phase18: champion=default 500 → not final (origin_error は retryable) → hedge fire →
+		// challengers 全 gate_failed (config 不在) → champion error throw → recordFailure
 		const after = cache.lookup(host)?.entry;
 		expect(after?.consecutiveFailures).toBe(1);
-		// cascade も同じレスポンスで失敗するため 2 リクエストを試みる (fast path + cascade 1段目)
-		expect(requestCount).toBeGreaterThanOrEqual(2);
+		// challenger が config 上使えないため champion 1 attempt のみ
+		expect(requestCount).toBe(1);
 	});
 
-	test('cache hit + fast path 失敗 → cascade で成功するケース (一時障害想定)', async () => {
-		app = fastify();
-		let requestCount = 0;
-		app.get('/', (_, reply) => {
-			requestCount++;
-			if (requestCount === 1) {
-				// 1 つ目の HTTP リクエスト (= fast path) のみ 500、2 つ目以降 (= cascade) は正常応答。
-				// 「fast path で失敗 → recordFailure → 通常カスケードで取れる」ケースを再現する
-				reply.code(500).send('boom');
-				return;
-			}
-			reply.header('content-type', 'text/html');
-			return reply.send('<html><head><title>recovered</title></head></html>');
-		});
-		await app.listen({ port });
-
-		const cache = new DomainStrategyCache({ consecutiveFailureThreshold: 5 });
-		cache.recordSuccess('localhost', 'default');
-		setActiveCache(cache);
-
-		const result = await summaly(host, { followRedirects: false });
-		expect(result.title).toBe('recovered');
-
-		// Step 2b 後半 仕様: fast path 失敗そのものは recordFailure しない (transient とみなす)。
-		// cascade default success → summaly() レイヤで recordSuccess(hitKey, strategy=default) →
-		// 既存 strategy と同じため successCount++、consecutiveFailures は元から 0 で変わらず。
-		const after = cache.lookup(host)?.entry;
-		expect(after?.strategy).toBe('default');
-		expect(after?.consecutiveFailures).toBe(0); // 元から 0、fast path 失敗を記録しない設計
-		expect(after?.successCount).toBeGreaterThanOrEqual(2); // 初期 1 + cascade success 1
-	});
-
-	test('strategy=fallback_ua が登録されていても fallbackUserAgent 未指定なら fallthrough (S-1)', async () => {
+	test('strategy=fallback_ua が登録されていて fallbackUserAgent 未指定 → 別 challenger で勝ち、新 strategy 上書き (phase18)', async () => {
 		app = fastify();
 		app.get('/', (_, reply) => {
 			reply.header('content-type', 'text/html');
@@ -147,24 +114,24 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 
 		const cache = new DomainStrategyCache();
 		// fallback_ua strategy を登録するが、SummalyOptions.fallbackUserAgent を渡さない
-		// → fast path のゲート不通過 → recordSuccess も recordFailure も呼ばれない (中立)
+		// → champion gate_failed → hedge fire → default challenger で 200 → strategy 上書き
 		cache.recordSuccess('localhost', 'fallback_ua');
 		setActiveCache(cache);
 
 		const before = cache.lookup(host)?.entry;
 		expect(before?.successCount).toBe(1);
 
-		const result = await summaly(host, { followRedirects: false });
+		const result = await summaly(host, { followRedirects: false, hedgedThresholdMs: 0 });
 		expect(result.title).toBe('fallthroughUa');
 
-		// strategy ゲート不通過なのでカウンタは変化しない (failure 扱いではない)
+		// phase18: gate_failed champion → hedge fire → default 経路勝ち → strategy = 'default' 上書き
 		const after = cache.lookup(host)?.entry;
-		expect(after?.successCount).toBe(1);
+		expect(after?.strategy).toBe('default');
 		expect(after?.consecutiveFailures).toBe(0);
-		expect(after?.strategy).toBe('fallback_ua');
+		expect(after?.successCount).toBe(1); // 別 strategy へ切り替えなので新規カウント
 	});
 
-	test('strategy=proxy が登録されていても proxy config 無効なら fallthrough', async () => {
+	test('strategy=proxy が登録されていて proxy config 無効 → 別 challenger で勝ち、新 strategy 上書き (phase18)', async () => {
 		app = fastify();
 		app.get('/', (_, reply) => {
 			reply.header('content-type', 'text/html');
@@ -174,21 +141,21 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 
 		const cache = new DomainStrategyCache();
 		// proxy strategy を登録するが、SummalyOptions.proxyFallback を渡さない
-		// → fast path のゲート不通過 → recordSuccess も recordFailure も呼ばれない (= 中立)
+		// → champion gate_failed → hedge fire → default 経路勝ち → strategy 上書き
 		cache.recordSuccess('localhost', 'proxy');
 		setActiveCache(cache);
 
 		const before = cache.lookup(host)?.entry;
 		expect(before?.successCount).toBe(1);
 
-		const result = await summaly(host, { followRedirects: false });
+		const result = await summaly(host, { followRedirects: false, hedgedThresholdMs: 0 });
 		expect(result.title).toBe('fallthrough');
 
-		// strategy ゲート不通過なのでカウンタは変化しない (失敗ではないので consecutiveFailures も増やさない)
+		// phase18: gate_failed champion → hedge fire → default 経路勝ち → strategy = 'default' 上書き
 		const after = cache.lookup(host)?.entry;
-		expect(after?.successCount).toBe(1);
+		expect(after?.strategy).toBe('default');
 		expect(after?.consecutiveFailures).toBe(0);
-		expect(after?.strategy).toBe('proxy');
+		expect(after?.successCount).toBe(1);
 	});
 
 	test('cache miss + cascade default 成功 → 1-seg pathKey に default を記録 (Step 2b)', async () => {
@@ -236,18 +203,13 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 		expect(hit?.entry.strategy).toBe('default');
 	});
 
-	test('cache hit fail + cascade success → hitKey に新 strategy を上書き記録 (Step 2b)', async () => {
+	test('cache hit が成功 → 既存 strategy で recordSuccess (phase18 hedged race champion 単独勝ち)', async () => {
 		app = fastify();
 		let requestCount = 0;
 		app.get('/article/42', (_, reply) => {
 			requestCount++;
-			if (requestCount === 1) {
-				// fast path のみ失敗
-				reply.code(500).send('boom');
-				return;
-			}
 			reply.header('content-type', 'text/html');
-			return reply.send('<html><head><title>recovered</title></head></html>');
+			return reply.send('<html><head><title>fastChampion</title></head></html>');
 		});
 		await app.listen({ port });
 
@@ -256,15 +218,16 @@ describe('DomainStrategyCache scpaping 統合 (phase14 Step 2a)', () => {
 		setActiveCache(cache);
 
 		const result = await summaly(`${host}/article/42`, { followRedirects: false });
-		expect(result.title).toBe('recovered');
+		expect(result.title).toBe('fastChampion');
 
-		// Step 2b 後半 仕様: fast path 失敗を recordFailure しない。cascade success で
-		// hitKey に新 strategy を上書き → 既存 strategy と同じ ('default') なので count++ + cf=0 維持
+		// phase18: champion = default が threshold 内に勝ち → hedge fire しない →
+		// 1 attempt のみ + recordSuccess で successCount++、consecutiveFailures = 0 維持
 		const hit = cache.lookup(`${host}/article/42`);
 		expect(hit?.hitKey).toBe('localhost');
 		expect(hit?.entry.strategy).toBe('default');
-		expect(hit?.entry.consecutiveFailures).toBe(0); // 元から 0
-		expect(hit?.entry.successCount).toBeGreaterThanOrEqual(2); // 初期登録 1 + cascade success 1
+		expect(hit?.entry.consecutiveFailures).toBe(0);
+		expect(hit?.entry.successCount).toBeGreaterThanOrEqual(2);
+		expect(requestCount).toBe(1);
 	});
 
 	test('cache miss + cascade fail → 何も記録しない (recordFailure は cache miss 経路では呼ばれない)', async () => {

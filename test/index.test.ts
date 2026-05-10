@@ -2955,30 +2955,19 @@ describe('local tests', () => {
 			});
 			await app.listen({ port });
 
+			// phase18: champion (default UA) error が優先 throw される (cascade 「最後のエラー」ではない)
 			await expect(summaly(`${host}/page`, {
 				followRedirects: false,
 				fallbackUserAgent: 'Twitterbot/1.0',
-			})).rejects.toThrow(/429/);
+				hedgedThresholdMs: 0, // 並列発火即時化
+			})).rejects.toThrow(/403/);
+			// phase18: champion + fallback_ua が並列発火 → 2 attempts
 			expect(attempts).toBe(2);
 		});
 
-		test('fallbackRetryCategories で発火カテゴリを限定できる', async () => {
-			let attempts = 0;
-			app = fastify();
-			app.get('/page', (_req, reply) => {
-				attempts++;
-				return reply.status(403).send('blocked');
-			});
-			await app.listen({ port });
-
-			// connection_dropped だけリトライ対象 → 403 (bot_blocked) はリトライしない
-			await expect(summaly(`${host}/page`, {
-				followRedirects: false,
-				fallbackUserAgent: 'Twitterbot/1.0',
-				fallbackRetryCategories: ['connection_dropped'],
-			})).rejects.toThrow();
-			expect(attempts).toBe(1);
-		});
+		// phase18 で `fallbackRetryCategories` は廃止 (Step 4 で TOML キーも削除予定)。
+		// hedge race ですべての retryable error で並列発火するため categorize 制御は不要。
+		// 旧テスト「fallbackRetryCategories で発火カテゴリを限定できる」は本フェーズで削除。
 	});
 
 	describe('DOM 後処理系プラグイン (phase3.2)', () => {

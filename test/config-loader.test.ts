@@ -215,6 +215,40 @@ describe('parseTomlConfigString — [scraping.fallback]', () => {
 		expect(cfg.summaly.fallbackUserAgent).toBeUndefined();
 		expect(cfg.summaly.fallbackRetryCategories).toBeUndefined();
 	});
+
+	test('phase18: hedgedThresholdMs を SummalyOptions に伝搬', () => {
+		const cfg = parseTomlConfigString(`
+			[scraping.fallback]
+			enabled = true
+			hedgedThresholdMs = 3000
+		`);
+		expect(cfg.summaly.hedgedThresholdMs).toBe(3000);
+	});
+
+	test('phase18: hedgedThresholdMs 省略時は undefined (default 5000 はコード側で適用)', () => {
+		const cfg = parseTomlConfigString(`
+			[scraping.fallback]
+			enabled = true
+		`);
+		expect(cfg.summaly.hedgedThresholdMs).toBeUndefined();
+	});
+
+	test('phase18: hedgedThresholdMs = 0 (即時並列発火、debug 用) も valid', () => {
+		const cfg = parseTomlConfigString(`
+			[scraping.fallback]
+			enabled = true
+			hedgedThresholdMs = 0
+		`);
+		expect(cfg.summaly.hedgedThresholdMs).toBe(0);
+	});
+
+	test('phase18: hedgedThresholdMs が負数なら起動失敗', () => {
+		expect(() => parseTomlConfigString(`
+			[scraping.fallback]
+			enabled = true
+			hedgedThresholdMs = -1
+		`)).toThrow(/non-negative/);
+	});
 });
 
 describe('parseTomlConfigString — [scraping.proxy] (phase12.1, phase16.3 で domains 自動導出)', () => {

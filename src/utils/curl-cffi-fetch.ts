@@ -137,7 +137,7 @@ type CurlCffiCliResponse =
 	}
 	| {
 		error: string;
-		category: 'timeout' | 'network' | 'tls' | 'setup' | 'content_too_large' | 'invalid_url' | 'other';
+		category: 'timeout' | 'network' | 'tls' | 'setup' | 'content_too_large' | 'invalid_url' | 'ssrf_blocked' | 'other';
 	};
 
 /**
@@ -153,22 +153,21 @@ type CurlCffiCliResponse =
 export async function viaCurlCffi(
 	args: GotOptions,
 	cfg: CurlCffiFallbackConfig,
+	externalSignal?: AbortSignal,
 ): Promise<Got.Response<string>> {
 	const maxBytes = args.contentLengthLimit ?? DEFAULT_MAX_RESPONSE_SIZE;
 	const responseTimeoutSec = (args.responseTimeout ?? DEFAULT_RESPONSE_TIMEOUT) / 1000;
 
-	// 呼出側が指定した一部のヘッダのみ CLI に伝える (impersonate が生成するブラウザ風ヘッダ群と
-	// 衝突して TLS フィンガープリント検査が乱れる事故を避けるため、ホワイトリスト方式)。
-	// `accept` の上書きは API 取得時のコンテンツネゴシエーション (`Accept: application/json` 等)
-	// に必須。`user-agent` は impersonate 既定 (chrome120 風) を尊重するのが一般的だが、
-	// 例えば SNS bot UA で叩きたいケースの拡張余地として allowlist に含める。
 	const overrideHeaders = pickOverrideHeaders(args.headers);
-	const cliResult = await runCurlCffiCli(args.url, cfg, responseTimeoutSec, maxBytes, overrideHeaders);
+	const cliResult = await runCurlCffiCli(args.url, cfg, responseTimeoutSec, maxBytes, overrideHeaders, externalSignal);
 
 	if ('error' in cliResult) {
-		// CLI のエラー category を Node 側の StatusError / Error に変換。
-		// `category: 'timeout' | 'tls'` は categorizeError で `timeout` / `connection_dropped` 相当に分類される
-		// (`SummalyErrorCategory` との互換)。
+		// CLI のエラー category を Node 側で適切に分類できる形に変換。
+		// `ssrf_blocked` は Node 側 `categorizeError` で「Private IP rejected」相当に拾われるよう、
+		// Error message に `Private IP rejected` を含める形にして category 復元できるようにする。
+		if (cliResult.category === 'ssrf_blocked') {
+			throw new Error(`Private IP rejected: ${cliResult.error}`);
+		}
 		throw new Error(`curl_cffi (${cliResult.category}): ${cliResult.error}`);
 	}
 
@@ -273,6 +272,7 @@ export async function runCurlCffiCli(
 	responseTimeoutSec: number,
 	maxBytes: number,
 	overrideHeaders: Record<string, string> = {},
+	externalSignal?: AbortSignal,
 ): Promise<CurlCffiCliResponse> {
 	const argv = [
 		'run',
@@ -294,22 +294,22 @@ export async function runCurlCffiCli(
 		const proc = spawn(cfg.uvPath, argv, {
 			cwd: cfg.projectDir,
 			stdio: ['ignore', 'pipe', 'pipe'],
-			// shell: false (デフォルト) — argv が直接 execve される。shell injection 不可能
 		});
 		let stdoutBuf = '';
-		// stderr は無視 (uv の warning 等が混入する可能性があるため stdout のみ JSON として扱う)
 		proc.stdout.on('data', (chunk: Buffer) => {
 			stdoutBuf += chunk.toString('utf8');
 		});
 		proc.stderr.on('data', () => { /* drop */ });
 
-		// `error` と `exit` の両方が発火するケース (signal で終了した場合等) で
-		// resolve/reject が二重に呼ばれないよう settle ガード (W-3 review feedback)。
+		let externalAbortListener: (() => void) | undefined;
 		let settled = false;
 		const settle = (fn: () => void) => {
 			if (settled) return;
 			settled = true;
 			clearTimeout(killTimer);
+			if (externalAbortListener != null && externalSignal != null) {
+				externalSignal.removeEventListener('abort', externalAbortListener);
+			}
 			fn();
 		};
 
@@ -318,9 +318,22 @@ export async function runCurlCffiCli(
 			settle(() => reject(new Error(`curl_cffi spawn timeout (${cfg.timeoutMs}ms)`)));
 		}, cfg.timeoutMs);
 
+		// 外部 signal (hedged race の勝者確定後 cancellation) で subprocess を SIGKILL。
+		// listener は settle 内で removeEventListener (leak 防止)。
+		if (externalSignal != null) {
+			if (externalSignal.aborted) {
+				proc.kill('SIGKILL');
+				settle(() => reject(new Error('curl_cffi aborted by external signal')));
+			} else {
+				externalAbortListener = () => {
+					proc.kill('SIGKILL');
+					settle(() => reject(new Error('curl_cffi aborted by external signal')));
+				};
+				externalSignal.addEventListener('abort', externalAbortListener);
+			}
+		}
+
 		proc.on('error', (err) => {
-			// `spawn` 自体が失敗 (ENOENT for uv 等)。production で uv が未インストールなら
-			// ここに到達する。呼出側で original error と差し替えられるよう error メッセージに含める。
 			settle(() => reject(new Error(`curl_cffi spawn failed (${err.message}). uv が未インストールか、projectDir が間違っている可能性`)));
 		});
 		proc.on('exit', (code) => {

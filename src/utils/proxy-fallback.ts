@@ -133,7 +133,11 @@ export async function getResponseWithProxyFallback(
  * 経路学習キャッシュ fast path から直接呼ぶ用途と、`getResponseWithProxyFallback` のエラー
  * 発火型で内部的に呼ばれる用途の両方で利用される。
  */
-export async function viaProxyWorker(args: GotOptions, cfg: ProxyFallbackConfig): Promise<Got.Response<string>> {
+export async function viaProxyWorker(
+	args: GotOptions,
+	cfg: ProxyFallbackConfig,
+	externalSignal?: AbortSignal,
+): Promise<Got.Response<string>> {
 	const ts = Date.now();
 	const sig = generateHmacSignature(cfg.secret, args.url, ts);
 	const proxyUrl = `${cfg.url.replace(/\/$/, '')}/?url=${encodeURIComponent(args.url)}`;
@@ -142,9 +146,19 @@ export async function viaProxyWorker(args: GotOptions, cfg: ProxyFallbackConfig)
 	const headerUA = args.headers['user-agent'];
 	const forwardUA = typeof headerUA === 'string' ? headerUA : 'Mozilla/5.0 (compatible; SummalyBot)';
 
+	// 外部 signal (hedged race の勝者確定後 cancellation) で got リクエストを中断
+	const proxyAbort = new AbortController();
+	if (externalSignal != null) {
+		if (externalSignal.aborted) {
+			proxyAbort.abort('aborted by external signal');
+		} else {
+			externalSignal.addEventListener('abort', () => {
+				proxyAbort.abort('aborted by external signal');
+			}, { once: true });
+		}
+	}
+
 	// `throwHttpErrors: false` で 4xx/5xx を例外にせず、自前で StatusError に変換する。
-	// got のデフォルト (`throwHttpErrors: true`) のままだと proxy 自身の 403 (HMAC 失敗等) が
-	// 生の `Got.HTTPError` で外側に伝播してしまい、`categorizeError` のシグナル品質が落ちる。
 	const proxyResponse = await got(proxyUrl, {
 		method: 'GET',
 		headers: {
@@ -165,6 +179,7 @@ export async function viaProxyWorker(args: GotOptions, cfg: ProxyFallbackConfig)
 		retry: { limit: 0 },
 		responseType: 'buffer',
 		throwHttpErrors: false,
+		signal: proxyAbort.signal,
 	}) as unknown as Got.Response<Buffer>;
 
 	// HTTP ステータスエラーの整形 (StatusError に変換、got.ts の receiveResponse と同じ規則)

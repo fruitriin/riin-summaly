@@ -208,6 +208,13 @@ export type GeneralScrapingOptions = {
 	curlCffiFallback?: import('@/utils/curl-cffi-fetch.js').CurlCffiFallbackConfig;
 
 	/**
+	 * Hedged race の champion 単独猶予期間 (ms)。phase18 で導入。
+	 * champion がこの時間内に valid な response を返さなければ、challengers (残り全 strategy) を
+	 * 並列発火する。デフォルト 5000 (5 秒)。0 にすると即時並列発火 (debug / explore 用)。
+	 */
+	hedgedThresholdMs?: number;
+
+	/**
 	 * @internal
 	 * 経路学習キャッシュの記録 context を伝達する mutable side-channel。
 	 * `summaly()` が `{}` を渡し、`scpaping()` が読み書きする。`summaly()` が Summary 確定後に

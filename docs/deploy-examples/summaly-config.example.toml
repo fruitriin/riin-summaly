@@ -42,9 +42,10 @@ enabled = false
 # projectDir = "/path/to/summaly/tools/curl-cffi-fetcher"
 
 [scraping.fallback]
-# bot block (4xx / WAF 黙殺) に当たったら別 UA で 1 回リトライ (phase11.9)。
+# phase18 hedge race の fallback_ua 経路として並列発火する (旧 phase11.9 cascade を継承)。
 # 省略時 UA は `facebookexternalhit/1.1`。
 enabled = true
+# hedgedThresholdMs = 5000  # champion 単独猶予期間。経過したら challenger 並列発火 (default 5000ms)
 
 [plugins]
 allowed = [

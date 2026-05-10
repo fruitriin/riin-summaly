@@ -518,4 +518,10 @@ export type CacheRecordingState = {
 	recordKey?: string;
 	strategy?: DomainStrategy;
 	gateFailedNeutral?: boolean;
+	/** phase18 hedged race: 並列発火が起きたか (pino ログ用) */
+	hedgeFired?: boolean;
+	/** phase18 hedged race: 各経路の outcome (pino ログ用) */
+	hedgeOutcomes?: Partial<Record<DomainStrategy, 'valid' | 'invalid' | 'error' | 'gate_failed'>>;
+	/** phase18 hedged race: 各経路の completion latency ms (pino ログ用) */
+	hedgeLatencyMs?: Partial<Record<DomainStrategy, number>>;
 };
