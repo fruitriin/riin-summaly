@@ -30,8 +30,22 @@ import { getBigGenreName, getGenreName } from '@/utils/syosetu-genres.js';
 
 export const name = 'syosetu';
 
+// HEAD probe (followRedirects) を skip して原 URL で API 経路に直接乗る。
+// 詳細は AGE_AUTH_HOST 定義箇所のコメント参照。
+export const skipRedirectResolution = true;
+
 const NCODE_HOST_REGULAR = /^ncode\.syosetu\.com$/;
 const NCODE_HOST_R18 = /^novel18\.syosetu\.com$/;
+// **年齢確認ゲート救援**: novel18.syosetu.com への通常 GET (例: `SummalyBot/x.y.z` UA) は
+// 302 で `https://nl.syosetu.com/redirect/ageauth/?url=<encoded>&hash=<hex>` にリダイレクトされる。
+// `summaly()` の HEAD probe (`followRedirects`) で解決された後の URL では test() が外れて general()
+// にフォールバックし、年齢確認ページの OGP (title="年齢確認" / sitename="nl.syosetu.com") を返してしまう。
+//
+// **対策 1**: `skipRedirectResolution = true` で HEAD probe をスキップし最初から原 URL で API 直叩き経路に乗せる
+// **対策 2**: 何らかの経路で ageauth URL が直接渡された場合 (Mi 側仕様変更等) の defense-in-depth
+//   として、ageauth URL を test() でマッチさせて `?url=` パラメータから元 URL を unwrap する
+const AGE_AUTH_HOST = /^nl\.syosetu\.com$/;
+const AGE_AUTH_PATH = /^\/redirect\/ageauth\/?$/;
 // **ncode 形式の精度** (W-1 review feedback): 公式仕様によると ncode は `n` + 数字 + 英字混在で
 // 最短 7 文字程度 (例: `n7587fe`、`n9999zz`)。`/novelview/` `/ncode/` `/novels/` 等の他パスを
 // 誤マッチさせないため `n + 数字 1+ + 英字 1+` を最低条件にする (純英字列の他パスを構造的に除外)。
@@ -52,9 +66,28 @@ const SITENAME_R18 = 'ノクターンノベルズ / ムーンライトノベル�
 const STORY_CARD_CLIP_LENGTH = 80; // card style description のあらすじ抜粋長
 const STORY_EMBED_CLIP_LENGTH = 300; // embed のあらすじ表示長
 
+/**
+ * ageauth URL (`https://nl.syosetu.com/redirect/ageauth/?url=<encoded>&hash=...`) なら
+ * `?url=` パラメータから元 URL を取り出して返す。それ以外なら入力をそのまま返す。
+ * `?url` パラメータが壊れている / inner URL が parse 失敗のときは null を返す
+ * (test() / extractNcodeAndR18 で false / null として扱われ、最終的に general() フォールバック)。
+ */
+export function unwrapAgeAuthUrl(url: URL): URL | null {
+	if (!AGE_AUTH_HOST.test(url.hostname) || !AGE_AUTH_PATH.test(url.pathname)) return url;
+	const inner = url.searchParams.get('url');
+	if (inner === null || inner === '') return null;
+	try {
+		return new URL(inner);
+	} catch {
+		return null;
+	}
+}
+
 export function test(url: URL): boolean {
-	if (!NCODE_HOST_REGULAR.test(url.hostname) && !NCODE_HOST_R18.test(url.hostname)) return false;
-	return NCODE_PATH.test(url.pathname);
+	const target = unwrapAgeAuthUrl(url);
+	if (target === null) return false;
+	if (!NCODE_HOST_REGULAR.test(target.hostname) && !NCODE_HOST_R18.test(target.hostname)) return false;
+	return NCODE_PATH.test(target.pathname);
 }
 
 /**
@@ -70,8 +103,11 @@ export function test(url: URL): boolean {
  * description を「各話タイトル」に上書きする分岐に使う。
  */
 export function extractNcodeAndR18(url: URL): { ncode: string; isR18: boolean; chapter: string | null } | null {
-	const isR18 = NCODE_HOST_R18.test(url.hostname);
-	const m = NCODE_PATH.exec(url.pathname);
+	// ageauth URL なら inner url パラメータから元 URL を取り出す (defense-in-depth、対策 2)
+	const target = unwrapAgeAuthUrl(url);
+	if (target === null) return null;
+	const isR18 = NCODE_HOST_R18.test(target.hostname);
+	const m = NCODE_PATH.exec(target.pathname);
 	if (m === null) return null;
 	// 第 2 alt (`\/.*`) で受けたとき m[2] は undefined。RegExp 仕様上「unmatched optional group」は
 	// undefined だが TS は strict noUncheckedIndexedAccess なしでは string 型に推論するため `?? null`
@@ -91,7 +127,9 @@ export interface SyosetuNovelData {
 	story?: unknown;
 	biggenre?: unknown;
 	genre?: unknown;
-	novel_type?: unknown; // 1=連載, 2=短編
+	// なろう API は `noveltype` (アンダースコアなし) を返す。`of=nt` で要求するが、
+	// レスポンスフィールド名は `noveltype` (公式仕様、実 API レスポンスで確認)。
+	noveltype?: unknown; // 1=連載, 2=短編
 	end?: unknown; // 0=連載中, 1=完結
 	isr15?: unknown; // 0/1 R-15
 	iszankoku?: unknown; // 0/1 残酷描写あり
@@ -143,31 +181,16 @@ function composeMarkers(novel: SyosetuNovelData): string {
 
 /**
  * card style 用の description を組み立てる (Misskey の 1 行 description に詰める)。
- * 例: `作者: 山田太郎 / ハイファンタジー〔ファンタジー〕 / 連載中 [R-15] / あらすじ: 異世界に転生した主人公が…`
+ * **あらすじだけ**を返す方針 (作者 / ジャンル / ステータスを含めるとカード幅であらすじが
+ * 見切れてしまうため、メタ情報は embed iframe に集約する)。
+ * 例: `あらすじ: 異世界に転生した主人公が、運命の少女と出会い世界を救うまでの物語。…`
+ *
+ * `story` が null (API レスポンス欠損 / HTML スクレイプ失敗) のときは空文字を返す。
  */
 export function composeDescription(novel: SyosetuNovelData): string {
-	const writer = asString(novel.writer);
-	const genreId = asNumber(novel.genre);
-	const novelType = asNumber(novel.novel_type);
-	const end = asNumber(novel.end);
-
-	const parts: string[] = [];
-	if (writer != null) parts.push(`作者: ${writer}`);
-	if (genreId != null) parts.push(getGenreName(genreId));
-	if (novelType === 2) {
-		parts.push('短編');
-	} else if (novelType === 1) {
-		parts.push(end === 1 ? '完結' : '連載中');
-	}
-	const markers = composeMarkers(novel);
-	if (markers !== '') parts.push(markers);
-
 	const story = asString(novel.story);
-	if (story != null) {
-		parts.push(`あらすじ: ${clip(story, STORY_CARD_CLIP_LENGTH)}`);
-	}
-
-	return parts.join(' / ');
+	if (story == null) return '';
+	return `あらすじ: ${clip(story, STORY_CARD_CLIP_LENGTH)}`;
 }
 
 /**
@@ -198,13 +221,20 @@ export function composeEmbedHtml(novel: SyosetuNovelData, isR18: boolean): strin
 	const writerSafe = escapeHtml(asString(novel.writer) ?? '(作者不明)');
 	const bigGenreId = asNumber(novel.biggenre);
 	const genreId = asNumber(novel.genre);
+	// R-18 (novel18api) はジャンル (`biggenre` / `genre`) を返さない仕様のため、
+	// genreText が空のときは meta 行から省略する (フォールバック表記なし)。
 	const genreText = genreId != null
 		? `${getGenreName(genreId)}`
 		: (bigGenreId != null ? getBigGenreName(bigGenreId) : '');
 	const genreSafe = escapeHtml(genreText);
-	const novelType = asNumber(novel.novel_type);
+	const novelType = asNumber(novel.noveltype);
 	const end = asNumber(novel.end);
-	const statusText = novelType === 2 ? '短編' : (end === 1 ? '完結' : '連載中');
+	// なろう公式 API 仕様 (https://dev.syosetu.com/man/api/):
+	// **end: 短編作品と完結済作品は 0、連載中は 1**
+	// HTML フォールバック経路で end が undefined のときは status 行から省略 (空文字)。
+	const statusText = novelType === 2
+		? '短編'
+		: (end === 1 ? '連載中' : (end === 0 ? '完結済' : ''));
 	const statusSafe = escapeHtml(statusText);
 	const markersSafe = escapeHtml(composeMarkers(novel));
 	const sitenameSafe = escapeHtml(isR18 ? SITENAME_R18 : SITENAME_REGULAR);
@@ -212,6 +242,16 @@ export function composeEmbedHtml(novel: SyosetuNovelData, isR18: boolean): strin
 	const keywordsSafe = escapeHtml(formatKeywords(keywordRaw));
 	const storyRaw = asString(novel.story) ?? '';
 	const storySafe = escapeHtml(clip(storyRaw, STORY_EMBED_CLIP_LENGTH));
+
+	// 1 行に「作者 / 連載ステータス / ジャンル / 警告」を統合。Mi 側プレイヤーが
+	// 縦幅 = 横幅依存 + スクロール不可のため、重要要素を上に寄せる狙い。
+	// 空の項目は push 自体をスキップ (末尾余白 ` / ` が残らない)。
+	// 警告マーカー (`[残酷描写]` `[GL]` 等) だけは `<span class="markers">` で囲んで赤色強調する。
+	const metaParts = [`作者: ${writerSafe}`];
+	if (statusSafe !== '') metaParts.push(statusSafe);
+	if (genreSafe !== '') metaParts.push(genreSafe);
+	if (markersSafe !== '') metaParts.push(`<span class="markers">${markersSafe}</span>`);
+	const metaLine = metaParts.join(' / ');
 
 	// CSS は <style> ブロック 1 つに集約 (CSP `style-src 'unsafe-inline'` の許容範囲)。
 	// `white-space: pre-wrap` であらすじの改行を保持。
@@ -225,22 +265,18 @@ export function composeEmbedHtml(novel: SyosetuNovelData, isR18: boolean): strin
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif; padding: 1rem; line-height: 1.5; color: #222; background: #fff; overflow-y: auto; }
 .title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.5rem; word-break: break-word; }
-.meta { font-size: 0.85rem; color: #555; margin-bottom: 0.25rem; }
-.markers { font-size: 0.8rem; color: #b22; margin-bottom: 0.5rem; }
-.keywords { font-size: 0.8rem; color: #888; margin-bottom: 0.75rem; word-break: break-word; }
-.story-label { font-size: 0.85rem; font-weight: bold; color: #444; margin-bottom: 0.25rem; }
-.story { font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; color: #333; }
-.sitename { font-size: 0.75rem; color: #888; margin-top: 0.75rem; padding-top: 0.5rem; border-top: 1px solid #eee; }
+.meta { font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; word-break: break-word; }
+.markers { color: #b22; }
+.story { font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; color: #333; margin-bottom: 0.75rem; }
+.keywords { font-size: 0.8rem; color: #888; margin-bottom: 0.5rem; word-break: break-word; }
+.sitename { font-size: 0.75rem; color: #888; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid #eee; }
 </style>
 </head>
 <body>
 <div class="title">${titleSafe}</div>
-<div class="meta">作者: ${writerSafe}</div>
-<div class="meta">ジャンル: ${genreSafe} / ${statusSafe}</div>
-${markersSafe !== '' ? `<div class="markers">${markersSafe}</div>` : ''}
-${keywordsSafe !== '' ? `<div class="keywords">タグ: ${keywordsSafe}</div>` : ''}
-<div class="story-label">あらすじ</div>
+<div class="meta">${metaLine}</div>
 <div class="story">${storySafe}</div>
+${keywordsSafe !== '' ? `<div class="keywords">タグ: ${keywordsSafe}</div>` : ''}
 <div class="sitename">${sitenameSafe}</div>
 </body>
 </html>`;
@@ -284,9 +320,13 @@ export function buildSummaryFromApi(
  * なろう作品トップページの HTML から `SyosetuNovelData` 相当を抽出する (export してテスト容易化)。
  *
  * 取れるフィールド: `title` / `writer` / `story` / `isr15` / `iszankoku` / `isbl` / `isgl` / `keyword`。
- * 取れないフィールド (HTML には明示されていない): `biggenre` / `genre` / `novel_type` / `end`。
+ * 取れないフィールド (HTML には明示されていない): `biggenre` / `genre` / `noveltype` / `end`。
  * `composeDescription` / `composeMarkers` は asString/asNumber が undefined を null として扱うため、
- * 取れないフィールドは undefined のままで動作する。
+ * 取れないフィールドは undefined のままで動作する (status / ジャンル行から省略される)。
+ *
+ * **連載状態 (end) は HTML から取得しない**: なろう作品トップの「最終エピソード掲載日」/「最終更新日」
+ * ラベルから推定する案も検討したが、連載中作品でも「最終エピソード掲載日」が表示されるため
+ * ラベル差では区別できない (実機確認済)。誤推定で「完結済」と表示するより undefined で省略する方が安全。
  *
  * 構造依存: なろうの HTML 構造 (`p-novel__title` / `p-novel__author` / `#novel_ex` 等) が変わると壊れる。
  * 各セレクタは fallback テキストマッチを併用して可能な限りメンテ耐性を高めている。
@@ -331,10 +371,11 @@ export function extractNovelDataFromHtml($: CheerioAPI): SyosetuNovelData | null
 		title,
 		writer,
 		story,
-		// HTML から取れないフィールドは undefined (composeDescription 側で null として扱われる)
+		// HTML から取れないフィールドは undefined (composeDescription / composeEmbedHtml 側で
+		// null として扱われ、status / ジャンル行から省略される)
 		biggenre: undefined,
 		genre: undefined,
-		novel_type: undefined,
+		noveltype: undefined,
 		end: undefined,
 		isr15, iszankoku, isbl, isgl,
 		keyword,
@@ -380,6 +421,9 @@ export async function fetchChapterTitle(url: URL, opts?: GeneralScrapingOptions)
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
 	const extracted = extractNcodeAndR18(url);
 	if (extracted === null) return null;
+	// ageauth URL 経由で test() が通った場合、以後の経路 (HTML scrape / player URL 組み立て) では
+	// 元 URL に正規化する。Mi 側に渡る player URL も `?url=<原 URL>` の形になる。
+	const resolvedUrl = unwrapAgeAuthUrl(url) ?? url;
 	const apiUrl = buildApiUrl(extracted.ncode, extracted.isR18);
 
 	// **chapter URL では API + chapter HTML を並列取得** して 1 round-trip 分節約する。
@@ -387,7 +431,7 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	const [body, chapterTitle] = await Promise.all([
 		getJson(apiUrl, undefined, opts),
 		extracted.chapter != null
-			? fetchChapterTitle(url, opts).catch(() => null)
+			? fetchChapterTitle(resolvedUrl, opts).catch(() => null)
 			: Promise.resolve(null),
 	]);
 
@@ -398,7 +442,7 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	const embedBaseUrl = opts?._embedBaseUrl;
 	let summary: Summary;
 	if (novel !== null) {
-		summary = buildSummaryFromApi(novel, url, extracted.isR18, embedBaseUrl);
+		summary = buildSummaryFromApi(novel, resolvedUrl, extracted.isR18, embedBaseUrl);
 	} else {
 		// allcount=0 = なろう公式 API の index に載っていない。古い作品 / API インデックス漏れ等で
 		// HTML ページは正常に存在し OGP も完備しているケースがある (本番ログで `n3862be` 等で観測)。
@@ -409,13 +453,13 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 		// 最終 fallback として `general()` で OGP scrape する。renderEmbed (/embed) は API データに
 		// 完全依存するため allcount=0 では throw のまま。
 		const fallbackUrl = extracted.chapter != null
-			? new URL(`https://${url.hostname}/${extracted.ncode}/`)
-			: url;
+			? new URL(`https://${resolvedUrl.hostname}/${extracted.ncode}/`)
+			: resolvedUrl;
 		const fromHtml = await fetchNovelFromHtml(fallbackUrl, opts);
 		if (fromHtml !== null) {
-			summary = buildSummaryFromApi(fromHtml, url, extracted.isR18, embedBaseUrl);
+			summary = buildSummaryFromApi(fromHtml, resolvedUrl, extracted.isR18, embedBaseUrl);
 		} else {
-			return general(url, { ...opts, userAgent: 'Twitterbot/1.0' });
+			return general(resolvedUrl, { ...opts, userAgent: 'Twitterbot/1.0' });
 		}
 	}
 

@@ -26,8 +26,8 @@ const SAMPLE_NOVEL: SyosetuNovelData = {
 	story: '異世界に転生した主人公が、運命の少女と出会い世界を救うまでの物語。\n章ごとに視点が変わる構成。',
 	biggenre: 2, // ファンタジー
 	genre: 201, // ハイファンタジー
-	novel_type: 1, // 連載
-	end: 0, // 連載中
+	noveltype: 1, // 連載
+	end: 1, // 連載中 (なろう公式 API: 短編/完結済=0、連載中=1)
 	isr15: 0,
 	iszankoku: 1, // 残酷描写あり
 	isbl: 0,
@@ -63,6 +63,22 @@ describe('syosetu test() (URL マッチ)', () => {
 		// `n` + 数字のみ (英字が無い、ncode 形式でない)
 		expect(syosetuTest(new URL('https://ncode.syosetu.com/n12345/'))).toBe(false);
 	});
+
+	test('年齢確認ゲート URL (nl.syosetu.com/redirect/ageauth/) にも内側 URL がマッチすれば true', () => {
+		// novel18 への通常 GET が 302 で返す redirect 先。何らかの経路で summaly に到達した場合の救援
+		const ageAuthUrl = new URL('https://nl.syosetu.com/redirect/ageauth/?url=https%3A%2F%2Fnovel18.syosetu.com%2Fn8344gr%2F&hash=6b23ac96');
+		expect(syosetuTest(ageAuthUrl)).toBe(true);
+	});
+
+	test('ageauth URL の inner が ncode 形式でないなら false', () => {
+		const ageAuthUrl = new URL('https://nl.syosetu.com/redirect/ageauth/?url=https%3A%2F%2Fexample.com%2F&hash=xxx');
+		expect(syosetuTest(ageAuthUrl)).toBe(false);
+	});
+
+	test('ageauth URL に ?url= が無ければ false', () => {
+		const ageAuthUrl = new URL('https://nl.syosetu.com/redirect/ageauth/');
+		expect(syosetuTest(ageAuthUrl)).toBe(false);
+	});
 });
 
 describe('extractNcodeAndR18', () => {
@@ -90,6 +106,11 @@ describe('extractNcodeAndR18', () => {
 		const r = extractNcodeAndR18(new URL('https://ncode.syosetu.com/N7587FE/'));
 		expect(r).toEqual({ ncode: 'n7587fe', isR18: false, chapter: null });
 	});
+
+	test('ageauth URL から R-18 元 URL を unwrap', () => {
+		const r = extractNcodeAndR18(new URL('https://nl.syosetu.com/redirect/ageauth/?url=https%3A%2F%2Fnovel18.syosetu.com%2Fn8344gr%2F&hash=xxx'));
+		expect(r).toEqual({ ncode: 'n8344gr', isR18: true, chapter: null });
+	});
 });
 
 describe('buildApiUrl', () => {
@@ -105,44 +126,29 @@ describe('buildApiUrl', () => {
 });
 
 describe('composeDescription', () => {
-	test('連載中 + 残酷描写 + あらすじ抜粋', () => {
+	// **設計**: card description は **あらすじだけ** を返す方針 (作者 / ジャンル /
+	// 連載ステータス / マーカーは embed iframe に集約。Misskey カード幅であらすじが
+	// 見切れないようにするため)。
+
+	test('あらすじだけが返る (作者・ジャンル・連載ステータス・マーカーは含めない)', () => {
 		const desc = composeDescription(SAMPLE_NOVEL);
-		expect(desc).toContain('作者: 山田太郎');
-		expect(desc).toContain('ハイファンタジー〔ファンタジー〕');
-		expect(desc).toContain('連載中');
-		expect(desc).toContain('[残酷描写]');
-		expect(desc).toContain('あらすじ:');
-		// あらすじが clip 80 で切れる
-		expect(desc.length).toBeLessThan(300);
-	});
-
-	test('完結作品', () => {
-		const desc = composeDescription({ ...SAMPLE_NOVEL, end: 1 });
-		expect(desc).toContain('完結');
+		expect(desc).toMatch(/^あらすじ: /);
+		expect(desc).toContain('異世界に転生した主人公');
+		expect(desc).not.toContain('作者:');
 		expect(desc).not.toContain('連載中');
-	});
-
-	test('短編 (novel_type = 2)', () => {
-		const desc = composeDescription({ ...SAMPLE_NOVEL, novel_type: 2 });
-		expect(desc).toContain('短編');
-		expect(desc).not.toContain('連載中');
-	});
-
-	test('R-15 + BL マーカー', () => {
-		const desc = composeDescription({ ...SAMPLE_NOVEL, isr15: 1, isbl: 1, iszankoku: 0 });
-		expect(desc).toContain('[R-15]');
-		expect(desc).toContain('[BL]');
+		expect(desc).not.toContain('ハイファンタジー');
 		expect(desc).not.toContain('[残酷描写]');
 	});
 
-	test('writer なし', () => {
-		const desc = composeDescription({ ...SAMPLE_NOVEL, writer: undefined });
-		expect(desc).not.toContain('作者:');
+	test('あらすじが clip 80 文字で切れる', () => {
+		const desc = composeDescription({ ...SAMPLE_NOVEL, story: 'あ'.repeat(500) });
+		// 「あらすじ: 」 prefix + clip 結果 (最大 80 文字 + … 等)
+		expect(desc.length).toBeLessThan(150);
 	});
 
-	test('未知ジャンル ID は "その他" にフォールバック', () => {
-		const desc = composeDescription({ ...SAMPLE_NOVEL, genre: 99999 });
-		expect(desc).toContain('その他');
+	test('story が undefined なら空文字を返す', () => {
+		const desc = composeDescription({ ...SAMPLE_NOVEL, story: undefined });
+		expect(desc).toBe('');
 	});
 });
 
@@ -198,13 +204,16 @@ describe('composeEmbedHtml', () => {
 		expect(html).not.toMatch(/<script[\s>]/i);
 	});
 
-	test('title / writer / 作品情報が含まれる', () => {
+	test('title / writer / 作品情報 / マーカーが meta 行に含まれる', () => {
 		const html = composeEmbedHtml(SAMPLE_NOVEL, false);
 		expect(html).toContain('サンプル長編タイトル');
 		expect(html).toContain('山田太郎');
 		expect(html).toContain('ハイファンタジー〔ファンタジー〕');
 		expect(html).toContain('連載中');
+		// マーカーは独立 div ではなく meta 行末尾に <span class="markers"> で統合 (赤文字強調)
 		expect(html).toContain('[残酷描写]');
+		expect(html).not.toContain('<div class="markers"');
+		expect(html).toContain('<span class="markers">[残酷描写]</span>');
 	});
 
 	test('keyword は上位 5 件のカンマ区切り', () => {
@@ -271,6 +280,70 @@ describe('composeEmbedHtml', () => {
 		expect(html).toContain('(タイトル不明)');
 		expect(html).toContain('(作者不明)');
 	});
+
+	test('meta 行は「作者 / 連載ステータス / ジャンル / 警告」の順序で 1 行統合 (警告は赤文字 span)', () => {
+		const html = composeEmbedHtml(SAMPLE_NOVEL, false);
+		// SAMPLE_NOVEL: noveltype=1 / end=1 (連載中) / genre=201 (ハイファンタジー) / iszankoku=1 (残酷描写)
+		// → `作者: 山田太郎 / 連載中 / ハイファンタジー〔ファンタジー〕 / <span class="markers">[残酷描写]</span>`
+		expect(html).toMatch(/<div class="meta">作者: 山田太郎 \/ 連載中 \/ ハイファンタジー〔ファンタジー〕 \/ <span class="markers">\[残酷描写\]<\/span><\/div>/);
+		// markers は独立 div ではなく meta 行内の span で統合
+		expect(html).not.toContain('<div class="markers"');
+		// CSS で赤文字定義が存在する
+		expect(html).toContain('.markers { color: #b22; }');
+	});
+
+	test('マーカー無しの作品は meta 行末尾の警告 span が省略される', () => {
+		const clean: SyosetuNovelData = {
+			...SAMPLE_NOVEL,
+			isr15: 0, iszankoku: 0, isbl: 0, isgl: 0,
+		};
+		const html = composeEmbedHtml(clean, false);
+		expect(html).toMatch(/<div class="meta">作者: 山田太郎 \/ 連載中 \/ ハイファンタジー〔ファンタジー〕<\/div>/);
+		expect(html).not.toContain('<span class="markers">');
+		expect(html).not.toContain('[残酷描写]');
+	});
+
+	test('ジャンル取得不可 (R-18 等) のとき meta 行からジャンルを省略', () => {
+		// novel18api はジャンルフィールドを返さない仕様。biggenre/genre が undefined のとき
+		// 「作者: ... / 連載中 / <span class="markers">[残酷描写]</span>」の 3 要素になる。
+		const r18Sample: SyosetuNovelData = {
+			...SAMPLE_NOVEL,
+			biggenre: undefined,
+			genre: undefined,
+		};
+		const html = composeEmbedHtml(r18Sample, true);
+		expect(html).toMatch(/<div class="meta">作者: 山田太郎 \/ 連載中 \/ <span class="markers">\[残酷描写\]<\/span><\/div>/);
+	});
+
+	test('複数マーカー (R-15 + BL + 残酷描写) は meta 行末尾の span 内にスペース区切りで連結', () => {
+		const html = composeEmbedHtml({ ...SAMPLE_NOVEL, isr15: 1, isbl: 1 }, false);
+		expect(html).toMatch(/\/ <span class="markers">\[R-15\] \[残酷描写\] \[BL\]<\/span><\/div>/);
+	});
+
+	test('完結作品で「完結済」表記', () => {
+		// なろう公式 API: end = 0 が完結済 (短編も 0、連載中は 1)
+		const html = composeEmbedHtml({ ...SAMPLE_NOVEL, end: 0 }, false);
+		expect(html).toContain('完結済');
+		expect(html).not.toMatch(/\/ 連載中</);
+	});
+
+	test('短編 (noveltype = 2) で「短編」表記', () => {
+		const html = composeEmbedHtml({ ...SAMPLE_NOVEL, noveltype: 2 }, false);
+		expect(html).toContain('短編');
+		expect(html).not.toMatch(/\/ 連載中</);
+	});
+
+	test('「あらすじ」見出しなし、タグはあらすじの後ろ', () => {
+		const html = composeEmbedHtml(SAMPLE_NOVEL, false);
+		// あらすじラベル div は撤廃 (story 本文だけ表示)
+		expect(html).not.toContain('class="story-label"');
+		expect(html).not.toMatch(/>あらすじ</);
+		// タグはあらすじより後ろに配置 (重要要素を上に寄せる Mi プレイヤー対策)
+		const storyIdx = html.indexOf('class="story"');
+		const tagsIdx = html.indexOf('class="keywords"');
+		expect(storyIdx).toBeGreaterThan(0);
+		expect(tagsIdx).toBeGreaterThan(storyIdx);
+	});
 });
 
 describe('extractNovelDataFromHtml (API allcount=0 fallback)', () => {
@@ -316,18 +389,21 @@ describe('extractNovelDataFromHtml (API allcount=0 fallback)', () => {
 		expect(data?.keyword).not.toContain('残酷な描写あり');
 	});
 
-	test('HTML 由来データで取れないフィールドは undefined (composeDescription が動く)', () => {
+	test('HTML 由来データで取れないフィールドは undefined (embed の meta 行から省略される)', () => {
 		const $ = cheerio.load(SAMPLE_HTML);
 		const data = extractNovelDataFromHtml($);
 		expect(data?.biggenre).toBeUndefined();
 		expect(data?.genre).toBeUndefined();
-		expect(data?.novel_type).toBeUndefined();
+		expect(data?.noveltype).toBeUndefined();
+		// HTML 経路では連載状態 (end) を取らない (連載中作品でも「最終エピソード掲載日」が
+		// 表示されるためラベル差で連載/完結を区別できない)
 		expect(data?.end).toBeUndefined();
-		// composeDescription が undefined を null として処理し、ジャンル/連載状態 をスキップして動く
+		// composeDescription はあらすじだけ返す (新仕様)。作者/連載状態/警告は embed 側に集約
 		const desc = composeDescription(data!);
-		expect(desc).toContain('作者: かっぱ');
-		expect(desc).toContain('[残酷描写]');
-		expect(desc).toContain('あらすじ');
+		expect(desc).toMatch(/^あらすじ: /);
+		expect(desc).not.toContain('作者:');
+		expect(desc).not.toContain('連載中');
+		expect(desc).not.toContain('完結済');
 	});
 
 	test('buildSummaryFromApi に流して Summary が組み立てられる', () => {
@@ -338,7 +414,9 @@ describe('extractNovelDataFromHtml (API allcount=0 fallback)', () => {
 		expect(summary.title).toBe('俺たちの魔王はこれからだ。');
 		expect(summary.sitename).toBe('小説家になろう');
 		expect(summary.sensitive).toBe(false);
-		expect(summary.description).toContain('作者: かっぱ');
+		// 新仕様: description はあらすじのみ
+		expect(summary.description).toMatch(/^あらすじ: /);
+		expect(summary.description).toContain('高校生の透');
 	});
 
 	test('複数マーカー prefix (R15 + ボーイズラブ) を除去する', () => {

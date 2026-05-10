@@ -47,6 +47,23 @@ const proxyEnv = {
 };
 const proxyAvailable = proxyEnv.url !== '' && proxyEnv.secret !== '';
 
+// `??` は `null` / `undefined` のみを fallback にするため、空文字列の HOST が
+// `listen({ host: '' })` に渡ると IPv6 全インターフェースバインドになり SSRF リレーになりうる。
+// 空文字列も fallback 対象にする。
+const rawHost = process.env.HOST;
+const host = (rawHost != null && rawHost.trim() !== '') ? rawHost.trim() : '127.0.0.1';
+
+// `Number('')` は `0`、`Number('abc')` は `NaN`。どちらもサイレントな誤動作になるため厳格に検証する。
+const rawPort = process.env.PORT;
+const port = (rawPort != null && /^\d+$/.test(rawPort)) ? parseInt(rawPort, 10) : 3000;
+
+// **dev 用 embedBaseUrl**: `summaly()` に渡すと renderEmbed 対応プラグイン (syosetu 等) が
+// `Summary.player.url = <base>/embed?url=<encoded>` を組み立てる。dev では自前の /embed ルート
+// で renderEmbed を実行し、UI から iframe 表示できるようにする。
+// HOST=127.0.0.1 がデフォルトなのでブラウザからアクセスする想定で localhost を使う
+// (HOST=0.0.0.0 等で起動する場合は env で `EMBED_PUBLIC_URL` 上書き可能)。
+const embedBaseUrl = process.env.EMBED_PUBLIC_URL ?? `http://localhost:${port}`;
+
 const _filename = fileURLToPath(import.meta.url);
 const _dirname = dirname(_filename);
 
@@ -107,6 +124,9 @@ app.get<{ Querystring: SummalyQuery }>('/api/summaly', async (req, reply) => {
 		useRange: req.query.useRange === '1',
 		enablePdf: req.query.enablePdf === '1',
 		followRedirects: true,
+		// renderEmbed 対応プラグイン (syosetu 等) が `Summary.player.url` を組み立てるのに使う。
+		// dev サーバ自身が下記 /embed ルートで renderEmbed を実行する。
+		embedBaseUrl,
 	};
 	if (req.query.allowedPlugins) {
 		opts.allowedPlugins = req.query.allowedPlugins.split(',').map(s => s.trim()).filter(Boolean);
@@ -148,6 +168,68 @@ app.get('/api/sample-urls', async () => ({
 	groups: sampleGroups,
 	plugins: builtinPluginNames,
 }));
+
+// **dev /embed ルート** (本番 `/embed` ルート in src/index.ts L904- の dev 用最小再実装)。
+// `Summary.player.url = http://localhost:3000/embed?url=<encoded>` を iframe で開いたときの実体。
+// 本番より緩い構成 (allowedPlugins 制限なし、CSP frameAncestors は localhost 自身のみ許可)。
+// 動作確認用なので「summaly() の出口で得た player.url をブラウザで実際にレンダリング」できれば十分。
+app.get<{ Querystring: { url?: string } }>('/embed', async (req, reply) => {
+	const rawUrl = req.query.url;
+	if (rawUrl == null || rawUrl === '') {
+		reply.code(400);
+		reply.type('text/plain; charset=utf-8');
+		return 'url query required';
+	}
+	let parsedUrl: URL;
+	try {
+		parsedUrl = new URL(rawUrl);
+	} catch {
+		reply.code(400);
+		reply.type('text/plain; charset=utf-8');
+		return 'invalid url';
+	}
+	if (parsedUrl.protocol !== 'https:') {
+		reply.code(400);
+		reply.type('text/plain; charset=utf-8');
+		return 'https only';
+	}
+	const plugin = builtinPlugins.find(p =>
+		p.name != null && p.renderEmbed != null && p.test(parsedUrl),
+	);
+	if (plugin?.renderEmbed == null) {
+		reply.code(404);
+		reply.type('text/plain; charset=utf-8');
+		return 'no plugin matched';
+	}
+	let result;
+	try {
+		result = await plugin.renderEmbed(parsedUrl, {});
+	} catch (err) {
+		app.log.error(
+			{ err: err instanceof Error ? { name: err.name, message: err.message } : { message: String(err) } },
+			'embed renderEmbed failed',
+		);
+		reply.code(500);
+		reply.type('text/plain; charset=utf-8');
+		return 'render failed';
+	}
+	// defense-in-depth: <script> 混入を構造的にブロック (本番と同じ契約)
+	if (/<script[\s>/]/i.test(result.body)) {
+		app.log.error('embed: renderEmbed returned body containing <script>, rejecting');
+		reply.code(500);
+		reply.type('text/plain; charset=utf-8');
+		return 'render failed';
+	}
+	reply.type('text/html; charset=utf-8');
+	// dev では frame-ancestors を自身 (= dev UI) に限定。本番は config の frameAncestors。
+	reply.header(
+		'Content-Security-Policy',
+		`default-src 'none'; img-src https:; style-src 'unsafe-inline'; frame-ancestors 'self' http://localhost:${port} http://127.0.0.1:${port}`,
+	);
+	reply.header('X-Content-Type-Options', 'nosniff');
+	reply.header('Referrer-Policy', 'no-referrer');
+	return result.body;
+});
 
 // dev UI が起動時に呼ぶ。env の有無で UI のチェックボックス表示を切り替える。
 // secret 自体は **絶対に返さない**（UI の info 表示用に proxyAvailable と URL の host だけ）。
@@ -197,16 +279,6 @@ await app.register(fastifyStatic, {
 	root: resolve(_dirname, 'public'),
 	prefix: '/',
 });
-
-// `??` は `null` / `undefined` のみを fallback にするため、空文字列の HOST が
-// `listen({ host: '' })` に渡ると IPv6 全インターフェースバインドになり SSRF リレーになりうる。
-// 空文字列も fallback 対象にする。
-const rawHost = process.env.HOST;
-const host = (rawHost != null && rawHost.trim() !== '') ? rawHost.trim() : '127.0.0.1';
-
-// `Number('')` は `0`、`Number('abc')` は `NaN`。どちらもサイレントな誤動作になるため厳格に検証する。
-const rawPort = process.env.PORT;
-const port = (rawPort != null && /^\d+$/.test(rawPort)) ? parseInt(rawPort, 10) : 3000;
 
 try {
 	await app.listen({ port, host });

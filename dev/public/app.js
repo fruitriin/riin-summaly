@@ -356,11 +356,15 @@ function renderPlayer(result) {
 		return;
 	}
 
-	// summaly 出口で sanitize 済みだが、UI 側でも防御的に https のみ通す
-	if (!/^https:\/\//i.test(player.url)) {
+	// summaly 出口で sanitize 済みだが、UI 側でも防御的に https のみ通す。
+	// dev サーバ自身が組み立てる localhost / 127.0.0.1 (= 自前 /embed エンドポイント) も許可
+	// (本番と同じ embed iframe の動作確認のため)。
+	const isHttps = /^https:\/\//i.test(player.url);
+	const isLocalDev = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(player.url);
+	if (!isHttps && !isLocalDev) {
 		const warn = document.createElement('div');
 		warn.className = 'empty';
-		warn.textContent = `player.url が非 https のためレンダリングをスキップしました: ${player.url}`;
+		warn.textContent = `player.url が非 https かつ非 localhost のためレンダリングをスキップしました: ${player.url}`;
 		panePlayer.appendChild(warn);
 		return;
 	}

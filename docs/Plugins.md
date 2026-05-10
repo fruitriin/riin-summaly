@@ -283,13 +283,14 @@ interface SummalyPlugin {
 |:--|:--|
 | マッチ | `(?:ncode|novel18)\.syosetu\.com` (anchored) + path に ncode (`n[0-9]+[a-z][0-9a-z]*` 形式)。chapter URL `/<ncode>/<chapter>/` も作品レベルの ncode に集約してマッチ |
 | 取得方法 | なろう公式 API (`api.syosetu.com/{novelapi|novel18api}/api/?ncode=<ncode>&out=json&of=t-w-s-bg-g-nt-e-ir15-izk-ibl-igl-k`) を `getJson` で直叩き。HTML スクレイプを使わない (= PV カウント影響無し、UA 偽装不要) |
-| 抽出フィールド | API レスポンス `[{allcount}, novelData]` から title / writer / story / biggenre / genre / novel_type / end / isr15 / iszankoku / isbl / isgl / keyword を抽出 |
-| card style description | `composeDescription`: `作者: <writer> / <ジャンル名> / <連載中\|完結\|短編> / [R-15] [残酷描写] [BL] [GL] / あらすじ: <story 80 文字 clip>` を 1 行整形 |
-| embed (renderEmbed) | `composeEmbedHtml`: 完全な HTML5 ドキュメント (タイトル / 作者 / ジャンル + 状態 / マーカー / タグ上位 5 件 / あらすじ 300 文字 clip) を返す。**全フィールド `escapeHtml` で entity 化** + CSP `default-src 'none'` (Step 1) で二重 XSS 防御 |
-| R-18 | `novel18.syosetu.com` ドメインで `sensitive: true` + sitename `'ノクターンノベルズ / ムーンライトノベルズ'` に切替。API も `/novel18api/` に切替 |
+| 抽出フィールド | API レスポンス `[{allcount}, novelData]` から title / writer / story / biggenre / genre / **noveltype** (アンダースコア無し、公式仕様) / end / isr15 / iszankoku / isbl / isgl / keyword を抽出。**`end` 仕様**: 短編作品と完結済作品は 0、連載中は 1 (https://dev.syosetu.com/man/api/) |
+| card style description | `composeDescription`: **あらすじだけ**を `あらすじ: <story 80 文字 clip>` 形式で返す (Misskey カード幅で description が複数要素入るとあらすじが見切れるため、メタ情報は embed iframe に集約) |
+| embed (renderEmbed) | `composeEmbedHtml`: 完全な HTML5 ドキュメント (タイトル / **「作者 / 連載ステータス / ジャンル / 警告」を 1 行統合** / あらすじ 300 文字 clip / タグ上位 5 件 / sitename) を返す。警告マーカー (`[残酷描写]` `[R-15]` `[BL]` `[GL]`) は meta 行内 `<span class="markers">` で **赤文字 `#b22` 強調**。**全フィールド `escapeHtml` で entity 化** + CSP `default-src 'none'` で二重 XSS 防御 |
+| R-18 | `novel18.syosetu.com` ドメインで `sensitive: true` + sitename `'ノクターンノベルズ / ムーンライトノベルズ'` に切替。API も `/novel18api/` に切替。R-18 API は `biggenre`/`genre`/`isr15` を返さない仕様のため、embed の meta 行ではジャンルを省略 |
+| 年齢確認ゲート | R-18 ドメインへの通常 GET は 302 で `https://nl.syosetu.com/redirect/ageauth/?url=<encoded>&hash=...` にリダイレクトされる。**対策 1**: `export const skipRedirectResolution = true` で HEAD probe をスキップし原 URL で API 直叩き経路に乗せる。**対策 2** (defense-in-depth): `unwrapAgeAuthUrl()` で ageauth URL を `?url=` パラメータから元 URL に unwrap (test() / extractNcodeAndR18 / summarize の冒頭で実行) |
 | ジャンル ID | `src/utils/syosetu-genres.ts` の `BIG_GENRE_NAMES` / `GENRE_NAMES` で大ジャンル + ジャンル ID → 表示名を変換。未知 ID は `'その他'` フォールバック |
 | 運用要件 | Fastify モードで `[plugins].allowed` に `"syosetu"`、embed 機能を使う場合は `[server].publicUrl` (https only) + `[embed].enabled = true` + `allowedPlugins = ["syosetu"]` 設定。library mode では player.url=null で card style のみ動作 |
-| 実装メモ | `n[0-9]+[a-z][0-9a-z]*` の正規表現で `/novelview/` `/ncode/` 等の他パスを構造的に除外 (phase13.1 W-1)。chapter URL の本文取得は API に存在しないため作品見出しと同じ Summary を返す (Plan で割り切り) |
+| 実装メモ | `n[0-9]+[a-z][0-9a-z]*` の正規表現で `/novelview/` `/ncode/` 等の他パスを構造的に除外。chapter URL の本文取得は API に存在しないため作品見出しと同じ Summary を返す。HTML フォールバック経路 (API allcount=0) では `noveltype` / `end` を取らない (連載中作品でも HTML に「最終エピソード掲載日」が表示されるためラベル差で連載/完結を区別不能、誤推定を避けて省略) |
 
 ### kakuyomu (カクヨム)
 

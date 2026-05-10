@@ -5,7 +5,7 @@
 
 phase 番号は **着手順**（数値が小さいほど先）。同じ大番号内（例: 2.1 と 2.2）は並列着手可能。
 
-## 現在のフェーズ: phase13.1 + phase14 ともにほぼ完了 (2026-05-08)。残るは UI 手動検証範囲のみ。auto-run 可能タスク完了状態
+## 現在のフェーズ: phase18 完了 (2026-05-10、phase18.1 派生まで)。auto-run 可能タスクは phase15.3 (DMM プラグイン、サイズ S) のみ残
 
 > **次サイクル候補消化状況** (`docs/knowhow/addf-dev-operation-patterns.md` 「auto-run 可能タスクが尽きたときの運用」参照):
 > 1. **Plan の半自動 Step を切り分けて API 部分だけ実装** — 候補なし (phase14 Step 5 API は実装済)
@@ -42,7 +42,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | 低 | 16.5 | docs/SETUP.md の `[scraping.proxy]` / `[scraping.curl_cffi]` / `[scraping.fallback]` セクションの詳細表 (`categories` / `domains` 設定例) を全面整理。phase16.3 で表面的整合性のみ取った状態のため、内部仕様の説明として残すか / 削除するか判断 | S | 未着手 |
 | 低 | 16.6 | proxy 実 HTTP 疎通テスト。Worker 側に `/health` endpoint 追加 + summaly 起動時に HMAC なしで GET → 200 確認。phase16.4 では placeholder 検出のみで止めた、実 HTTP は別 phase | S〜M | 未着手 |
 | 低 | 17.1 | [docs/plans/phase17.1-addf-upstream-prune-stale-markers.md](docs/plans/phase17.1-addf-upstream-prune-stale-markers.md) — `prune-stale-markers` スキルを ADDF 本体に upstream。summaly 側で実証済 (src/+bin/ で 156→5 件、96.8% 削減)。ADDF 利用プロジェクト全般の履歴マーカー累積問題への横展開 | S〜M | 未着手 (着手トリガー: ADDF 本体への寄与タイミング、急がない) |
-| 高 | 18 | [docs/plans/phase18-hedged-fallback.md](docs/plans/phase18-hedged-fallback.md) — Hedged fallback (champion / challenger 並列発火) で経路選定を全自動化。第一候補 (champion) 失敗 or 5 秒遅延で残り全 strategy を `Promise.any` 並列発火、最速 valid 結果を採用 + 即昇格 (1 回で promotion、N 連続要件なし、降格・除外なし)。Python 側 SSRF ガード追加 (`assert_public_ip`)。`[scraping.fallback].hedgedThresholdMs` 新規 (default 5000)。**経路問題だけのサイト (monotaro クラス) は plugin / config 編集なしで自動救援される** | M〜L | ほぼ完了 (2026-05-10、Step 1〜7 完了 619 件 pass。残: 本番デプロイ後の monotaro 動作確認 + 5 サイトバリエーション検証 — 運用者範囲。`domains` 物理撤廃 / プラグイン棚卸しは将来 phase) |
+| — | 18 | [docs/plans/phase18-hedged-fallback.md](docs/plans/phase18-hedged-fallback.md) — Hedged fallback (champion / challenger 並列発火) で経路選定を全自動化。第一候補 (champion) 失敗 or 5 秒遅延で残り全 strategy を `Promise.any` 並列発火、最速 valid 結果を採用 + 即昇格 (1 回で promotion、N 連続要件なし、降格・除外なし)。Python 側 SSRF ガード追加 (`assert_public_ip`)。`[scraping.fallback].hedgedThresholdMs` 新規 (default 5000)。**経路問題だけのサイト (monotaro クラス) は plugin / config 編集なしで自動救援される**。phase18.1 で healthcheck `uv run fetch --help` / monotaro fail mode J 整理 / Worker `ALLOWED_DOMAINS` 撤廃まで派生対応済 | M〜L | 完了 (2026-05-10、Step 1〜7 + phase18.1 派生まで完了 619 件 pass。`domains` 物理撤廃 / プラグイン棚卸し / 本番デプロイ動作確認は将来 phase or 運用者範囲) |
 
 ### 将来検討メモ (Plan は未起票)
 
@@ -100,7 +100,7 @@ phase14   ほぼ完了（Step 1+2+3+4+6+7+5 部分 (`/api/strategy-cache`) 完�
    ↓
 phase15.1 未着手（Playwright モード、fail mode I 救援。着手トリガー: 発生頻度月 N 件 / 個人的に preview したい SPA EC 増加）
    ↓
-phase18   未着手（Hedged fallback、champion / challenger 並列発火で経路選定全自動化、BREAKING）
+phase18   完了（Hedged fallback、champion / challenger 並列発火で経路選定全自動化、BREAKING、phase18.1 派生対応含む）
 ```
 
 ---
