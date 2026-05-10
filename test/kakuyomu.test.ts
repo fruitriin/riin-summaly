@@ -18,6 +18,8 @@ import {
 	composeDescription,
 	composeEmbedHtml,
 	buildSummaryFromWork,
+	extractEpisodeTitleFromOg,
+	extractEpisodeBody,
 	type KakuyomuWork,
 } from '@/plugins/kakuyomu.js';
 
@@ -194,6 +196,97 @@ describe('composeDescription', () => {
 		const desc = composeDescription(SAMPLE_WORK, '');
 		expect(desc).toMatch(/^あらすじ: /);
 		expect(desc).not.toContain('「」');
+	});
+
+	test('episode URL で episodeBody が取れたら本文先頭をあらすじ代わりに使う', () => {
+		// 各話の本文 1 行目以降を「あらすじ:」ラベル無しで表示 (本文先頭は「あらすじ」ではないため)
+		const body = '後宮の下っ端宮女の雨妹は、今日も元気に掃除に勤しんでいる。\n「綺麗になるって気持ちいい～♪」';
+		const desc = composeDescription(SAMPLE_WORK, '序章', body);
+		expect(desc).toMatch(/^「序章」 \/ /);
+		expect(desc).toContain('後宮の下っ端宮女の雨妹');
+		expect(desc).not.toContain('あらすじ:'); // 本文なのでラベル無し
+		expect(desc).not.toContain('結婚生活'); // catchphrase は使われない (episodeBody 優先)
+	});
+
+	test('episode URL で episodeBody 不在なら作品 catchphrase に fallback', () => {
+		const desc = composeDescription(SAMPLE_WORK, '序章', null);
+		expect(desc).toMatch(/^「序章」 \/ あらすじ: /);
+		expect(desc).toContain('結婚生活'); // catchphrase
+	});
+
+	test('episode URL で episodeBody 空文字も fallback 扱い', () => {
+		const desc = composeDescription(SAMPLE_WORK, '序章', '');
+		expect(desc).toMatch(/^「序章」 \/ あらすじ: /);
+	});
+
+	test('episodeBody が長い場合は 80 文字で clip', () => {
+		const longBody = 'あ'.repeat(500);
+		const desc = composeDescription(SAMPLE_WORK, '序章', longBody);
+		expect(desc.length).toBeLessThan(150);
+	});
+});
+
+describe('extractEpisodeTitleFromOg', () => {
+	test('og:title から各話タイトルを抽出', () => {
+		expect(extractEpisodeTitleFromOg('序章 - 百花宮のお掃除係 - カクヨム')).toBe('序章');
+	});
+
+	test('作品タイトルに " - " が含まれる場合は末尾の " - " で split', () => {
+		// 末尾 ' - ' で split = `<EpisodeTitle>` / `<WorkTitle - subtitle>`
+		expect(extractEpisodeTitleFromOg('第1話 - 異世界転生 - 異世界では英雄になりました - カクヨム'))
+			.toBe('第1話 - 異世界転生');
+	});
+
+	test('og:title が空なら null', () => {
+		expect(extractEpisodeTitleFromOg('')).toBeNull();
+	});
+
+	test('" - " が無いなら null', () => {
+		expect(extractEpisodeTitleFromOg('単一タイトル - カクヨム')).toBeNull();
+	});
+});
+
+describe('extractEpisodeBody', () => {
+	test('widget-episodeBody 内の <p> を改行で結合', () => {
+		const html = `<html><body>
+<div class="widget-episodeBody js-episode-body">
+<p id="p1">後宮の下っ端宮女の雨妹は、今日も元気に掃除に勤しんでいる。</p>
+<p id="p2">「綺麗になるって気持ちいい～♪」</p>
+<p id="p3">鼻歌交じりに雑巾がけをしていると、回廊を誰かが歩いてくる音がする。</p>
+</div>
+</body></html>`;
+		const $ = cheerio.load(html);
+		const body = extractEpisodeBody($);
+		expect(body).toBe(
+			'後宮の下っ端宮女の雨妹は、今日も元気に掃除に勤しんでいる。\n「綺麗になるって気持ちいい～♪」\n鼻歌交じりに雑巾がけをしていると、回廊を誰かが歩いてくる音がする。',
+		);
+	});
+
+	test('class="widget-episodeBody" のみでも取れる (js-episode-body 不在ケース)', () => {
+		const html = `<div class="widget-episodeBody"><p>テスト本文</p></div>`;
+		const $ = cheerio.load(html);
+		expect(extractEpisodeBody($)).toBe('テスト本文');
+	});
+
+	test('空段落はスキップ', () => {
+		const html = `<div class="widget-episodeBody">
+<p></p>
+<p>本文1</p>
+<p>   </p>
+<p>本文2</p>
+</div>`;
+		const $ = cheerio.load(html);
+		expect(extractEpisodeBody($)).toBe('本文1\n本文2');
+	});
+
+	test('構造が無ければ null', () => {
+		const $ = cheerio.load('<div>無関係</div>');
+		expect(extractEpisodeBody($)).toBeNull();
+	});
+
+	test('段落が無ければ null', () => {
+		const $ = cheerio.load('<div class="widget-episodeBody"><span>no p</span></div>');
+		expect(extractEpisodeBody($)).toBeNull();
 	});
 });
 
@@ -378,6 +471,26 @@ describe('composeEmbedHtml', () => {
 
 	test('XSS: episodeTitle に <script> を含めても escape される', () => {
 		const html = composeEmbedHtml(SAMPLE_WORK, '山田', '<script>alert(1)</script>');
+		expect(html).not.toMatch(/<script>alert/);
+		expect(html).toContain('&lt;script&gt;');
+	});
+
+	test('episodeBody が指定されたら story 部分を本文に置換 (introduction を使わない)', () => {
+		const body = '後宮の下っ端宮女の雨妹は、今日も元気に掃除に勤しんでいる。\n「綺麗になるって気持ちいい～♪」';
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田', '序章', body);
+		expect(html).toContain('後宮の下っ端宮女の雨妹');
+		// introduction (作品全体のあらすじ) は使われない
+		expect(html).not.toContain('これはあらすじです');
+	});
+
+	test('episodeBody 不在なら従来どおり introduction を表示', () => {
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田', '序章', null);
+		expect(html).toContain('これはあらすじです');
+	});
+
+	test('XSS: episodeBody に <script> を含めても escape される', () => {
+		const malicious = '<script>alert(1)</script>本文だ';
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田', '序章', malicious);
 		expect(html).not.toMatch(/<script>alert/);
 		expect(html).toContain('&lt;script&gt;');
 	});

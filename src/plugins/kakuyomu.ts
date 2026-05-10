@@ -245,19 +245,30 @@ function composeStatusLabel(work: KakuyomuWork): string {
 /**
  * card style 用 description を組み立てる。
  *
- * - work URL: `あらすじ: <catchphrase or introduction の 80 文字 clip>` だけ
- * - episode URL (各話): `「<各話タイトル>」 / あらすじ: <80 文字 clip>` で **各話タイトルを prefix**
- *   に置き、「あらすじ」の続きと混同されないよう識別性を確保 (旧実装は末尾に `/ <タイトル>` で
- *   付与していたが、新仕様の「あらすじだけ」と組み合わせると区別がつきにくいため変更)
+ * - **work URL**: `あらすじ: <catchphrase or introduction の 80 文字 clip>` (作品全体のあらすじ)
+ * - **episode URL** (各話):
+ *   - `episodeBody` が取れた場合: `「<各話タイトル>」 / <本文先頭 80 文字 clip>` (各話の冒頭)
+ *   - `episodeBody` が無い場合: `「<各話タイトル>」 / あらすじ: <作品あらすじ 80 文字 clip>` (作品 fallback)
+ *   - `episodeTitle` だけある場合: `「<各話タイトル>」` (本文 + あらすじ両方無し)
  *
- * `summary` (catchphrase / introduction) が両方 null なら episode title だけ返す
- * (各話 URL で本文が無い特殊ケース)。両方無ければ空文字。
+ * 各話 URL では「あらすじ: 」ラベルを付けない (本文先頭であって「あらすじ」ではないため誤解を避ける)。
  */
-export function composeDescription(work: KakuyomuWork, episodeTitle: string | null = null): string {
+export function composeDescription(
+	work: KakuyomuWork,
+	episodeTitle: string | null = null,
+	episodeBody: string | null = null,
+): string {
+	const hasEpisodeTitle = episodeTitle != null && episodeTitle !== '';
+	const titlePart = hasEpisodeTitle ? `「${episodeTitle}」` : '';
+
+	// episode body 優先 (各話 URL でユーザーが見たいのは「その話の冒頭」)
+	if (hasEpisodeTitle && episodeBody != null && episodeBody !== '') {
+		return `${titlePart} / ${clip(episodeBody, STORY_CARD_CLIP_LENGTH)}`;
+	}
+	// fallback: 作品全体のあらすじ
 	const summary = asString(work.catchphrase) ?? asString(work.introduction);
 	const summaryPart = summary != null ? `あらすじ: ${clip(summary, STORY_CARD_CLIP_LENGTH)}` : '';
-	if (episodeTitle != null && episodeTitle !== '') {
-		const titlePart = `「${episodeTitle}」`;
+	if (hasEpisodeTitle) {
 		return summaryPart !== '' ? `${titlePart} / ${summaryPart}` : titlePart;
 	}
 	return summaryPart;
@@ -296,6 +307,7 @@ export function composeEmbedHtml(
 	work: KakuyomuWork,
 	authorName: string | null,
 	episodeTitle: string | null = null,
+	episodeBody: string | null = null,
 ): string {
 	const titleSafe = escapeHtml(asString(work.title) ?? '(タイトル不明)');
 	const episodeTitleSafe = episodeTitle != null && episodeTitle !== '' ? escapeHtml(episodeTitle) : '';
@@ -303,8 +315,11 @@ export function composeEmbedHtml(
 	const genreSafe = escapeHtml(getKakuyomuGenreName(asString(work.genre) ?? ''));
 	const statusSafe = escapeHtml(composeStatusLabel(work));
 	const markersSafe = escapeHtml(composeMarkers(work));
-	const introductionRaw = asString(work.introduction) ?? '';
-	const introductionSafe = escapeHtml(clip(introductionRaw, STORY_EMBED_CLIP_LENGTH));
+	// **本文 vs あらすじの優先**: episode URL で本文が取れた場合は本文 (1〜N 段落) を表示、
+	// 無ければ作品全体の introduction を表示 (work URL or fetch 失敗時)。
+	// どちらも escape + 300 文字 clip で同じ扱い。
+	const storyRaw = (episodeBody != null && episodeBody !== '') ? episodeBody : (asString(work.introduction) ?? '');
+	const introductionSafe = escapeHtml(clip(storyRaw, STORY_EMBED_CLIP_LENGTH));
 	const tagsSafe = escapeHtml(formatTags(work.tagLabels));
 	const lastPub = asString(work.lastEpisodePublishedAt);
 	// ISO datetime から日付部分だけ取り出し (escape は不要、固定書式)
@@ -386,34 +401,73 @@ export function buildSummaryFromWork(
 }
 
 /**
- * episode URL から各話タイトルを抽出する (chapter description 上書き用)。
- *
- * og:title は `"<EpisodeTitle> - <WorkTitle> - カクヨム"` の固定書式。EpisodeTitle / WorkTitle が
- * ` - ` を含む可能性があるため、以下の順で safe に抽出する:
+ * og:title (`"<EpisodeTitle> - <WorkTitle> - カクヨム"`) から各話タイトルだけ抽出する pure 関数
+ * (export してテスト容易化)。
  *
  * 1. 末尾の `' - カクヨム'` を suffix 削除 (固定文字列、安全)
  * 2. 残った `<EpisodeTitle> - <WorkTitle>` を **末尾の `' - '`** で 2 つに split
  *    (作品タイトルに ` - ` が含まれる方が、各話タイトルに含まれるよりレアなため、後者寄りに倒す)
  * 3. 先頭側を EpisodeTitle として返す
- *
- * 失敗 (og:title 不在 / 書式不一致) 時は null。完全な解は無いが旧実装の「最初の ` - ` で split」より
- * 多くのケースで正しい (W-1 review feedback)。
  */
-async function fetchEpisodeTitle(episodeUrl: URL, opts: GeneralScrapingOptions | undefined): Promise<string | null> {
+export function extractEpisodeTitleFromOg(ogTitle: string): string | null {
+	if (ogTitle === '') return null;
+	const SITE_SUFFIX = ' - カクヨム';
+	const withoutSuffix = ogTitle.endsWith(SITE_SUFFIX)
+		? ogTitle.slice(0, -SITE_SUFFIX.length)
+		: ogTitle;
+	const lastSep = withoutSuffix.lastIndexOf(' - ');
+	if (lastSep <= 0) return null;
+	const episodeTitle = withoutSuffix.slice(0, lastSep).trim();
+	return episodeTitle !== '' ? episodeTitle : null;
+}
+
+/**
+ * 各話本文の冒頭テキストを `<div class="widget-episodeBody js-episode-body">` 配下の `<p>` 群から
+ * 抽出する (export してテスト容易化)。
+ *
+ * - 各 `<p>` の text() を取り出して `\n` で結合
+ * - 空段落はスキップ
+ * - HTML 構造が変わって取れない場合は null
+ *
+ * `composeDescription` 側で 80 文字 clip / `composeEmbedHtml` 側で 300 文字 clip するため、
+ * 全文取得しても問題ない (cheerio の text() でテキストノード抽出するだけなので軽量)。
+ */
+export function extractEpisodeBody($: CheerioAPI): string | null {
+	// `widget-episodeBody` (class) と `js-episode-body` (class) どちらでもマッチさせる。
+	// JS フックを兼ねる `js-episode-body` の方が変更耐性が高い可能性あり。
+	const $body = $('.widget-episodeBody').first().length > 0
+		? $('.widget-episodeBody').first()
+		: $('.js-episode-body').first();
+	if ($body.length === 0) return null;
+	const paragraphs: string[] = [];
+	$body.find('p').each((_, p) => {
+		const text = $(p).text().trim();
+		if (text !== '') paragraphs.push(text);
+	});
+	if (paragraphs.length === 0) return null;
+	return paragraphs.join('\n');
+}
+
+/**
+ * episode URL から `{ title, body }` を抽出する。
+ * - title: og:title から各話タイトル抽出 (chapter description 表示用)
+ * - body: 本文段落を `\n` 結合 (あらすじの代わりに「各話冒頭」を表示するための用途)
+ *
+ * どちらも取れなければ null フィールド。両方 null なら戻り値全体を null として返す。
+ *
+ * `Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (作品トップ取得と同 UA)。
+ */
+async function fetchEpisodeData(
+	episodeUrl: URL,
+	opts: GeneralScrapingOptions | undefined,
+): Promise<{ title: string | null; body: string | null } | null> {
 	try {
 		const res = await scpaping(episodeUrl.href, { ...opts, userAgent: 'Twitterbot/1.0' });
 		const ogTitle = res.$('meta[property="og:title"]').attr('content')?.trim() ?? '';
-		if (ogTitle === '') return null;
-		// 1. 末尾の ' - カクヨム' を suffix 削除
-		const SITE_SUFFIX = ' - カクヨム';
-		const withoutSuffix = ogTitle.endsWith(SITE_SUFFIX)
-			? ogTitle.slice(0, -SITE_SUFFIX.length)
-			: ogTitle;
-		// 2. 末尾の ' - ' で split (= 残り = `<EpisodeTitle> - <WorkTitle>` の最後の ' - ')
-		const lastSep = withoutSuffix.lastIndexOf(' - ');
-		if (lastSep <= 0) return null;
-		const episodeTitle = withoutSuffix.slice(0, lastSep).trim();
-		return episodeTitle !== '' ? episodeTitle : null;
+		const title = extractEpisodeTitleFromOg(ogTitle);
+		const body = extractEpisodeBody(res.$);
+		if (title === null && body === null) return null;
+		return { title, body };
 	} catch {
 		return null;
 	}
@@ -448,12 +502,13 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	const extracted = extractWorkAndEpisode(url);
 	if (extracted === null) return null;
 
-	// episode URL でも作品トップから work data を取る (各話メタは episode URL 側で取れない構造)
+	// episode URL でも作品トップから work data を取る (各話メタは episode URL 側で取れない構造)。
+	// episode URL の場合は同時に episode HTML から `{ title, body }` を抽出 (本文 1 行目をあらすじ代わりに使う)。
 	const workTopUrl = new URL(`https://${url.hostname}/works/${extracted.workId}`);
-	const [workData, episodeTitle] = await Promise.all([
+	const [workData, episodeData] = await Promise.all([
 		fetchWorkData(workTopUrl, opts),
 		extracted.episodeId != null
-			? fetchEpisodeTitle(url, opts)
+			? fetchEpisodeData(url, opts)
 			: Promise.resolve(null),
 	]);
 
@@ -464,13 +519,12 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	const embedBaseUrl = opts?._embedBaseUrl;
 	const summary = buildSummaryFromWork(workData.work, workData.authorName, url, embedBaseUrl);
 
-	// episode URL では `composeDescription` が `「<各話タイトル>」 / あらすじ: ...` 形式で組み立てる。
-	// description を episode title 込みで再生成。
+	// episode URL では `composeDescription` を episode title + body 込みで再生成。
 	// **escape 不要の理由**: `summary.description` はプレーンテキストとして Misskey クライアント側で
 	// textContent / v-text 相当で表示されるため、HTML として解釈されない。embed HTML には
-	// `description` ではなく `introduction` が流入する (composeEmbedHtml 参照) ので XSS 経路にもならない。
-	if (episodeTitle != null) {
-		summary.description = composeDescription(workData.work, episodeTitle);
+	// `description` ではなく別途取得した `episodeBody` が流入する (composeEmbedHtml 参照) ので XSS 経路にもならない。
+	if (episodeData != null) {
+		summary.description = composeDescription(workData.work, episodeData.title, episodeData.body);
 	}
 	return summary;
 }
@@ -480,13 +534,13 @@ export async function renderEmbed(url: URL, opts?: GeneralScrapingOptions): Prom
 	if (extracted === null) {
 		throw new Error('kakuyomu renderEmbed: invalid URL (test() を通った URL のはずだが workId が抽出できない)');
 	}
-	// episode URL なら各話タイトルも並列取得して embed HTML に反映する。
-	// summarize() と同じ構造 (作品トップから work data + episode HTML から og:title 抽出)。
+	// episode URL なら各話タイトル + 本文も並列取得して embed HTML に反映する。
+	// summarize() と同じ構造 (作品トップから work data + episode HTML から og:title + 本文抽出)。
 	const workTopUrl = new URL(`https://${url.hostname}/works/${extracted.workId}`);
-	const [workData, episodeTitle] = await Promise.all([
+	const [workData, episodeData] = await Promise.all([
 		fetchWorkData(workTopUrl, opts),
 		extracted.episodeId != null
-			? fetchEpisodeTitle(url, opts)
+			? fetchEpisodeData(url, opts)
 			: Promise.resolve(null),
 	]);
 	if (workData === null) {
@@ -494,7 +548,12 @@ export async function renderEmbed(url: URL, opts?: GeneralScrapingOptions): Prom
 		// renderEmbed の null 返却は型契約上禁止なので throw して /embed 側で 500 に変換させる。
 		throw new Error('kakuyomu renderEmbed: 作品が見つかりません (__NEXT_DATA__ parse 失敗 or Work entity 不在)');
 	}
-	const html = composeEmbedHtml(workData.work, workData.authorName, episodeTitle);
+	const html = composeEmbedHtml(
+		workData.work,
+		workData.authorName,
+		episodeData?.title ?? null,
+		episodeData?.body ?? null,
+	);
 	return { body: html, width: 3, height: 2 };
 }
 
