@@ -1,14 +1,12 @@
 /**
- * Outbound proxy フォールバック。
+ * Outbound proxy 経路 (phase18 hedge race の challenger)。
  *
- * `getResponseWithFallback` (UA 切替フォールバック) でも救えなかった IP レピュテーション層の
- * 遮断（Vultr Tokyo IP からの amazon.co.jp 等）に対し、Cloudflare Workers にデプロイした
- * `tools/cf-proxy-worker/` 経由でリトライする。
+ * Vultr Tokyo IP からの amazon.co.jp / store.jp.square-enix.com 等 IP レピュテーション層の遮断を、
+ * Cloudflare Workers にデプロイした `tools/cf-proxy-worker/` 経由で迂回する。
  *
- * 発火条件:
- * - 1 回目 + UA fallback の両方が失敗
- * - エラーカテゴリが `categories` (デフォルト `['origin_error', 'bot_blocked']`) に含まれる
- * - target hostname が `domains` allowlist にマッチ (suffix-match)
+ * phase18 で段階的 cascade (`getResponseWithProxyFallback`) を撤廃し、`fetchByStrategy` から
+ * `viaProxyWorker` を直接呼ぶ形に変更。発火条件 (categories / domains allowlist) も廃止し、
+ * 「設定で enabled なら hedge race の challenger として常に並列発火」する設計。
  *
  * Worker への HMAC 認証は `${target_url}\n${ts}` に対する SHA-256 HMAC。
  * `tools/cf-proxy-worker/src/index.ts` 側の `hmacSha256Hex` と相互運用。
@@ -16,22 +14,20 @@
 
 import { createHmac } from 'node:crypto';
 import got, * as Got from 'got';
-import { categorizeError, type SummalyErrorCategory } from '@/utils/parse-failure-log.js';
 import { StatusError } from '@/utils/status-error.js';
 import {
-	getResponseWithFallback,
 	type GotOptions,
-	type FallbackUaConfig,
-	type StrategyTracker,
 	DEFAULT_RESPONSE_TIMEOUT,
 	DEFAULT_MAX_RESPONSE_SIZE,
 } from '@/utils/got.js';
 
 /**
- * Outbound proxy フォールバック設定。
+ * Outbound proxy 設定。
  *
  * - `enabled === false` または `secret` 未指定なら proxy 経路は無効
- * - `categories` のエラーが発生 + `domains` 一致 のときだけ proxy が発火
+ *
+ * phase18.1 で `categories` / `domains` field を撤廃 (hedge race ですべての URL に対して並列発火)。
+ * Worker 側の `ALLOWED_DOMAINS` がオープンプロキシ化を防ぐ最終防衛として機能する。
  */
 export interface ProxyFallbackConfig {
 	enabled: boolean;
@@ -39,24 +35,17 @@ export interface ProxyFallbackConfig {
 	url: string;
 	/** HMAC 共有シークレット (Workers env vars `SHARED_SECRET` と一致) */
 	secret: string;
-	/** リトライ発火対象のエラーカテゴリ */
-	categories: SummalyErrorCategory[];
-	/** 適用対象ドメイン (suffix-match)。`amazon.co.jp` は `*.amazon.co.jp` 全部に効く */
-	domains: string[];
 	/** Proxy リクエストのタイムアウト (ミリ秒) */
 	timeoutMs: number;
 }
 
-// IP レピュテーション層の遮断は **複数のシグニチャ** で来うる:
-// - `origin_error` 5xx (Amazon が Vultr に対して 500 を返す古典パターン)
-// - `bot_blocked` 200 + content-type 欠落 (Amazon が malformed response で弾くパターン)
-// - `connection_dropped` TCP は通すが HTTP 応答前で切断 (将来的に proxy で救えるケース)
-// 既定では origin_error と bot_blocked の両方をカバー。connection_dropped は UA fallback の射程と被るため除外
-export const DEFAULT_PROXY_CATEGORIES: SummalyErrorCategory[] = ['origin_error', 'bot_blocked'];
 export const DEFAULT_PROXY_TIMEOUT_MS = 30000;
 
 /**
  * `domains` allowlist に hostname がマッチするか判定 (suffix-match)。
+ *
+ * phase18.1 で `ProxyFallbackConfig.domains` は撤廃したが、関数自体はプラグイン側 (例: 将来の
+ * 個別サイト判定) で再利用可能なので残す。
  *
  * `amazon.co.jp` を allowlist に書くと:
  * - `amazon.co.jp` ← 完全一致で通る
@@ -79,49 +68,6 @@ export function generateHmacSignature(secret: string, targetUrl: string, ts: num
 }
 
 /**
- * `getResponseWithFallback` のラッパで、UA fallback でも救えなかったエラーが
- * proxy 発火条件に合致するなら Worker proxy 経由でリトライする。
- *
- * - `proxyConfig === undefined` または `enabled === false` なら通常の `getResponseWithFallback` 等価
- * - 1 回目 + UA fallback 失敗 → カテゴリ判定 + ドメイン allowlist チェック → proxy 経由でリトライ
- * - proxy も失敗したら **proxy のエラー**（最後のエラー）を throw
- */
-export async function getResponseWithProxyFallback(
-	args: GotOptions,
-	uaFallback: FallbackUaConfig | undefined,
-	proxyConfig: ProxyFallbackConfig | undefined,
-	tracker?: StrategyTracker,
-): Promise<Got.Response<string>> {
-	try {
-		return await getResponseWithFallback(args, uaFallback, tracker);
-	} catch (err) {
-		if (proxyConfig == null || !proxyConfig.enabled || proxyConfig.secret === '') {
-			throw err;
-		}
-		const message = err instanceof Error ? err.message : undefined;
-		const name = err instanceof Error ? err.name : undefined;
-		const statusCode = err instanceof StatusError ? err.statusCode : undefined;
-		const category = categorizeError(message, name, statusCode);
-		if (!proxyConfig.categories.includes(category)) {
-			throw err;
-		}
-		let targetUrl: URL;
-		try {
-			targetUrl = new URL(args.url);
-		} catch {
-			throw err;
-		}
-		if (!matchesDomain(targetUrl.hostname, proxyConfig.domains)) {
-			throw err;
-		}
-		// Worker proxy 経由でリトライ
-		const r = await viaProxyWorker(args, proxyConfig);
-		if (tracker != null) tracker.value = 'proxy';
-		return r;
-	}
-}
-
-/**
  * Worker proxy に投げて `Got.Response<string>` 形式で結果を返す。
  *
  * 透過プロキシ動作のため、Worker 側のレスポンスを `Got.Response` の最低限の形に整形:
@@ -130,8 +76,8 @@ export async function getResponseWithProxyFallback(
  * - `statusCode`, `statusMessage`, `headers`, `url`
  * - `ip`: 透過 proxy なので未取得 (プライベート IP ガード判定はバイパスされる、proxy が信頼境界の役割)
  *
- * 経路学習キャッシュ fast path から直接呼ぶ用途と、`getResponseWithProxyFallback` のエラー
- * 発火型で内部的に呼ばれる用途の両方で利用される。
+ * phase18 hedge race の challenger 経路として `fetchByStrategy` から呼ばれる。
+ * `externalSignal` (hedge race 勝者確定後 cancellation) で got リクエストを abort。
  */
 export async function viaProxyWorker(
 	args: GotOptions,
@@ -142,11 +88,11 @@ export async function viaProxyWorker(
 	const sig = generateHmacSignature(cfg.secret, args.url, ts);
 	const proxyUrl = `${cfg.url.replace(/\/$/, '')}/?url=${encodeURIComponent(args.url)}`;
 
-	// Worker から Amazon 等への forwarded UA は呼出側の UA を尊重
+	// Worker から upstream への forwarded UA は呼出側の UA を尊重
 	const headerUA = args.headers['user-agent'];
 	const forwardUA = typeof headerUA === 'string' ? headerUA : 'Mozilla/5.0 (compatible; SummalyBot)';
 
-	// 外部 signal (hedged race の勝者確定後 cancellation) で got リクエストを中断
+	// 外部 signal (hedge race の勝者確定後 cancellation) で got リクエストを中断
 	const proxyAbort = new AbortController();
 	if (externalSignal != null) {
 		if (externalSignal.aborted) {
@@ -182,7 +128,6 @@ export async function viaProxyWorker(
 		signal: proxyAbort.signal,
 	}) as unknown as Got.Response<Buffer>;
 
-	// HTTP ステータスエラーの整形 (StatusError に変換、got.ts の receiveResponse と同じ規則)
 	if (proxyResponse.statusCode >= 400) {
 		throw new StatusError(
 			`${proxyResponse.statusCode} ${proxyResponse.statusMessage ?? ''}`,
@@ -191,22 +136,19 @@ export async function viaProxyWorker(
 		);
 	}
 
-	// Body サイズ上限 (proxy 側でも cap 済みだが defense-in-depth)
 	const maxSize = args.contentLengthLimit ?? DEFAULT_MAX_RESPONSE_SIZE;
 	if (proxyResponse.rawBody.byteLength > maxSize) {
 		throw new Error(`maxSize exceeded (${proxyResponse.rawBody.byteLength} > ${maxSize}) on response`);
 	}
 
-	// content-type を呼出側の `typeFilter` で再検証 (W-1)。Worker が透過プロキシなので通常は
-	// upstream の content-type がそのまま返るが、Worker 側のエラーページが text/plain で
-	// 200 ステータスで返るような事故を防ぐ defense-in-depth。
+	// content-type を呼出側の `typeFilter` で再検証 (defense-in-depth)。
 	const contentType = proxyResponse.headers['content-type'];
 	if (args.typeFilter != null && (contentType == null || !contentType.match(args.typeFilter))) {
 		throw new Error(`Rejected by type filter ${contentType ?? ''} (via proxy)`);
 	}
 
 	// upstream の最終 URL は Worker から `x-summaly-final-url` で渡される。
-	// 信頼境界の defense-in-depth として URL 形式を再検証 (W-2)。
+	// 信頼境界の defense-in-depth として URL 形式を再検証。
 	let resolvedUrl = args.url;
 	const finalUrlHeader = proxyResponse.headers['x-summaly-final-url'];
 	if (typeof finalUrlHeader === 'string' && finalUrlHeader !== '') {
@@ -216,22 +158,16 @@ export async function viaProxyWorker(
 				resolvedUrl = finalUrlHeader;
 			}
 		} catch {
-			// 不正な URL は無視して元の URL を使う（記録経路を止めない）
+			// 不正な URL は無視して元の URL を使う
 		}
 	}
 
-	// `Got.Response<string>` 形式に整形して返す。`scpaping` が見るのは
-	// `rawBody` (encoding 検出) / `headers` (content-type) / `statusCode` / `url` で十分。
-	const result = {
+	return {
 		...proxyResponse,
 		body: Buffer.from(proxyResponse.rawBody).toString('utf8'),
 		url: resolvedUrl,
-		// `ip` は proxy 経由のため取得不能。`getResponse` の private IP ガードはここで適用しない
-		// (proxy 自体が外向きトラフィックの信頼境界として機能する想定)
 		ip: undefined,
 	} as unknown as Got.Response<string>;
-
-	return result;
 }
 
 /**

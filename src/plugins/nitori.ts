@@ -1,6 +1,5 @@
 import type Summary from '@/summary.js';
 import type { GeneralScrapingOptions } from '@/general.js';
-import { matchesDomain } from '@/utils/proxy-fallback.js';
 import { viaCurlCffi } from '@/utils/curl-cffi-fetch.js';
 import { DEFAULT_MAX_RESPONSE_SIZE } from '@/utils/got.js';
 import { StatusError } from '@/utils/status-error.js';
@@ -187,13 +186,8 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	if (curlCffi == null || !curlCffi.enabled) {
 		throw new Error('nitori plugin requires curl_cffi fallback to be enabled (configure [scraping.curl_cffi] with enabled = true)');
 	}
-	// `viaCurlCffi` を直接呼ぶ場合 `getResponseWithCurlCffiFallback` の allowlist チェックを
-	// bypass するため、API エンドポイントの hostname (`www.nitori-net.jp`) を本プラグインで
-	// 自前検証する。phase16.3 設計で `curlCffiFallback.domains` は `bootstrap.jsonl` から自動
-	// 導出されるため、`nitori-net.jp` を bootstrap に追加していれば自動的に通過する。
-	if (!matchesDomain('www.nitori-net.jp', curlCffi.domains)) {
-		throw new Error('nitori plugin requires "nitori-net.jp" in [scraping.curl_cffi].domains');
-	}
+	// phase18.1: `curlCffiFallback.domains` 撤廃。SSRF 防御は Python 側 `assert_public_ip` で実施。
+	// `nitori-net.jp` の制約は本プラグインの `test()` で host match していることで担保済み。
 
 	const response = await viaCurlCffi(
 		{

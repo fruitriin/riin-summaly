@@ -16,6 +16,8 @@ riin-summaly の進化過程で削除された機能・設定の一覧と、運�
 | `[scraping.curl_cffi].categories` / `domains` TOML キー | phase16.3 | 同上 | [↑](#scrapingproxycategories--domains--scrapingcurl_cfficategories--domains--scrapingfallbackcategories-phase163-で削除) |
 | `[scraping.fallback].categories` TOML キー | phase16.3 | コード側 default 固定 | [↑](#scrapingproxycategories--domains--scrapingcurl_cfficategories--domains--scrapingfallbackcategories-phase163-で削除) |
 | 旧キー silent ignore (smol-toml の標準挙動) | phase16.3 | 全セクション expectKnownKeys で起動失敗化 | [↓](#旧キー-silent-ignore-phase163-で-fail-fast-起動失敗-に変更) |
+| 旧 cascade 関数 (`getResponseWithFallback` / `getResponseWithProxyFallback` / `getResponseWithCurlCffiFallback`) + `StrategyTracker` 型 | phase18.1 | hedge race (`fetchByStrategy` から `viaProxyWorker` / `viaCurlCffi` 直接呼び) | [↓](#旧-cascade-関数--strategytracker-phase181-で削除) |
+| `ProxyFallbackConfig.domains` / `CurlCffiFallbackConfig.domains` 内部フィールド + bootstrap 自動導出 + 経路依存 fail-fast | phase18.1 | フィールド自体撤廃 (hedge race ですべての URL に対して並列発火、Worker 側 ALLOWED_DOMAINS が最終防衛、curl_cffi 側 SSRF ガード `assert_public_ip` で防御) | [↓](#proxyfallbackconfigdomains--curlcffifallbackconfigdomains--bootstrap-自動導出--経路依存-fail-fast-phase181-で撤廃) |
 
 ---
 
@@ -353,3 +355,104 @@ smol-toml は unknown key を silent ignore する仕様だったため、phase1
 ### 移行手順
 
 phase16.3 にアップグレード後、起動失敗エラーで未知キーを案内されたらそのキーを `config.toml` から削除する (本ドキュメントの移行手順に従う)。
+
+---
+
+## 旧 cascade 関数 + `StrategyTracker` (phase18.1 で削除)
+
+### 旧
+
+phase14 まで段階的 cascade fallback で経路選定を行っていた:
+
+```typescript
+// 旧: src/utils/got.ts / proxy-fallback.ts / curl-cffi-fetch.ts
+import { getResponseWithCurlCffiFallback } from '@/utils/curl-cffi-fetch.js';
+const response = await getResponseWithCurlCffiFallback({ ...args, method: 'GET' }, fallback, proxyCfg, curlCffiCfg, tracker);
+// 内部: getResponse → 失敗 → getResponseWithFallback (UA fallback) → 失敗 → getResponseWithProxyFallback (proxy)
+//      → 失敗 → getResponseWithCurlCffiFallback (curl_cffi)
+// 各段の発火条件: categories (エラーカテゴリ判定) + domains allowlist (host 制約)
+```
+
+`StrategyTracker = { value?: DomainStrategy }` で各段の成功 strategy を mutable holder に書き込んでいた。
+
+### 新
+
+phase18 hedge race で各経路を **並列発火** に変更。`fetchByStrategy` から `viaProxyWorker` / `viaCurlCffi` を直接呼ぶ:
+
+```typescript
+// 新: src/utils/got.ts fetchResponse
+const result = await hedgedRace(
+  { champion, challengers, thresholdMs, isFinalError },
+  fetcher, // 各経路は viaProxyWorker / viaCurlCffi を直接呼ぶ
+  () => true,
+);
+```
+
+成功 strategy は `recState.strategy` (CacheRecordingState) で伝搬。`StrategyTracker` は不要。
+
+### 廃止理由
+
+- 段階的 cascade は **最悪 4 段直列で 60+ 秒** かかる (各段 timeout 待ち)。hedge race は champion 5 秒待ち + 並列発火で短縮
+- categories / domains による発火制御は「並列発火モデル」と相性が悪い (どの経路も常に試せる方が学習機構と整合)
+- `StrategyTracker` の mutable side-channel は `CacheRecordingState` に集約 (hedge 情報も同居できて綺麗)
+
+### 移行手順
+
+外部からこれらを直接 import している利用者はほぼ居ない想定 (内部 API)。万一いる場合は:
+
+- `getResponseWithFallback(args, fallback, tracker)` → `getResponse(args)` 単発呼び (UA fallback は hedge race で別経路として発火)
+- `getResponseWithProxyFallback(...)` → `viaProxyWorker(args, proxyCfg, signal?)` 直接呼び
+- `getResponseWithCurlCffiFallback(...)` → `viaCurlCffi(args, curlCffiCfg, signal?)` 直接呼び
+- `StrategyTracker` → 不要 (`CacheRecordingState.strategy` で代替)
+
+---
+
+## `ProxyFallbackConfig.domains` / `CurlCffiFallbackConfig.domains` + bootstrap 自動導出 + 経路依存 fail-fast (phase18.1 で撤廃)
+
+### 旧
+
+phase14〜phase16.3 の設計では、proxy / curl_cffi の `domains` 配列で host allowlist を持っていた。phase16.3 で TOML キーは silent ignore に変更したが、内部フィールドは温存し `bin/config-loader.ts` で **bootstrap.jsonl から自動導出** する仕組みになっていた。
+
+```typescript
+// 旧: src/utils/proxy-fallback.ts ProxyFallbackConfig
+export interface ProxyFallbackConfig {
+  enabled: boolean;
+  url: string;
+  secret: string;
+  categories: SummalyErrorCategory[]; // エラーカテゴリ判定 (発火条件)
+  domains: string[];                  // host allowlist (suffix-match)
+  timeoutMs: number;
+}
+```
+
+加えて **経路依存 fail-fast** (phase16.3) で「bootstrap に proxy entry あり + `[scraping.proxy].enabled = false` → 起動失敗」していた。
+
+### 新
+
+phase18.1 で `domains` 内部フィールド + bootstrap 自動導出 + 経路依存 fail-fast を **すべて撤廃**:
+
+```typescript
+// 新: src/utils/proxy-fallback.ts (CurlCffi も同型)
+export interface ProxyFallbackConfig {
+  enabled: boolean;
+  url: string;
+  secret: string;
+  timeoutMs: number; // domains / categories 削除
+}
+```
+
+hedge race の `fetchByStrategy` で「`enabled === true` + `https:` 」だけが gate。host 制約はなく、すべての URL に対して全 strategy が並列発火する。
+
+### 廃止理由
+
+- **並列発火モデルとの矛盾**: domains allowlist は cascade 時代の「特定ホストだけ proxy で救援」発想。hedge race では「全 URL で全経路試す」が前提なので allowlist が機能しない
+- **bootstrap 自動導出の運用負担**: 「bootstrap entry がない host で proxy/curl_cffi が呼ばれない」隠れ仕様で、本番で「monotaro が phase18 hedge race でも救援されない」原因究明が困難に
+- **SSRF 防御は別経路で確保**: proxy → Worker 側 `ALLOWED_DOMAINS` (オープンプロキシ化防止)、curl_cffi → Python 側 `assert_public_ip` (private IP rejection)
+
+### 移行手順
+
+`config.toml` の `[scraping.proxy].domains` / `[scraping.curl_cffi].domains` / `[scraping.proxy].categories` / `[scraping.curl_cffi].categories` キーは **silent ignore** (起動失敗にしない、forward-compat)。明示的な削除は不要だが、不要キーとして掃除推奨。
+
+bootstrap 自動導出が無くなったため、**bootstrap entry なしでも proxy / curl_cffi 経路は発火する**。逆に「bootstrap に書いてないと curl_cffi が動かなかった」サイト (monotaro 等) は phase18.1 で自動救援されるようになる。
+
+経路依存 fail-fast の起動失敗メッセージも撤廃 (`[scraping.proxy].enabled = false` でも bootstrap に proxy entry があれば起動失敗していた、これは起きなくなる)。

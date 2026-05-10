@@ -271,10 +271,7 @@ describe('parseTomlConfigString — [scraping.proxy] (phase12.1, phase16.3 で d
 		expect(cfg.summaly.proxyFallback).toBeDefined();
 		expect(cfg.summaly.proxyFallback?.url).toBe('https://summaly-proxy.test.workers.dev');
 		expect(cfg.summaly.proxyFallback?.secret).toBe('test-secret');
-		expect(cfg.summaly.proxyFallback?.categories).toEqual(['origin_error', 'bot_blocked']);
-		// bootstrap から store.jp.square-enix.com / amazon 系等の proxy host が自動導出される
-		expect(cfg.summaly.proxyFallback?.domains.length).toBeGreaterThan(0);
-		expect(cfg.summaly.proxyFallback?.domains).toContain('store.jp.square-enix.com');
+		// phase18.1: categories / domains 撤廃 (hedge race ですべての URL に対して並列発火)
 	});
 
 	test('enabled = false で proxyFallback は undefined', () => {
@@ -358,8 +355,10 @@ describe('parseTomlConfigString — [scraping.proxy] (phase12.1, phase16.3 で d
 		}
 	});
 
-	test('strategy_cache 無効で proxy enabled=true なら bootstrap 読まれず domains 空 → 起動失敗', () => {
-		expect(() => parseTomlConfigString(`
+	// phase18.1: bootstrap 自動導出 + domains 起動失敗ロジックを撤廃したので
+	// 「bootstrap に proxy 経路のエントリが無いと起動失敗」テストは削除。
+	test('phase18.1: strategy_cache 無効 + proxy enabled でも bootstrap entry 不要で起動成功', () => {
+		const cfg = parseTomlConfigString(`
 			[scraping.strategy_cache]
 			enabled = false
 
@@ -367,7 +366,8 @@ describe('parseTomlConfigString — [scraping.proxy] (phase12.1, phase16.3 で d
 			enabled = true
 			url = "https://x.workers.dev"
 			secret = "s"
-		`)).toThrow(/bootstrap\.jsonl に proxy 経路のエントリが存在しません/);
+		`);
+		expect(cfg.summaly.proxyFallback?.enabled).toBe(true);
 	});
 });
 
@@ -391,8 +391,7 @@ describe('parseTomlConfigString — [scraping.curl_cffi] (phase12.5, phase16.3 �
 		expect(cfg.summaly.curlCffiFallback?.projectDir).toBe('/path/to/curl-cffi-fetcher');
 		expect(cfg.summaly.curlCffiFallback?.uvPath).toBe('uv');
 		expect(cfg.summaly.curlCffiFallback?.impersonate).toBe('chrome120');
-		expect(cfg.summaly.curlCffiFallback?.categories).toEqual(['timeout', 'connection_dropped', 'bot_blocked']);
-		expect(cfg.summaly.curlCffiFallback?.domains).toContain('yodobashi.com');
+		// phase18.1: categories / domains 撤廃 (hedge race ですべての URL に対して並列発火)
 	});
 
 	test('enabled = true で projectDir 未指定なら起動失敗', () => {
@@ -406,50 +405,9 @@ describe('parseTomlConfigString — [scraping.curl_cffi] (phase12.5, phase16.3 �
 	});
 });
 
-describe('parseTomlConfigString — phase16.3 経路依存 fail-fast', () => {
-	test('strategy_cache enabled + bootstrap に proxy entry + scraping.proxy セクション無し → 起動失敗', () => {
-		expect(() => parseTomlConfigString(`
-			[scraping.strategy_cache]
-			enabled = true
-		`)).toThrow(/bootstrap.*'proxy' 経路を必須.*scraping\.proxy.*セクションが未定義/s);
-	});
-
-	test('strategy_cache enabled + bootstrap に proxy entry + scraping.proxy enabled=false → 起動失敗', () => {
-		expect(() => parseTomlConfigString(`
-			[scraping.strategy_cache]
-			enabled = true
-
-			[scraping.proxy]
-			enabled = false
-		`)).toThrow(/bootstrap.*'proxy' 経路を必須.*scraping\.proxy\]\.enabled = false/s);
-	});
-
-	test('エラーメッセージに対処方法が 3 つ (a, b, c) 含まれる', () => {
-		try {
-			parseTomlConfigString(`
-				[scraping.strategy_cache]
-				enabled = true
-
-				[scraping.proxy]
-				enabled = false
-			`);
-			expect.fail('should have thrown');
-		} catch (e) {
-			const msg = (e as Error).message;
-			expect(msg).toMatch(/\(a\)/);
-			expect(msg).toMatch(/\(b\)/);
-			expect(msg).toMatch(/\(c\)/);
-		}
-	});
-
-	test('strategy_cache 無効なら経路依存チェックは走らない', () => {
-		// strategy_cache 自体無効なので bootstrap 読まれない → proxy/curl_cffi enabled = false でも OK
-		expect(() => parseTomlConfigString(`
-			[scraping.strategy_cache]
-			enabled = false
-		`)).not.toThrow();
-	});
-});
+// phase18.1: 経路依存 fail-fast (bootstrap × enabled 不整合で起動失敗) は撤廃。
+// hedge race ですべての URL に対して全 strategy 並列発火するため、bootstrap entry なしでも
+// 起動失敗にしない (host allowlist 不要化)。該当 describe は削除。
 
 describe('parseTomlConfigString — [scraping.strategy_cache]', () => {
 	test('enabled = false で domainStrategyCache 未設定 (経路依存チェックも走らない)', () => {

@@ -231,7 +231,7 @@ function sitenameContains(needle) {
 function hasPlayer() {
 	return (json) => {
 		const p = json?.player;
-		if (p == null || typeof p !== 'object') return `player が無い`;
+		if (p == null || typeof p !== 'object') return 'player が無い';
 		if (typeof p.url !== 'string' || p.url.length === 0) return `player.url が無い (受信値: ${JSON.stringify(p)})`;
 		return null;
 	};
@@ -261,7 +261,7 @@ function loadDotEnvIfPresent() {
 		if (eq <= 0) continue;
 		const key = line.slice(0, eq).trim();
 		let value = line.slice(eq + 1).trim();
-		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+		if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\''))) {
 			value = value.slice(1, -1);
 		}
 		if (process.env[key] === undefined) process.env[key] = value;
@@ -280,21 +280,21 @@ function parseArgs(argv) {
 		const arg = argv[i];
 		const next = argv[i + 1];
 		if (arg === '--base') {
-			if (next == null) usageAndExit(`--base には URL を指定してください`);
+			if (next == null) usageAndExit('--base には URL を指定してください');
 			opts.base = next;
 			i++;
 		} else if (arg === '--buster') {
-			if (next == null) usageAndExit(`--buster には文字列を指定してください`);
+			if (next == null) usageAndExit('--buster には文字列を指定してください');
 			opts.buster = next;
 			i++;
 		} else if (arg === '--only') {
-			if (next == null) usageAndExit(`--only にはカンマ区切り名前を指定してください`);
+			if (next == null) usageAndExit('--only にはカンマ区切り名前を指定してください');
 			opts.only = new Set(next.split(',').map((s) => s.trim()).filter(Boolean));
 			i++;
 		} else if (arg === '--timeout') {
-			if (next == null) usageAndExit(`--timeout には ms を指定してください`);
+			if (next == null) usageAndExit('--timeout には ms を指定してください');
 			const n = Number(next);
-			if (!Number.isFinite(n) || n <= 0) usageAndExit(`--timeout は正の数値で`);
+			if (!Number.isFinite(n) || n <= 0) usageAndExit('--timeout は正の数値で');
 			opts.timeoutMs = n;
 			i++;
 		} else if (arg === '--skip-version') {
@@ -454,6 +454,7 @@ function colorize(text, color) {
 }
 
 function fmtPass() { return colorize('PASS', 'green'); }
+
 function fmtFail() { return colorize('FAIL', 'red'); }
 
 async function main() {
@@ -497,7 +498,7 @@ async function main() {
 	process.stdout.write(`\n${passed} passed, ${failed} failed (of ${results.length})\n`);
 
 	if (failed > 0) {
-		process.stdout.write(`\nFailed scenarios:\n`);
+		process.stdout.write('\nFailed scenarios:\n');
 		for (const r of results.filter((r) => r.status === 'fail')) {
 			process.stdout.write(`  - ${r.name}\n`);
 		}

@@ -1,8 +1,10 @@
 /**
- * src/utils/proxy-fallback.ts の単体テスト + 統合テスト (phase12.1)。
+ * src/utils/proxy-fallback.ts の単体テスト (phase18.1 で cascade fallback 廃止後)。
  *
- * Worker の動作は Node の `http.createServer` でモックする。Miniflare は重く、
- * fetch 透過 + HMAC 検証の挙動だけ確認できれば十分。
+ * phase18.1 で `getResponseWithProxyFallback` (cascade) を廃止し、`viaProxyWorker` を直接呼ぶ形に変更。
+ * cascade 時代の発火条件 (categories / domains allowlist / 1段目失敗をトリガにする等) は撤廃。
+ *
+ * Worker の動作は Node の `http.createServer` でモックする。
  */
 
 import { describe, expect, test, beforeEach, afterEach } from 'vitest';
@@ -12,7 +14,7 @@ import { AddressInfo } from 'node:net';
 import {
 	matchesDomain,
 	generateHmacSignature,
-	getResponseWithProxyFallback,
+	viaProxyWorker,
 	resolveProxySecret,
 	type ProxyFallbackConfig,
 } from '@/utils/proxy-fallback.js';
@@ -56,42 +58,44 @@ describe('generateHmacSignature', () => {
 	});
 
 	test('Worker 側 (Web Crypto API) と相互運用できる format: `${url}\\n${ts}`', () => {
-		// Worker 側の実装と同じ message format を使っていることの確認
 		const expected = createHmac('sha256', 'secret')
-			.update('https://example.com\n1000')
+			.update(`https://example.com\n1000`)
 			.digest('hex');
 		expect(generateHmacSignature('secret', 'https://example.com', 1000)).toBe(expected);
 	});
 
-	test('長さは SHA-256 hex なので 64 文字', () => {
-		expect(generateHmacSignature('s', 'https://x', 1)).toHaveLength(64);
+	test('異なる ts なら異なる sig', () => {
+		const s1 = generateHmacSignature('secret', 'https://example.com', 1000);
+		const s2 = generateHmacSignature('secret', 'https://example.com', 2000);
+		expect(s1).not.toBe(s2);
 	});
 });
 
 describe('resolveProxySecret', () => {
-	const originalEnv = process.env.SUMMALY_PROXY_SECRET;
-	beforeEach(() => { delete process.env.SUMMALY_PROXY_SECRET; });
+	const origEnv = process.env.SUMMALY_PROXY_SECRET;
 	afterEach(() => {
-		if (originalEnv != null) process.env.SUMMALY_PROXY_SECRET = originalEnv;
-		else delete process.env.SUMMALY_PROXY_SECRET;
+		if (origEnv === undefined) delete process.env.SUMMALY_PROXY_SECRET;
+		else process.env.SUMMALY_PROXY_SECRET = origEnv;
 	});
 
-	test('env が設定されていれば env を最優先', () => {
+	test('env が設定されていれば env を優先', () => {
 		process.env.SUMMALY_PROXY_SECRET = 'env-secret';
 		expect(resolveProxySecret('config-secret')).toBe('env-secret');
 	});
 
-	test('env が無ければ config の secret に fallback', () => {
+	test('env 未設定なら config の secret', () => {
+		delete process.env.SUMMALY_PROXY_SECRET;
 		expect(resolveProxySecret('config-secret')).toBe('config-secret');
 	});
 
-	test('どちらも無ければ空文字列', () => {
+	test('両方未設定なら空文字', () => {
+		delete process.env.SUMMALY_PROXY_SECRET;
 		expect(resolveProxySecret(undefined)).toBe('');
 		expect(resolveProxySecret('')).toBe('');
 	});
 });
 
-describe('getResponseWithProxyFallback (mock proxy worker)', () => {
+describe('viaProxyWorker (mock proxy worker)', () => {
 	let mockProxy: Server;
 	let mockProxyUrl: string;
 	let mockProxyHits = 0;
@@ -120,7 +124,6 @@ describe('getResponseWithProxyFallback (mock proxy worker)', () => {
 		await new Promise<void>(resolve => mockProxy.listen(0, '127.0.0.1', resolve));
 		const addr = mockProxy.address() as AddressInfo;
 		mockProxyUrl = `http://127.0.0.1:${addr.port}`;
-		// テストは localhost にアクセスするためプライベート IP ガードを許可
 		process.env.SUMMALY_ALLOW_PRIVATE_IP = 'true';
 	});
 	afterEach(async () => {
@@ -142,244 +145,52 @@ describe('getResponseWithProxyFallback (mock proxy worker)', () => {
 			enabled: true,
 			url: mockProxyUrl,
 			secret: 'test-secret-12345',
-			categories: ['origin_error'],
-			domains: ['example.com'],
 			timeoutMs: 5000,
 			...overrides,
 		};
 	}
 
-	test('proxyConfig.enabled = false なら proxy 経由しない (元のエラーが throw される)', async () => {
-		// localhost の存在しないポートに向けて 1 回目を確実に失敗させる
-		const args = makeArgs('http://127.0.0.1:1/notfound');
-		const cfg = makeProxyConfig({ enabled: false });
-		await expect(getResponseWithProxyFallback(args, undefined, cfg)).rejects.toThrow();
-		expect(mockProxyHits).toBe(0);
+	test('viaProxyWorker は HMAC 署名 + forward UA を Worker に送る', async () => {
+		const args = makeArgs('https://example.com/');
+		const cfg = makeProxyConfig();
+		const r = await viaProxyWorker(args, cfg);
+		expect(r.statusCode).toBe(200);
+		expect(mockProxyHits).toBe(1);
+		expect(lastReceivedSig).toBe(generateHmacSignature(cfg.secret, args.url, Number(lastReceivedTs)));
+		expect(lastForwardUA).toBe('TestBot/1.0');
 	});
 
-	test('proxyConfig 未指定なら通常の getResponseWithFallback 等価', async () => {
-		const args = makeArgs('http://127.0.0.1:1/notfound');
-		await expect(getResponseWithProxyFallback(args, undefined, undefined)).rejects.toThrow();
-		expect(mockProxyHits).toBe(0);
+	test('viaProxyWorker は x-summaly-final-url を Got.Response.url に反映', async () => {
+		const args = makeArgs('https://example.com/');
+		const r = await viaProxyWorker(args, makeProxyConfig());
+		expect(r.url).toBe('https://example.com/final');
 	});
 
-	test('1 回目失敗 + category 一致 + domain 一致 → proxy 経由でリトライ成功', async () => {
-		// upstream が 503 を返す mock
-		const upstream = createServer((_req, res) => {
+	test('viaProxyWorker は 4xx/5xx を StatusError で throw', async () => {
+		mockProxyHandler = (_req, res) => {
 			res.writeHead(503, { 'content-type': 'text/html' });
-			res.end('<html><body>down</body></html>');
-		});
-		await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
-		const upstreamPort = (upstream.address() as AddressInfo).port;
-		try {
-			// allowlist には example.com を入れるが、実 URL は 127.0.0.1。
-			// host header で偽装する戦略は got 制限で難しいため、allowlist を 127.0.0.1 にして実 URL も合わせる
-			const args = makeArgs(`http://127.0.0.1:${upstreamPort}/`);
-			const cfg = makeProxyConfig({
-				domains: ['127.0.0.1'],
-				categories: ['origin_error'],
-			});
-			const res = await getResponseWithProxyFallback(args, undefined, cfg);
-			expect(res.statusCode).toBe(200);
-			expect(res.body).toContain('via proxy');
-			expect(mockProxyHits).toBe(1);
-			// HMAC 署名が正しく生成されている
-			expect(lastReceivedSig).toMatch(/^[0-9a-f]{64}$/);
-			expect(lastReceivedTs).toMatch(/^\d+$/);
-			// forward UA が伝播している
-			expect(lastForwardUA).toBe('TestBot/1.0');
-		} finally {
-			await new Promise<void>(resolve => upstream.close(() => resolve()));
-		}
-	});
-
-	test('1 回目 404 (not_found) は proxy 対象外 (origin_error カテゴリでないため)', async () => {
-		const upstream = createServer((_req, res) => {
-			res.writeHead(404, { 'content-type': 'text/html' });
-			res.end('not found');
-		});
-		await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
-		const upstreamPort = (upstream.address() as AddressInfo).port;
-		try {
-			const args = makeArgs(`http://127.0.0.1:${upstreamPort}/`);
-			const cfg = makeProxyConfig({
-				domains: ['127.0.0.1'],
-				categories: ['origin_error'],
-			});
-			await expect(getResponseWithProxyFallback(args, undefined, cfg)).rejects.toThrow(/404/);
-			expect(mockProxyHits).toBe(0);
-		} finally {
-			await new Promise<void>(resolve => upstream.close(() => resolve()));
-		}
-	});
-
-	test('domain 不一致なら proxy 対象外 (元のエラーが throw)', async () => {
-		const upstream = createServer((_req, res) => {
-			res.writeHead(503);
-			res.end();
-		});
-		await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
-		const upstreamPort = (upstream.address() as AddressInfo).port;
-		try {
-			const args = makeArgs(`http://127.0.0.1:${upstreamPort}/`);
-			const cfg = makeProxyConfig({
-				domains: ['amazon.co.jp'], // 127.0.0.1 とは一致しない
-				categories: ['origin_error'],
-			});
-			await expect(getResponseWithProxyFallback(args, undefined, cfg)).rejects.toThrow(/503/);
-			expect(mockProxyHits).toBe(0);
-		} finally {
-			await new Promise<void>(resolve => upstream.close(() => resolve()));
-		}
-	});
-
-	test('secret 空文字列なら proxy 対象外', async () => {
-		const upstream = createServer((_req, res) => {
-			res.writeHead(503);
-			res.end();
-		});
-		await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
-		const upstreamPort = (upstream.address() as AddressInfo).port;
-		try {
-			const args = makeArgs(`http://127.0.0.1:${upstreamPort}/`);
-			const cfg = makeProxyConfig({
-				domains: ['127.0.0.1'],
-				secret: '',
-			});
-			await expect(getResponseWithProxyFallback(args, undefined, cfg)).rejects.toThrow();
-			expect(mockProxyHits).toBe(0);
-		} finally {
-			await new Promise<void>(resolve => upstream.close(() => resolve()));
-		}
-	});
-
-	test('proxy が 4xx を返したら StatusError に変換される (C-2 throwHttpErrors: false)', async () => {
-		mockProxyHandler = (_req, res) => {
-			mockProxyHits++;
-			res.writeHead(403, { 'content-type': 'text/plain' });
-			res.end('forbidden');
+			res.end('upstream error');
 		};
-		const upstream = createServer((_req, res) => {
-			res.writeHead(503);
-			res.end();
-		});
-		await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
-		const upstreamPort = (upstream.address() as AddressInfo).port;
-		try {
-			const args = makeArgs(`http://127.0.0.1:${upstreamPort}/`);
-			const cfg = makeProxyConfig({ domains: ['127.0.0.1'], categories: ['origin_error'] });
-			let caughtName: string | undefined;
-			let caughtStatus: number | undefined;
-			try {
-				await getResponseWithProxyFallback(args, undefined, cfg);
-			} catch (e: unknown) {
-				caughtName = e instanceof Error ? e.name : undefined;
-				caughtStatus = (e as { statusCode?: number }).statusCode;
-			}
-			expect(caughtName).toBe('StatusError');
-			expect(caughtStatus).toBe(403);
-		} finally {
-			await new Promise<void>(resolve => upstream.close(() => resolve()));
-		}
+		const args = makeArgs('https://example.com/');
+		await expect(viaProxyWorker(args, makeProxyConfig())).rejects.toThrow(/503/);
 	});
 
-	test('proxy が typeFilter 不一致な content-type を返したら Rejected by type filter で拒否 (W-1)', async () => {
+	test('viaProxyWorker は typeFilter で content-type を再検証', async () => {
 		mockProxyHandler = (_req, res) => {
-			mockProxyHits++;
-			// 200 だが application/octet-stream で text/html フィルタを通らない
-			res.writeHead(200, { 'content-type': 'application/octet-stream' });
-			res.end('binary garbage');
+			res.writeHead(200, { 'content-type': 'application/json' });
+			res.end('{"foo":"bar"}');
 		};
-		const upstream = createServer((_req, res) => {
-			res.writeHead(503);
-			res.end();
-		});
-		await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
-		const upstreamPort = (upstream.address() as AddressInfo).port;
-		try {
-			const args = makeArgs(`http://127.0.0.1:${upstreamPort}/`);
-			const cfg = makeProxyConfig({ domains: ['127.0.0.1'], categories: ['origin_error'] });
-			await expect(getResponseWithProxyFallback(args, undefined, cfg))
-				.rejects.toThrow(/Rejected by type filter.*via proxy/);
-		} finally {
-			await new Promise<void>(resolve => upstream.close(() => resolve()));
-		}
+		const args = makeArgs('https://example.com/');
+		await expect(viaProxyWorker(args, makeProxyConfig())).rejects.toThrow(/type filter/);
 	});
 
-	test('x-summaly-final-url が javascript: のとき URL 検証で無視され元 URL が使われる (W-2)', async () => {
-		mockProxyHandler = (_req, res) => {
-			mockProxyHits++;
-			res.writeHead(200, {
-				'content-type': 'text/html',
-				'x-summaly-final-url': 'javascript:alert(1)',
-			});
-			res.end('<html><body>x</body></html>');
+	test('viaProxyWorker は externalSignal で abort 可能', async () => {
+		mockProxyHandler = (_req, _res) => {
+			// 永遠に応答しない (timer で signal abort されるまで)
 		};
-		const upstream = createServer((_req, res) => {
-			res.writeHead(503);
-			res.end();
-		});
-		await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
-		const upstreamPort = (upstream.address() as AddressInfo).port;
-		try {
-			const args = makeArgs(`http://127.0.0.1:${upstreamPort}/`);
-			const cfg = makeProxyConfig({ domains: ['127.0.0.1'], categories: ['origin_error'] });
-			const res = await getResponseWithProxyFallback(args, undefined, cfg);
-			// javascript: は弾かれて元 URL が使われる
-			expect(res.url).toBe(`http://127.0.0.1:${upstreamPort}/`);
-		} finally {
-			await new Promise<void>(resolve => upstream.close(() => resolve()));
-		}
-	});
-
-	test('proxy 自体が 403 (HMAC 失敗等) → 2 回目のエラーが throw される', async () => {
-		mockProxyHandler = (_req, res) => {
-			mockProxyHits++;
-			res.writeHead(403, { 'content-type': 'text/plain' });
-			res.end('forbidden');
-		};
-		const upstream = createServer((_req, res) => {
-			res.writeHead(503);
-			res.end();
-		});
-		await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
-		const upstreamPort = (upstream.address() as AddressInfo).port;
-		try {
-			const args = makeArgs(`http://127.0.0.1:${upstreamPort}/`);
-			const cfg = makeProxyConfig({
-				domains: ['127.0.0.1'],
-				categories: ['origin_error'],
-			});
-			await expect(getResponseWithProxyFallback(args, undefined, cfg)).rejects.toThrow(/403/);
-			expect(mockProxyHits).toBe(1);
-		} finally {
-			await new Promise<void>(resolve => upstream.close(() => resolve()));
-		}
-	});
-
-	test('proxy 経由のレスポンスは x-summaly-final-url で resolved URL を持つ', async () => {
-		const upstream = createServer((_req, res) => {
-			res.writeHead(503);
-			res.end();
-		});
-		await new Promise<void>(resolve => upstream.listen(0, '127.0.0.1', resolve));
-		const upstreamPort = (upstream.address() as AddressInfo).port;
-		try {
-			const args = makeArgs(`http://127.0.0.1:${upstreamPort}/`);
-			const cfg = makeProxyConfig({
-				domains: ['127.0.0.1'],
-				categories: ['origin_error'],
-			});
-			const res = await getResponseWithProxyFallback(args, undefined, cfg);
-			// mock proxy が x-summaly-final-url を返している
-			expect(res.url).toBe('https://example.com/final');
-		} finally {
-			await new Promise<void>(resolve => upstream.close(() => resolve()));
-		}
+		const args = makeArgs('https://example.com/');
+		const ac = new AbortController();
+		setTimeout(() => ac.abort(), 50);
+		await expect(viaProxyWorker(args, makeProxyConfig({ timeoutMs: 30000 }), ac.signal)).rejects.toThrow();
 	});
 });
-
-// **`forceProxyFallback` は phase14 Step 4 で廃止された** (経路学習キャッシュ + bootstrap に統合)。
-// 該当テスト群は削除済み。sqex 等の HTTP 200 + 正規 404 IP block サイトは
-// `data/domain-strategy-bootstrap.jsonl` の bootstrap エントリ (`store.jp.square-enix.com → proxy`) で
-// cache fast path から直接 proxy が呼ばれる経路に移行している。

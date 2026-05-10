@@ -20,8 +20,6 @@ describe('runConfigHealthchecks — proxy', () => {
 			enabled: true,
 			url: 'https://summaly-proxy.<your>.workers.dev',
 			secret: 'real-secret',
-			categories: ['origin_error', 'bot_blocked'],
-			domains: ['amazon.co.jp'],
 			timeoutMs: 30000,
 		};
 		expect(() => runConfigHealthchecks(cfg)).toThrow(/scraping\.proxy\.url が placeholder/);
@@ -33,8 +31,6 @@ describe('runConfigHealthchecks — proxy', () => {
 			enabled: true,
 			url: 'https://real-proxy.workers.dev',
 			secret: '...',
-			categories: ['origin_error', 'bot_blocked'],
-			domains: ['amazon.co.jp'],
 			timeoutMs: 30000,
 		};
 		expect(() => runConfigHealthchecks(cfg)).toThrow(/scraping\.proxy\.secret が placeholder/);
@@ -46,8 +42,6 @@ describe('runConfigHealthchecks — proxy', () => {
 			enabled: true,
 			url: 'https://real-proxy.workers.dev',
 			secret: '<your-shared-secret>',
-			categories: ['origin_error', 'bot_blocked'],
-			domains: ['amazon.co.jp'],
 			timeoutMs: 30000,
 		};
 		expect(() => runConfigHealthchecks(cfg)).toThrow(/scraping\.proxy\.secret が placeholder/);
@@ -59,8 +53,6 @@ describe('runConfigHealthchecks — proxy', () => {
 			enabled: true,
 			url: 'https://real-proxy.workers.dev',
 			secret: 'real-shared-secret',
-			categories: ['origin_error', 'bot_blocked'],
-			domains: ['amazon.co.jp'],
 			timeoutMs: 30000,
 		};
 		expect(() => runConfigHealthchecks(cfg)).not.toThrow();
@@ -90,8 +82,6 @@ describe('runConfigHealthchecks — curl_cffi', () => {
 			projectDir: '/path/to/summaly/tools/curl-cffi-fetcher',
 			uvPath: 'uv',
 			impersonate: 'chrome120',
-			categories: ['timeout', 'connection_dropped', 'bot_blocked'],
-			domains: ['yodobashi.com'],
 			timeoutMs: 30000,
 		};
 		expect(() => runConfigHealthchecks(cfg)).toThrow(/curl_cffi\.projectDir が placeholder/);
@@ -104,8 +94,6 @@ describe('runConfigHealthchecks — curl_cffi', () => {
 			projectDir: '/nonexistent/dir/' + Date.now(),
 			uvPath: 'uv',
 			impersonate: 'chrome120',
-			categories: ['timeout', 'connection_dropped', 'bot_blocked'],
-			domains: ['yodobashi.com'],
 			timeoutMs: 30000,
 		};
 		expect(() => runConfigHealthchecks(cfg)).toThrow(/projectDir が存在しません/);
@@ -120,8 +108,6 @@ describe('runConfigHealthchecks — curl_cffi', () => {
 			projectDir: subDir,
 			uvPath: '/nonexistent/uv-binary-' + Date.now(),
 			impersonate: 'chrome120',
-			categories: ['timeout', 'connection_dropped', 'bot_blocked'],
-			domains: ['yodobashi.com'],
 			timeoutMs: 30000,
 		};
 		expect(() => runConfigHealthchecks(cfg)).toThrow(/uv が実行できません|uv 実行で例外/);
@@ -139,8 +125,6 @@ describe('runConfigHealthchecks — curl_cffi', () => {
 			projectDir: '/path/to/x',
 			uvPath: '/nonexistent/uv',
 			impersonate: 'chrome120',
-			categories: ['timeout', 'connection_dropped', 'bot_blocked'],
-			domains: ['yodobashi.com'],
 			timeoutMs: 30000,
 		} as never;
 		expect(() => runConfigHealthchecks(cfg)).not.toThrow();

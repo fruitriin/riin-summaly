@@ -69,19 +69,6 @@ function isFinalError(err: unknown): boolean {
 }
 
 /**
- * cascade 内で「どの段で成功したか」を呼出側に伝えるための mutable holder。
- *
- * cache miss 時に `scpaping()` が `cache.recordSuccess(pathKey, strategy)` を呼ぶために、
- * cascade の各段が成功時に `tracker.value = '<strategy>'` をセットする。
- *
- * 設計選択 (mutable param vs return tuple): 既存 cascade 関数のシグネチャ
- * (`Promise<Got.Response<string>>`) を維持して回帰リスクを最小化するため、
- * optional な mutable holder で side-channel 通信する。`tracker` 未指定なら no-op で
- * 既存挙動と完全互換。
- */
-export type StrategyTracker = { value?: DomainStrategy };
-
-/**
  * 外部から `setAgent` で渡された agent。設定されている場合は keep-alive デフォルトより優先される。
  * 設定時はプライベート IP ガードが解除される（プロキシ用途のため）— 既存挙動を維持。
  */
@@ -599,54 +586,6 @@ export function buildFallbackConfig(opts?: GeneralScrapingOptions): FallbackUaCo
 		userAgent: ua,
 		categories: opts?.fallbackRetryCategories ?? DEFAULT_FALLBACK_RETRY_CATEGORIES,
 	};
-}
-
-/**
- * `getResponse` のラッパで、bot block 検出時に別 UA で 1 回だけリトライする。
- *
- * - `fallback === undefined` のときは通常の `getResponse(args)` 1 回呼び出しと等価
- * - 1 回目失敗 → `categorizeError` でカテゴリ判定 → `fallback.categories` に含まれていれば
- *   UA だけ差し替えて 2 回目を実行
- * - 2 回目も失敗したら **2 回目のエラー（最後のエラー）を throw**。フォールバックでも
- *   失敗したという情報が末端まで伝わる
- * - 成功時は通常の `Got.Response<string>` を返す
- *
- * リトライ回数は常に最大 1 回（合計 2 回試行）。指数バックオフは入れない。
- */
-export async function getResponseWithFallback(
-	args: GotOptions,
-	fallback?: FallbackUaConfig,
-	tracker?: StrategyTracker,
-	externalSignal?: AbortSignal,
-): Promise<Got.Response<string>> {
-	if (fallback == null) {
-		const r = await getResponse(args, externalSignal);
-		if (tracker != null) tracker.value = 'default';
-		return r;
-	}
-	try {
-		const r = await getResponse(args, externalSignal);
-		if (tracker != null) tracker.value = 'default';
-		return r;
-	} catch (firstErr) {
-		const message = firstErr instanceof Error ? firstErr.message : undefined;
-		const name = firstErr instanceof Error ? firstErr.name : undefined;
-		const statusCode = firstErr instanceof StatusError ? firstErr.statusCode : undefined;
-		const category = categorizeError(message, name, statusCode);
-		if (!fallback.categories.includes(category)) {
-			throw firstErr;
-		}
-		const retryArgs: GotOptions = {
-			...args,
-			headers: {
-				...args.headers,
-				'user-agent': fallback.userAgent,
-			},
-		};
-		const r = await getResponse(retryArgs, externalSignal);
-		if (tracker != null) tracker.value = 'fallback_ua';
-		return r;
-	}
 }
 
 async function receiveResponse<T>(args: {

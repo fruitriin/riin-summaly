@@ -123,21 +123,12 @@ app.get<{ Querystring: SummalyQuery }>('/api/summaly', async (req, reply) => {
 	// `HOST=0.0.0.0` で起動すると LAN 公開になり `?proxy=1` を LAN 内別ホストから叩かれうるため、
 	// proxy 機能を使う場合は HOST を変更しないこと（変更するなら SUMMALY_PROXY_URL/SECRET を未設定に）。
 	if (req.query.proxy === '1' && proxyAvailable) {
+		// phase18.1: categories / domains 撤廃 (hedge race ですべての URL に対して並列発火)。
+		// Worker 側 ALLOWED_DOMAINS が最終防衛として残る。
 		opts.proxyFallback = {
 			enabled: true,
 			url: proxyEnv.url,
 			secret: proxyEnv.secret,
-			// Amazon は IP レピュテーション層で 500 (origin_error) もしくは 200 + content-type 欠落
-		// (bot_blocked、phase12.1 followup) で弾くケースが両方ある
-		categories: ['origin_error', 'bot_blocked'],
-			// Amazon TLD + 短縮 URL (amzn.asia / amzn.to / a.co)。Worker 側 ALLOWED_DOMAINS と同期させる。
-			domains: [
-				'amazon.com', 'amazon.co.jp', 'amazon.co.uk', 'amazon.de', 'amazon.fr',
-				'amazon.it', 'amazon.es', 'amazon.ca', 'amazon.com.au', 'amazon.com.br',
-				'amazon.com.mx', 'amazon.in',
-				'amzn.asia', 'amzn.to', 'a.co',
-				'yodobashi.com',
-			],
 			timeoutMs: 30000,
 		};
 	}

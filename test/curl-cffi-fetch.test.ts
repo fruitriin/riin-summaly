@@ -16,7 +16,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
 	viaCurlCffi,
-	getResponseWithCurlCffiFallback,
 	pickOverrideHeaders,
 	type CurlCffiFallbackConfig,
 } from '@/utils/curl-cffi-fetch.js';
@@ -46,8 +45,6 @@ function makeConfig(overrides: Partial<CurlCffiFallbackConfig> = {}): CurlCffiFa
 		uvPath: mockScript,
 		projectDir: tmpDir,
 		impersonate: 'chrome120',
-		categories: ['timeout', 'connection_dropped', 'bot_blocked'],
-		domains: ['example.com'],
 		timeoutMs: 5000,
 		...overrides,
 	};
@@ -289,58 +286,7 @@ describe('pickOverrideHeaders (allowlist フィルタ)', () => {
 	});
 });
 
-describe('getResponseWithCurlCffiFallback gating', () => {
-	test('config 未指定なら curl_cffi を呼ばず原エラー (DNS 失敗 等) を伝える', async () => {
-		writeMockCli('#!/usr/bin/env node\nthrow new Error("should not be invoked")\n');
-		// .invalid TLD は DNS 解決に失敗するので proxy fallback の 1 段目で原エラーが throw される
-		const args = makeArgs({ url: 'https://nonexistent-host.invalid/' });
-		await expect(
-			getResponseWithCurlCffiFallback(args, undefined, undefined, undefined),
-		).rejects.toThrow(); // 原エラー（DNS / connect）が throw される
-	});
-
-	test('enabled === false なら curl_cffi を呼ばず原エラーを throw', async () => {
-		writeMockCli('#!/usr/bin/env node\nthrow new Error("should not be invoked")\n');
-		const args = makeArgs({ url: 'https://nonexistent-host.invalid/' });
-		const cfg = makeConfig({ enabled: false });
-		await expect(
-			getResponseWithCurlCffiFallback(args, undefined, undefined, cfg),
-		).rejects.not.toThrow(/curl_cffi/); // curl_cffi 経由のメッセージは入らない (gating 通過しない)
-	});
-
-	test('domains にマッチしないなら curl_cffi を呼ばず原エラー (curl_cffi 文字列を含まない)', async () => {
-		writeMockCli('#!/usr/bin/env node\nthrow new Error("should not be invoked")\n');
-		const args = makeArgs({ url: 'https://other-host.invalid/' });
-		const cfg = makeConfig({ domains: ['only-allowed.com'] });
-		// promise を await して捕えられた error のメッセージを直接見る (toThrow と not.toThrow の組み合わせはトリッキーなため)
-		try {
-			await getResponseWithCurlCffiFallback(args, undefined, undefined, cfg);
-			throw new Error('should have thrown');
-		} catch (e) {
-			expect(e).toBeInstanceOf(Error);
-			const msg = (e as Error).message;
-			// gating 通過しなかったので curl_cffi の spawn ENOENT メッセージは出ない
-			expect(msg).not.toMatch(/curl_cffi spawn failed/);
-		}
-	});
-
-	test('http:// (非 https) なら curl_cffi を呼ばず原エラーを throw', async () => {
-		writeMockCli('#!/usr/bin/env node\nthrow new Error("should not be invoked")\n');
-		const args = makeArgs({ url: 'http://nonexistent-host.invalid/insecure' });
-		const cfg = makeConfig({ domains: ['nonexistent-host.invalid'] });
-		try {
-			await getResponseWithCurlCffiFallback(args, undefined, undefined, cfg);
-			throw new Error('should have thrown');
-		} catch (e) {
-			const msg = (e as Error).message;
-			// http:// は curl_cffi gating で通過しないため curl_cffi のエラーメッセージは出ない
-			expect(msg).not.toMatch(/curl_cffi spawn failed/);
-			expect(msg).not.toMatch(/curl_cffi.*timeout/);
-		}
-	});
-});
-
-// **`forceCurlCffiFallback` は phase14 Step 4 で廃止された** (経路学習キャッシュ + bootstrap に統合)。
-// 該当テスト群は削除済み。yodobashi 等の TLS layer bot block サイトは
-// `data/domain-strategy-bootstrap.jsonl` の bootstrap エントリ (`yodobashi.com → curl_cffi`) で
-// cache fast path から直接 curl_cffi が呼ばれる経路に移行している。
+// phase18.1: `getResponseWithCurlCffiFallback` (cascade) は廃止。
+// gating ロジック (enabled / categories / domains / protocol) は phase18 hedge race の `fetchByStrategy`
+// で `enabled` + `https:` のみに簡素化された。`fetchByStrategy` 自体のテストは hedged-fetch.test.ts に集約。
+// `viaCurlCffi` 直接呼びの挙動 (HTTP-level の挙動) は本ファイルの「viaCurlCffi (spawn 経由 ...)」 describe で確認済み。

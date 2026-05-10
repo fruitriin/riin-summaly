@@ -5,7 +5,7 @@
 
 import got, { type Agents as GotAgents } from 'got';
 import { LRUCache } from 'lru-cache';
-import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { SummalyResult as _SummalyResult } from '@/summary.js';
 import { SummalyPlugin as _SummalyPlugin } from '@/iplugin.js';
 import { general, type GeneralScrapingOptions } from '@/general.js';
@@ -262,6 +262,18 @@ export type SummalyOptions = {
 	 * 並列発火する。デフォルト 5000 (5 秒)。0 にすると即時並列発火 (debug / explore 用)。
 	 */
 	hedgedThresholdMs?: number;
+
+	/**
+	 * @internal
+	 * 経路学習キャッシュ + hedge race の記録 context を伝達する mutable side-channel。
+	 * 通常 `summaly()` 内部で `{}` が割り当てられ、`scpaping()` レイヤが書き込み、`summaly()` が
+	 * Summary 確定後に値を読んで `cache.recordX` を呼ぶ。
+	 *
+	 * **外部から渡すと** その object が共有され、`summaly()` 戻り後に呼出側でも `recState.hedgeFired` /
+	 * `recState.hedgeOutcomes` / `recState.hedgeLatencyMs` 等を読み取れる。Fastify ハンドラで pino
+	 * ログに hedge 情報を出すために phase18.1 で公開。library 利用者は通常触らない。
+	 */
+	_cacheRecording?: import('@/utils/domain-strategy-cache.js').CacheRecordingState;
 
 	/**
 	 * 経路学習キャッシュ設定。
@@ -524,7 +536,9 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 	// 経路学習キャッシュの記録 context。
 	// scpaping が読み書きし、summaly() が Summary 確定後にこの値を見て recordX を実行する。
 	// 設計詳細は `CacheRecordingState` の JSDoc 参照。
-	const cacheRecording: CacheRecordingState = {};
+	// **phase18.1**: 外部 (Fastify ハンドラ) から `_cacheRecording` が渡されていればそれを共有して
+	// hedge race の outcomes / latencyMs を呼出側に伝搬する (pino ログ用)。
+	const cacheRecording: CacheRecordingState = opts._cacheRecording ?? {};
 
 	const scrapingOptions: GeneralScrapingOptions = {
 		lang: opts.lang,
@@ -599,6 +613,41 @@ export const summaly = async (url: string, options?: SummalyOptions): Promise<Su
 
 	return result;
 };
+
+/**
+ * phase18.1: hedge race の発火 / 勝者 / 各経路の outcome / latency を pino に構造化ログ出力。
+ *
+ * `recState.hedgeFired` が `true` のとき (= champion が threshold 内に valid を返せず challenger 並列発火)
+ * のみログを出す (定常状態の champion 即勝ちでは何も出さない、ログ spam 抑制)。
+ *
+ * 出力フィールド:
+ * - `hedge_fired`: true 固定 (このログが出る = hedge 発火)
+ * - `champion`: cache hit があれば hit.entry.strategy、cache miss なら 'default'
+ * - `winner`: 最終的に勝った strategy
+ * - `outcomes`: 各経路の最終状態 (`valid` / `invalid` / `error` / `gate_failed`)
+ * - `latency_ms`: 各経路の completion latency
+ * - `url`: sanitize 済み URL (PII 除去)
+ *
+ * 用途: 「どの経路が gate_failed か」「curl_cffi が起動しているか」「各経路の latency 分布」を
+ * 本番診断するために必要 (Step 6 で deferred になっていた機能、phase18.1 で実装)。
+ */
+function logHedgeIfFired(
+	req: FastifyRequest,
+	url: string,
+	recState: CacheRecordingState,
+): void {
+	if (recState.hedgeFired !== true) return;
+	req.log.info(
+		{
+			hedge_fired: true,
+			winner: recState.strategy,
+			outcomes: recState.hedgeOutcomes,
+			latency_ms: recState.hedgeLatencyMs,
+			url: sanitizeUrlForLog(url),
+		},
+		'hedge race fired',
+	);
+}
 
 // eslint-disable-next-line import/no-default-export
 export default function (fastify: FastifyInstance, options: SummalyOptions, done: (err?: Error) => void) {
@@ -731,14 +780,23 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 		// 3. 完全な MISS（LRU・dedup どちらも HIT しなかった、または両方無効）。
 		//    dedup 有効時は先頭として inFlight にエントリを登録し、後続の並列リクエストに共有する。
 		const fetchEntry = async (): Promise<CacheEntry> => {
+			// phase18.1: hedge race の outcome を pino に出すため recState を確保。
+			// summaly() 内部で `_cacheRecording` を上書きするので、ここで作っても新規 instance に上書きされる。
+			// そのため成功 / 失敗の両経路で `recState` を取り出すには summaly() レイヤを修正する必要があるが、
+			// それは scope 大きいので **代わりに本ハンドラで `_cacheRecording` を渡し、summaly() の `Object.assign`
+			// に任せて hedge 情報を埋めてもらう**設計を採る (要 summaly() 改修、後述)。
+			const recState: import('@/utils/domain-strategy-cache.js').CacheRecordingState = {};
 			try {
 				const summary = await summaly(url, {
 					lang,
 					followRedirects: false,
 					...options,
+					_cacheRecording: recState,
 				});
+				logHedgeIfFired(req, url, recState);
 				return { kind: 'success', value: summary };
 			} catch (e) {
+				logHedgeIfFired(req, url, recState);
 				// pino へエラーを構造化ログ出力。
 				// MISS 経路でしか呼ばれないので LRU/dedup HIT 時は再ログされない（spam 抑制）。
 				// ログレベルは chooseLogLevel で category 由来 (4xx=info / 5xx・timeout=warn / 想定外=error)。

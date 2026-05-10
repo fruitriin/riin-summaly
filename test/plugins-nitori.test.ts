@@ -218,25 +218,13 @@ describe('summarize() の curl_cffi 設定検証 (silent fail を避ける)', ()
 			uvPath: 'uv',
 			projectDir: '/tmp',
 			impersonate: 'chrome120',
-			categories: [],
-			domains: ['nitori-net.jp'],
 			timeoutMs: 30000,
 		} satisfies CurlCffiFallbackConfig;
 		await expect(summarize(sampleUrl, { curlCffiFallback: cfg })).rejects.toThrow(/requires curl_cffi fallback/);
 	});
 
-	test('domains に nitori-net.jp が含まれていなければ明示エラーを throw', async () => {
-		const cfg = {
-			enabled: true,
-			uvPath: 'uv',
-			projectDir: '/tmp',
-			impersonate: 'chrome120',
-			categories: [],
-			domains: ['example.com'],
-			timeoutMs: 30000,
-		} satisfies CurlCffiFallbackConfig;
-		await expect(summarize(sampleUrl, { curlCffiFallback: cfg })).rejects.toThrow(/nitori-net\.jp/);
-	});
+	// phase18.1: domains allowlist 撤廃に伴い「domains に nitori-net.jp が含まれていなければ throw」テストは廃止
+	// (host 制約は plugin の test() で host match していることで担保)
 
 	test('test() が false の URL では summarize は null を返す (extractSku 失敗パス)', async () => {
 		// 念のため: extractSku 失敗 = 早期 return null。curl_cffi config が無くても throw しない

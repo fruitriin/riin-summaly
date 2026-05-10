@@ -11,7 +11,6 @@ import { readFileSync } from 'node:fs';
 import { parse as parseToml } from 'smol-toml';
 import type { SummalyOptions } from '../src/index.js';
 import { DEFAULT_FALLBACK_UA } from '../src/utils/got.js';
-import { getDefaultBootstrapPath } from '../src/utils/domain-strategy-cache.js';
 
 export interface ServerOptions {
 	host?: string;
@@ -84,54 +83,8 @@ function expectKnownKeys(obj: Record<string, Toml>, allowed: readonly string[], 
 	}
 }
 
-/**
- * bootstrap JSONL を読み、strategy 別に host (pathKey の最初のセグメント) を集約する。
- *
- * proxy / curl_cffi の `domains` allowlist を bootstrap entry から自動導出するために使う。
- * 1 ソース管理 (bootstrap.jsonl だけ更新すればよい) を実現するための内部ヘルパ。
- *
- * ファイルが存在しない / 読めない場合は **警告なく空 Map を返す** (起動失敗にしない、bootstrap は optional)。
- * 各エントリの parse error も silent skip (DomainStrategyCache.loadJsonl の堅牢性と同じ方針)。
- */
-function loadBootstrapHostsByStrategy(bootstrapPath: string): Map<string, Set<string>> {
-	const result = new Map<string, Set<string>>();
-	let text: string;
-	try {
-		text = readFileSync(bootstrapPath, 'utf-8');
-	} catch {
-		return result;
-	}
-	for (const line of text.split('\n')) {
-		const trimmed = line.trim();
-		if (trimmed === '' || trimmed.startsWith('#')) continue;
-		try {
-			const obj = JSON.parse(trimmed) as { pathKey?: unknown; strategy?: unknown };
-			if (typeof obj.pathKey !== 'string' || typeof obj.strategy !== 'string') continue;
-			const host = obj.pathKey.split('/')[0];
-			if (host === '') continue;
-			let set = result.get(obj.strategy);
-			if (set === undefined) {
-				set = new Set();
-				result.set(obj.strategy, set);
-			}
-			set.add(host);
-		} catch {
-			continue;
-		}
-	}
-	return result;
-}
-
-/**
- * proxy / curl_cffi の `categories` デフォルト値 (コード側固定、TOML キーは持たない)。
- *
- * 運用上ほぼ全員が同じ値を使うため、設定責任を運用者から外しコード側に集約する判断
- * (Feedback.md の orientation に従う)。
- */
-const DEFAULT_PROXY_CATEGORIES: NonNullable<SummalyOptions['proxyFallback']>['categories']
-	= ['origin_error', 'bot_blocked'];
-const DEFAULT_CURL_CFFI_CATEGORIES: NonNullable<SummalyOptions['curlCffiFallback']>['categories']
-	= ['timeout', 'connection_dropped', 'bot_blocked'];
+// phase18.1: proxy / curl_cffi の `categories` / `domains` は撤廃。
+// hedge race ですべての URL に対して全 strategy が並列発火する。
 const DEFAULT_FALLBACK_CATEGORIES: NonNullable<SummalyOptions['fallbackRetryCategories']>
 	= ['bot_blocked', 'connection_dropped'];
 
@@ -278,46 +231,19 @@ function parseEmbedSection(rawEmbed: Toml, summaly: SummalyOptions): void {
  */
 const SCRAPING_KEYS = ['fallback', 'proxy', 'curl_cffi', 'strategy_cache'] as const;
 function parseScrapingSection(rawScraping: Toml, out: SummalyOptions): void {
-	if (rawScraping === undefined) {
-		// scraping セクション無しでも bootstrap 依存チェックは走らせる (proxy/curl_cffi に渡す host set を空で評価)
-		const empty = new Map<string, Set<string>>();
-		parseProxySection(undefined, out, empty);
-		parseCurlCffiSection(undefined, out, empty);
-		return;
-	}
+	if (rawScraping === undefined) return;
 	if (!isObject(rawScraping)) {
 		throw new TypeError('config: `[scraping]` must be a table');
 	}
 	expectKnownKeys(rawScraping, SCRAPING_KEYS, 'scraping');
 
-	// bootstrap.jsonl から strategy 別 host set を導出 → proxy/curl_cffi の domains に注入。
-	// **bootstrap は `[scraping.strategy_cache]` セクション明示時のみ読む** (元の parseStrategyCacheSection
-	// 設計「section 無ければ何もマップしない」と整合)。section 無し = strategy_cache 無効 = 経路依存チェック不要。
-	// strategy_cache.bootstrapPath が明示されていればそれを、未指定なら getDefaultBootstrapPath() で同梱解決。
-	let bootstrapHostsByStrategy = new Map<string, Set<string>>();
-	const rawCache = rawScraping['strategy_cache'];
-	if (rawCache !== undefined && isObject(rawCache)) {
-		const cacheEnabled = rawCache.enabled === undefined || rawCache.enabled === true;
-		// bootstrapPath が string 型で空文字なら、ここで fail-fast (parseStrategyCacheSection より先に)
-		if (typeof rawCache.bootstrapPath === 'string' && rawCache.bootstrapPath.trim() === '') {
-			throw new RangeError('config: `scraping.strategy_cache.bootstrapPath` must not be empty when specified');
-		}
-		if (cacheEnabled) {
-			let bootstrapPath: string | undefined;
-			if (typeof rawCache.bootstrapPath === 'string') {
-				bootstrapPath = rawCache.bootstrapPath.trim();
-			} else {
-				bootstrapPath = getDefaultBootstrapPath();
-			}
-			if (bootstrapPath !== undefined && bootstrapPath !== '') {
-				bootstrapHostsByStrategy = loadBootstrapHostsByStrategy(bootstrapPath);
-			}
-		}
-	}
+	// phase18.1: bootstrap 自動導出 + 経路依存 fail-fast を撤廃。hedge race ですべての URL に対して
+	// 全 strategy が並列発火するため、bootstrap entry が無くても起動失敗にしない (host allowlist 不要化)。
+	// `bootstrapPath` が空文字列の早期 fail-fast は parseStrategyCacheSection 内で実施。
 
 	parseScrapingFallbackSection(rawScraping.fallback, out);
-	parseProxySection(rawScraping.proxy, out, bootstrapHostsByStrategy);
-	parseCurlCffiSection(rawScraping['curl_cffi'], out, bootstrapHostsByStrategy);
+	parseProxySection(rawScraping.proxy, out);
+	parseCurlCffiSection(rawScraping['curl_cffi'], out);
 	parseStrategyCacheSection(rawScraping['strategy_cache'], out);
 }
 
@@ -382,17 +308,8 @@ const SCRAPING_PROXY_KEYS = ['enabled', 'url', 'secret', 'timeoutMs'] as const;
 function parseProxySection(
 	rawProxy: Toml,
 	out: SummalyOptions,
-	bootstrapHostsByStrategy: Map<string, Set<string>>,
 ): void {
-	const proxyHosts = bootstrapHostsByStrategy.get('proxy') ?? new Set<string>();
-
-	if (rawProxy === undefined) {
-		// セクション自体無い + bootstrap に proxy entry あり → fail-fast
-		if (proxyHosts.size > 0) {
-			throw new RangeError(buildBootstrapDependencyError('proxy', proxyHosts, '[scraping.proxy] セクションが未定義です'));
-		}
-		return;
-	}
+	if (rawProxy === undefined) return;
 	if (!isObject(rawProxy)) {
 		throw new TypeError('config: `[scraping.proxy]` must be a table');
 	}
@@ -403,13 +320,7 @@ function parseProxySection(
 		expectType(rawProxy.enabled, 'boolean', 'scraping.proxy.enabled');
 		enabled = rawProxy.enabled as boolean;
 	}
-	if (!enabled) {
-		// 経路依存 fail-fast: bootstrap に proxy entry あり + enabled = false → 起動失敗
-		if (proxyHosts.size > 0) {
-			throw new RangeError(buildBootstrapDependencyError('proxy', proxyHosts, '[scraping.proxy].enabled = false です'));
-		}
-		return;
-	}
+	if (!enabled) return;
 
 	if (rawProxy.url === undefined) {
 		throw new RangeError('config: `scraping.proxy.url` is required when scraping.proxy.enabled = true');
@@ -433,15 +344,6 @@ function parseProxySection(
 		);
 	}
 
-	// domains は bootstrap から自動導出
-	const domains = Array.from(proxyHosts);
-	if (domains.length === 0) {
-		throw new RangeError(
-			'config: scraping.proxy.enabled = true ですが、bootstrap.jsonl に proxy 経路のエントリが存在しません。'
-			+ ' proxy を有効化する場合は data/domain-strategy-bootstrap.jsonl に対象 host を追加してください',
-		);
-	}
-
 	let timeoutMs = 30000;
 	if (rawProxy.timeoutMs !== undefined) {
 		expectType(rawProxy.timeoutMs, 'number', 'scraping.proxy.timeoutMs');
@@ -452,29 +354,8 @@ function parseProxySection(
 		enabled: true,
 		url,
 		secret,
-		categories: DEFAULT_PROXY_CATEGORIES,
-		domains,
 		timeoutMs,
 	};
-}
-
-/**
- * bootstrap 依存エラーのメッセージ生成 (経路依存 fail-fast)。
- * 利用者に「どちらかを修正すべきか」を明示する。
- */
-function buildBootstrapDependencyError(strategy: 'proxy' | 'curl_cffi', hosts: Set<string>, condition: string): string {
-	const hostList = Array.from(hosts).slice(0, 10).map(h => `  - ${h}`).join('\n');
-	const more = hosts.size > 10 ? `\n  ... 他 ${hosts.size - 10} 件` : '';
-	const sectionKey = strategy === 'proxy' ? 'scraping.proxy' : 'scraping.curl_cffi';
-	return (
-		`config: bootstrap (data/domain-strategy-bootstrap.jsonl) は以下の host に対し '${strategy}' 経路を必須としていますが、${condition}:\n`
-		+ hostList + more + '\n\n'
-		+ '以下のいずれかで対処してください:\n'
-		+ `  (a) [${sectionKey}].enabled = true にして ${strategy} をセットアップ`
-		+ (strategy === 'proxy' ? ' (tools/cf-proxy-worker/README.md 参照)' : ' (tools/curl-cffi-fetcher/README.md 参照)') + '\n'
-		+ `  (b) [scraping.strategy_cache].enabled = false で経路学習キャッシュを無効化 (該当ホストのプレビューは取得できなくなります)\n`
-		+ `  (c) data/domain-strategy-bootstrap.jsonl から該当エントリを削除`
-	);
 }
 
 /**
@@ -493,16 +374,8 @@ const SCRAPING_CURL_CFFI_KEYS = ['enabled', 'projectDir', 'uvPath', 'impersonate
 function parseCurlCffiSection(
 	rawCurlCffi: Toml,
 	out: SummalyOptions,
-	bootstrapHostsByStrategy: Map<string, Set<string>>,
 ): void {
-	const curlCffiHosts = bootstrapHostsByStrategy.get('curl_cffi') ?? new Set<string>();
-
-	if (rawCurlCffi === undefined) {
-		if (curlCffiHosts.size > 0) {
-			throw new RangeError(buildBootstrapDependencyError('curl_cffi', curlCffiHosts, '[scraping.curl_cffi] セクションが未定義です'));
-		}
-		return;
-	}
+	if (rawCurlCffi === undefined) return;
 	if (!isObject(rawCurlCffi)) {
 		throw new TypeError('config: `[scraping.curl_cffi]` must be a table');
 	}
@@ -513,12 +386,7 @@ function parseCurlCffiSection(
 		expectType(rawCurlCffi.enabled, 'boolean', 'scraping.curl_cffi.enabled');
 		enabled = rawCurlCffi.enabled as boolean;
 	}
-	if (!enabled) {
-		if (curlCffiHosts.size > 0) {
-			throw new RangeError(buildBootstrapDependencyError('curl_cffi', curlCffiHosts, '[scraping.curl_cffi].enabled = false です'));
-		}
-		return;
-	}
+	if (!enabled) return;
 
 	if (rawCurlCffi.projectDir === undefined) {
 		throw new RangeError('config: `scraping.curl_cffi.projectDir` is required when scraping.curl_cffi.enabled = true');
@@ -549,15 +417,6 @@ function parseCurlCffiSection(
 		impersonate = v;
 	}
 
-	// domains は bootstrap から自動導出
-	const domains = Array.from(curlCffiHosts);
-	if (domains.length === 0) {
-		throw new RangeError(
-			'config: scraping.curl_cffi.enabled = true ですが、bootstrap.jsonl に curl_cffi 経路のエントリが存在しません。'
-			+ ' curl_cffi を有効化する場合は data/domain-strategy-bootstrap.jsonl に対象 host を追加してください',
-		);
-	}
-
 	let timeoutMs = 30000;
 	if (rawCurlCffi.timeoutMs !== undefined) {
 		expectType(rawCurlCffi.timeoutMs, 'number', 'scraping.curl_cffi.timeoutMs');
@@ -570,8 +429,6 @@ function parseCurlCffiSection(
 		uvPath,
 		projectDir,
 		impersonate,
-		categories: DEFAULT_CURL_CFFI_CATEGORIES,
-		domains,
 		timeoutMs,
 	};
 }
