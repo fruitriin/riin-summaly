@@ -77,12 +77,13 @@ const SCENARIOS = [
 	{
 		name: 'monotaro',
 		url: 'https://www.monotaro.com/p/7281/1123/',
-		notes: 'phase18 主役。fail mode H (TLS bot block)。curl_cffi で hedge race 救援、bootstrap entry なしの自動学習',
-		assertions: [
-			titleContains(['モノタロウ', 'monotaro', '実験用']),
-			hasThumbnail(),
-			sitenameContains('モノタロウ'),
-		],
+		// phase18.1 で fail mode J 確定 (2026-05-10)。datacenter IP 全般 (Vultr / CF AS13335) を
+		// monotaro 側で TLS layer block。curl_cffi の TLS 偽装も IP 層で別途切断される
+		// (本番ログ: HTTP/2 stream INTERNAL_ERROR)。家庭 IP なら curl_cffi で取れるが、
+		// 本番デプロイ環境 (datacenter) では救援不可。詳細は docs/knowhow/spa-dynamic-ogp-unfixable.md。
+		notes: 'fail mode J (datacenter IP 全般 block、ニトリと同型)。本番では救援不可、UNUSABLE 期待',
+		expectedUnusable: true,
+		assertions: [], // 救援不可なので assertion なし (200 が返ったらむしろサプライズ)
 	},
 	{
 		name: 'yodobashi',
@@ -426,6 +427,18 @@ async function runScenario(scenario, baseUrl, buster, timeoutMs) {
 			const failure = assert(json);
 			if (failure != null) errors.push(failure);
 		}
+	}
+
+	// `expectedUnusable: true` のシナリオは「救援不可」期待 (= 5xx / error が正常)。
+	// 200 が返ったらむしろ環境改善のサプライズとして扱い、fail にする (期待値の見直しを促す)。
+	if (scenario.expectedUnusable === true) {
+		const errorsBackup = [...errors];
+		errors.length = 0;
+		if (httpStatus !== null && httpStatus >= 200 && httpStatus < 300) {
+			errors.push('expectedUnusable シナリオが 200 を返した (環境改善か、scenarios の expectedUnusable 見直し検討)');
+		}
+		// それ以外は assertion 結果を捨てて pass 扱い (5xx / error は期待通り)
+		void errorsBackup;
 	}
 
 	return {

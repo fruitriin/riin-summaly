@@ -10,19 +10,14 @@ compatibility_date = "2025-11-01"
 # Free プランで動かす想定。Paid プランへの自動切替は無いため、超過時は 429 で停止する（金額課金は発生しない）。
 
 [vars]
-# allowlist は Worker 側でも独立して持つ（多層防御）。summaly 側 (config.toml の [scraping.proxy].domains)
-# と両方で deny されないと通らない設計。
-# 判定方式: **suffix-match**。`amazon.co.jp` を書くと `www.amazon.co.jp` 等 `*.amazon.co.jp` も通すが
-# `evil-amazon.co.jp` のような sibling は通さない（Worker 内 `lower === d || lower.endsWith('.' + d)`）。
-# 完全な glob (`amazon.*`) はサポートしないため、TLD ごとに個別に列挙する。
+# **phase18.1 で `ALLOWED_DOMAINS` 撤廃** (2026-05-10):
+#   - HMAC-SHA256 + 5 分タイムスタンプ窓で「secret を知る呼出元のみ通す」防御で十分と判断
+#   - secret 漏洩時は wrangler secret put SHARED_SECRET <new> で rotation
+#   - 旧設計: summaly 側 (config.toml の [scraping.proxy].domains) + Worker 側 (本 var) の二重 allowlist だったが、
+#     並列発火モデル (phase18 hedge race) と矛盾 + 新サイト追加で Worker redeploy 必要 = 運用負担が
+#     secret 漏洩時の追加防御の価値を上回ると判断して撤廃。
 #
-# Amazon 短縮 URL (`amzn.asia` / `amzn.to` / `a.co`) も含めることで、summaly 側の resolveRedirect が
-# 失敗した場合のフォールバックとして Worker が直接 `amzn.asia/d/xxx` を fetch できる。
-# Worker 内部の `redirect: 'follow'` で `www.amazon.co.jp/...` に到達 → W-1 修正で最終 URL も
-# allowlist 再検証されるため安全。
-ALLOWED_DOMAINS = "amazon.com,amazon.co.jp,amazon.co.uk,amazon.de,amazon.fr,amazon.it,amazon.es,amazon.ca,amazon.com.au,amazon.com.br,amazon.com.mx,amazon.in,amzn.asia,amzn.to,a.co,yodobashi.com,store.jp.square-enix.com"
-
-# 受信ボディ上限（OGP 取得用途として 5 MiB）
+# 受信ボディ上限 (OGP 取得用途として 5 MiB)
 MAX_BODY_BYTES = "5242880"
 
 # タイムスタンプ検証窓（ミリ秒、5 分）

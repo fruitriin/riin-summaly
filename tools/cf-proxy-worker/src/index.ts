@@ -14,9 +14,10 @@
 
 interface Env {
 	SHARED_SECRET: string;
-	ALLOWED_DOMAINS: string;
 	MAX_BODY_BYTES: string;
 	TIMESTAMP_WINDOW_MS: string;
+	// **phase18.1 で `ALLOWED_DOMAINS` 撤廃**: HMAC + 5 分窓で十分な防御 (HMAC 認証通った時点で
+	// secret を知る信頼できる呼出元と判定)。secret 漏洩時は rotation で対処、運用負担削減。
 }
 
 const FORBIDDEN_HEADERS = new Set([
@@ -64,9 +65,7 @@ export default {
 		if (target.protocol !== 'https:') {
 			return forbidden('https only');
 		}
-		if (!isAllowedDomain(target.hostname, env.ALLOWED_DOMAINS)) {
-			return forbidden('domain not in allowlist');
-		}
+		// phase18.1: ALLOWED_DOMAINS 撤廃。HMAC + timestamp 窓で十分な防御 (secret を知る呼出元のみ通す)。
 
 		// 6. forwarded UA を抽出（summaly 側が指定する）
 		const forwardedUA = request.headers.get('x-summaly-forward-ua') ?? 'Mozilla/5.0 (compatible; SummalyProxy/1.0)';
@@ -98,16 +97,12 @@ export default {
 			});
 		}
 
-		// 7.5. **C-1 対策**: `redirect: 'follow'` で内部リダイレクトされた最終 URL の allowlist 再検証。
-		// `fetch` がフォローした先が allowlist 外なら拒否する（オープンプロキシ化を防ぐ）。
-		// `upstream.url` は最終解決後の URL（`target.href` と異なる場合あり）。
+		// 7.5. リダイレクト後の最終 URL の protocol 再検証 (https 限定維持、phase18.1 で domain
+		// allowlist は撤廃したが http への downgrade 防御は残す)。
 		try {
 			const finalUrl = new URL(upstream.url);
 			if (finalUrl.protocol !== 'https:') {
 				return forbidden('redirect to non-https');
-			}
-			if (!isAllowedDomain(finalUrl.hostname, env.ALLOWED_DOMAINS)) {
-				return forbidden('redirect led to non-allowlisted domain');
 			}
 		} catch {
 			return forbidden('invalid final url after redirect');
@@ -189,21 +184,6 @@ function constantTimeEqual(a: string, b: string): boolean {
 		diff |= ca ^ cb;
 	}
 	return diff === 0;
-}
-
-/**
- * `ALLOWED_DOMAINS` env var (`amazon.com,amazon.co.jp,...`) と比較。
- * 完全一致 (`hostname === domain`) または末尾一致 (`hostname.endsWith('.' + domain)`) を許可。
- * `amazon.com` allowlist で `www.amazon.com` も通すが `evil-amazon.com` は通さない。
- */
-function isAllowedDomain(hostname: string, allowedCsv: string): boolean {
-	const lower = hostname.toLowerCase();
-	const allowed = allowedCsv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-	for (const d of allowed) {
-		if (lower === d) return true;
-		if (lower.endsWith('.' + d)) return true;
-	}
-	return false;
 }
 
 /**

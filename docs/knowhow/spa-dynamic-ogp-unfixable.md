@@ -1,5 +1,24 @@
 # SPA + JavaScript 動的 OGP 注入は summaly では救援不可
 
+> **2026-05-10 第 2 例: monotaro (モノタロウ) も fail mode J 確定**: phase18 hedge race
+> + pino ログ拡張 (commit 206e646 / f485d77) で各経路の error message を本番 journalctl
+> から取れるようになり、monotaro の各経路を確定:
+>
+> | 経路 | error | 解釈 |
+> |---|---|---|
+> | `default` (SummalyBot UA + Vultr IP) | `Timeout awaiting 'socket' for 20000ms` | TLS layer 切断 |
+> | `fallback_ua` (`facebookexternalhit/1.1` + Vultr IP) | 同上 | UA 替えても同じ TLS 切断 |
+> | `proxy` (CF Workers AS13335) | `403 Forbidden` (Worker 側 ALLOWED_DOMAINS 撤廃後は HTTP/2 切断 / 404) | CF AS13335 IP も block 対象 |
+> | `curl_cffi` (chrome120 偽装 + Vultr IP) | `curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR` | **TLS 偽装しても Vultr IP で別途切断** |
+>
+> ローカル Mac (家庭 IP) からは curl_cffi (chrome120) で 200 + 完璧な OGP が取れるのに、
+> **本番 Vultr Tokyo IP からは TLS 偽装でも切断される** = ニトリと同型の datacenter IP
+> 全般 block (fail mode J) パターン。HTML 経由のシンプル OGP サイトであっても datacenter IP
+> 利用者には preview 取得不可、という新事例。
+>
+> **summaly のスコープでは救援不可**。Plan / e2e シナリオでは「UNUSABLE 期待」として整理し、
+> Misskey 側の URL のみフォールバック表示に頼る。
+
 > **2026-05-10 確定 (二転三転後)**: ニトリは当初 fail mode I (SPA + JS 動的 OGP) として
 > 「救援不可」と整理 → phase15.4 で公式 JSON API 発見により「家庭用 IP からは curl_cffi
 > 経由で救援可能」と判明 → 本番 Vultr Tokyo IP からは TLS HTTP/2 INTERNAL_ERROR、
