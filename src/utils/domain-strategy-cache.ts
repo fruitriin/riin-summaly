@@ -524,4 +524,10 @@ export type CacheRecordingState = {
 	hedgeOutcomes?: Partial<Record<DomainStrategy, 'valid' | 'invalid' | 'error' | 'gate_failed'>>;
 	/** phase18 hedged race: 各経路の completion latency ms (pino ログ用) */
 	hedgeLatencyMs?: Partial<Record<DomainStrategy, number>>;
+	/**
+	 * phase18.1: 各経路の失敗 error message (pino ログ用、本番診断必須)。
+	 * outcomes: 'error' の strategy について「**なぜ** error か」を string で保持。
+	 * 例: `{ curl_cffi: 'curl_cffi spawn failed (uv が未インストール...)', proxy: '403 Forbidden' }`
+	 */
+	hedgeErrors?: Partial<Record<DomainStrategy, string>>;
 };

@@ -643,6 +643,9 @@ function logHedgeIfFired(
 			winner: recState.strategy,
 			outcomes: recState.hedgeOutcomes,
 			latency_ms: recState.hedgeLatencyMs,
+			// 各 strategy の error message (本番診断必須、phase18.1)。outcomes: 'error' の strategy について
+			// 「なぜ」が分かるよう error.message を string で出力。
+			errors: recState.hedgeErrors,
 			url: sanitizeUrlForLog(url),
 		},
 		'hedge race fired',

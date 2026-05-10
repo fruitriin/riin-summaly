@@ -336,6 +336,14 @@ async function fetchResponse(
 				recState.hedgeFired = err.hedgeFired;
 				recState.hedgeOutcomes = err.outcomes;
 				recState.hedgeLatencyMs = err.latencyMs;
+				// 各 strategy の「なぜ error か」を message で保存。本番で curl_cffi が
+				// `spawn failed (uv が ...)` 等の具体原因を journalctl で確認できるようにする
+				const errs: Partial<Record<DomainStrategy, string>> = {};
+				for (const c of err.causes) {
+					if (c.error instanceof Error) errs[c.strategy] = c.error.message;
+					else errs[c.strategy] = String(c.error);
+				}
+				recState.hedgeErrors = errs;
 			}
 			// 全 cause が「gate failed (no strategy enabled)」= config 上使える経路がない中立状態。
 			// cache hit エントリを失敗カウントせず温存するため `gateFailedNeutral = true` をセット
