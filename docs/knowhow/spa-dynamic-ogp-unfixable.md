@@ -1,21 +1,32 @@
 # SPA + JavaScript 動的 OGP 注入は summaly では救援不可
 
-> **2026-05-10 重要更新**: 当初「ニトリ (`nitori-net.jp/ec/product/...`)」を fail mode I の代表例
-> として「救援不可」と整理していたが、phase15.4 で**公式 SAP Commerce OCC API
-> (`/occ/v2/nitorinet/nitori/products/<sku>?handleError=true&lang=ja&curr=JPY`) を curl_cffi
-> 経由で直叩きすると完璧な構造化データが返る** ことが判明し、ニトリは救援可能となった
-> (詳細は本ドキュメント末尾「ニトリの救援 (phase15.4)」セクションと
-> [docs/plans/phase15.4-plugin-nitori.md](../plans/phase15.4-plugin-nitori.md))。
+> **2026-05-10 確定 (二転三転後)**: ニトリは当初 fail mode I (SPA + JS 動的 OGP) として
+> 「救援不可」と整理 → phase15.4 で公式 JSON API 発見により「家庭用 IP からは curl_cffi
+> 経由で救援可能」と判明 → 本番 Vultr Tokyo IP からは TLS HTTP/2 INTERNAL_ERROR、
+> CF Workers proxy (AS13335) 経由でも 520 Web Server Returns Unknown Error が返る現象を
+> 観測し、**datacenter IP 全般が Akamai 系で TLS layer block されている (fail mode J)** と
+> 確定。summaly のスコープでは救援不可。
 >
-> **教訓**: 「fail mode I 確定」と判定する前に **隠れ JSON API 探索** を必ず 1 段挟むこと。
-> SAP Commerce / Salesforce Commerce / Shopify / Magento 等の **EC エンジン** は標準的に
-> 商品詳細用の JSON API を晒しており、OCC / Storefront API / Admin API 等の慣例 path を
-> ブラウザの DevTools Network タブで検索することで発見できる場合が多い。
+> **現状**: `src/plugins/nitori.ts` のコード自体は残す (家庭用 IP / library 直接利用者は
+> 引き続き使える)。`config.example.toml` 等の `[plugins].allowed` からは外し、デフォルトで
+> 無効化。本番 (Vultr) で運用しているプロジェクトでは効果が無いことを明示。
 >
-> ニトリ救援後も **fail mode I という分類自体は健在** で、「ブラウザでは見えるのに
-> サーバ HTML には OGP が無い」という現象 + 「JSON API も塞がっているか存在しない」場合に
-> 真の救援不可となる。本ドキュメントは「JSON API があれば救援できる」「無ければ Playwright
-> モード (phase15.1) または救援不可」という両面を扱う。
+> **教訓 1 (隠れ JSON API 探索)**: 「fail mode I 確定」と判定する前に **隠れ JSON API
+> 探索** を必ず 1 段挟むこと。SAP Commerce / Salesforce Commerce / Shopify / Magento 等の
+> **EC エンジン**は標準的に商品詳細用の JSON API を晒しており、OCC / Storefront API /
+> Admin API 等の慣例 path を ブラウザの DevTools Network タブで検索することで発見できる
+> 場合が多い。
+>
+> **教訓 2 (datacenter IP block の早期切り分け = 新 fail mode J)**: ローカルで動いた
+> curl_cffi が本番で動かないとき、TLS フィンガープリントの問題ではなく ASN/IP-based の
+> block の可能性が高い。yodobashi (TLS layer block) との違いは **「TLS フィンガープリントを
+> 偽装すれば家庭用 IP からは通る」までは同じだが、yodobashi は datacenter IP も TLS 偽装で
+> 通るのに対し、ニトリは datacenter IP 全般が block されている**。CF Workers (AS13335) は
+> 多くの Akamai 配下サイトで通るが、ニトリのような厳格運用サイトでは通らない。
+>
+> **対処パターン**: residential proxy (BrightData / Smartproxy / Soax 等の商用サービス) が
+> 必要だが summaly の運用コスト的にスコープ外。Playwright モード (phase15.1) を待つか、
+> 別 ASN の datacenter (家庭用 IP に近い ISP の VPS) からの egress を試すかの選択になる。
 
 ## 課題
 
@@ -111,22 +122,51 @@ uv run fetch "$URL" 2>/dev/null \
 - 静的 HTML: OGP 0 件 + ブラウザ DOM: OGP 多数 → **fail mode I 確定 (救援不可)**
 - 静的 HTML: OGP 0 件 + ブラウザ DOM: OGP 0 件 → サイトが OGP 自体を実装していない (救援不可、要望のみ)
 
-## ニトリの救援 (phase15.4)
+## ニトリの救援断念 (phase15.4 + Followup #1, #2)
 
 ニトリは fail mode I の代表例として「救援不可」と整理されていたが、2026-05-10 のオーナー
 情報提供で **`/occ/v2/nitorinet/nitori/products/<sku>?handleError=true&lang=ja&curr=JPY`
 (SAP Commerce Cloud OCC API)** が **完璧な構造化データ** を返すことが判明した。
 
 ただし JSON API 自体も **TLS layer block 配下** にあり、`SummalyBot` / `facebookexternalhit` /
-`Twitterbot` などの UA で叩くと HTTP/2 INTERNAL_ERROR で切断される。Chrome 風の UA (`Mozilla/5.0 ...
-Chrome/131.0.0.0 ...`) と Chrome JA3 を curl_cffi で偽装することで唯一通る (yodobashi と同じ TLS
-layer block パターン + 公式 JSON API の組み合わせ)。
+`Twitterbot` などの UA で叩くと HTTP/2 INTERNAL_ERROR で切断される。Chrome JA3 を curl_cffi で
+偽装することで **家庭用 IP (一般 ISP / NAT) からは唯一通る**。phase15.4 ではこの経路で実装した
+が、本番 Vultr Tokyo からのデプロイで以下の追加 fail を観測した:
 
-実装は [src/plugins/nitori.ts](../../src/plugins/nitori.ts) で `viaCurlCffi` を直接呼ぶ
-hardcode 方式。経路学習キャッシュではなく、`bootstrap.jsonl` の `nitori-net.jp → curl_cffi`
-エントリで `curlCffiFallback.domains` allowlist に自動的に含まれる構成 (phase16.3 設計)。
+### 経路ごとの実機検証結果 (2026-05-10)
 
-### 教訓: fail mode I 判定の前段に「隠れ JSON API 探索」を 1 段入れる
+| 経路 | 結果 | 備考 |
+|---|---|---|
+| ローカル MacOS (家庭 IP) + curl_cffi (chrome120 / 131) | ✅ 200 OK + JSON 4.5KB | Followup #1 で `--header Accept:application/json` 追加後 |
+| 本番 Vultr Tokyo + curl_cffi | ❌ HTTP/2 INTERNAL_ERROR (TLS 切断) | Akamai が Vultr ASN を弾く |
+| 本番 → CF Workers proxy (AS13335) | ❌ 520 Web Server Returns Unknown Error | Akamai が CF AS13335 も弾く (CF が origin から異常終了を受け取り 520 を生成) |
+| 本番 → curl_cffi (Vultr 上) → JSON API | ❌ 同上 (Vultr IP から出るので結局同じ) | TLS 偽装してても出口 IP が問題 |
+
+→ **fail mode J 確定: datacenter IP 全般 block**。residential proxy (BrightData / Smartproxy 等の
+商用サービス) が必要だが summaly の運用コスト的にスコープ外。
+
+### 現状の運用判断
+
+- `src/plugins/nitori.ts` の **コードと登録は残す** (家庭用 IP / library 直接利用者は引き続き使える、
+  Followup #1 の curl_cffi CLI `--header` 機構は他の JSON API ケース用に資産として有用)
+- `config.example.toml` / `docs/deploy-examples/summaly-config.example.toml` の `[plugins].allowed`
+  からは **コメントアウト形式で外す** + 「fail mode J で本番運用は救援不可」を明記
+- `data/domain-strategy-bootstrap.jsonl` から `nitori-net.jp → curl_cffi` を削除 (allowlist
+  自動導出されないことで誤動作回避)
+- `tools/cf-proxy-worker/wrangler.toml` の `ALLOWED_DOMAINS` から `nitori-net.jp` を削除
+
+### Plan B 候補 (将来の検討事項)
+
+1. **Playwright モード** ([phase15.1](../plans/phase15.1-playwright-fallback.md)): 実ブラウザで叩く。
+   ただし Playwright も Vultr IP から出るため、IP block が解消するわけではない。**ただしブラウザ
+   フィンガープリント + 動的挙動の完全再現で Akamai がブラウザと判定する可能性は curl_cffi より高い**
+   (要実機検証)
+2. **別 ASN の datacenter VPS (家庭 ISP に近いやつ)**: ニトリで実際に通る ASN は実験で見つける
+   しかない。維持コスト上昇 + 構成複雑化のトレードオフ
+3. **Residential proxy 商用サービス連携**: BrightData / Smartproxy / Soax 等。月額サブスクリプション
+   の運用コストが summaly のスコープ外
+
+### 教訓 1: fail mode I 判定の前段に「隠れ JSON API 探索」を 1 段入れる
 
 「ブラウザでは見えるのに HTML スクレイプでは取れない」を観測したら、即 fail mode I 結論にせず:
 
@@ -138,13 +178,58 @@ hardcode 方式。経路学習キャッシュではなく、`bootstrap.jsonl` �
 3. **curl_cffi を使うか判断** — JSON API も TLS / UA layer block 配下なら curl_cffi 経由
    (ニトリパターン)、素通しなら通常 `getJson` (npmjs パターン)
 
-この 3 段を踏むことで「JSON API 経由で救援可能なサイト」を fail mode I と誤判定して諦めることを
-構造的に防げる。
+### 教訓 2: ローカルで通っても本番 (datacenter IP) で同じとは限らない
+
+curl_cffi は **TLS フィンガープリント** だけ偽装する。**送信元 IP の ASN は偽装しない**。
+yodobashi では「Chrome JA3 偽装」で TLS 切断が解消するが、これは「Akamai が UA + JA3 だけ
+見ている」のが前提。ニトリは更に厳格で **送信元 ASN まで見ており、datacenter ASN は全部弾く**。
+
+実装フェーズで **本番 IP からの動作確認を Plan の Step に組み込む** べき。具体的には:
+
+- Plan Step (E2E 検証時) に「本番 ssh 上で `uv run fetch <api>` を実行して 200 OK を確認」を必須化
+- ローカル検証だけで「OK」判断しない
+- skill `/url-preview-check` の Phase 2 で「本番 ssh 経由 curl 検証」を組み込む (既存)
+
+## fail mode J: datacenter IP 全般 block
+
+「ブラウザでは見えるのに、TLS 偽装して datacenter IP から叩いても通らない」パターン。
+yodobashi (fail mode H) との違い:
+
+| | fail mode H (yodobashi) | fail mode J (nitori) |
+|---|---|---|
+| 家庭用 IP + 通常 UA | ❌ TLS 切断 | ❌ TLS 切断 |
+| 家庭用 IP + curl_cffi (Chrome JA3) | ✅ 通過 | ✅ 通過 |
+| Vultr IP + curl_cffi | ✅ 通過 | ❌ TLS 切断 |
+| CF Workers proxy (AS13335) | ✅ 通過 (yodobashi なら) | ❌ 520 |
+
+→ **H は TLS フィンガープリント検査だけ**、**J は ASN-based block も併用**。J は summaly の
+スコープでは救援困難。
+
+### 切り分けチェックリスト (新サイト遭遇時)
+
+```bash
+# 1. 家庭用 IP からの基本確認
+curl -A "Mozilla/5.0 ...Chrome/131..." "$URL"  # 200 OK ?
+
+# 2. 家庭用 IP + curl_cffi
+uv run fetch "$URL" --impersonate chrome120  # 200 OK ?
+
+# 3. 本番 Vultr などの datacenter IP から同じことを試す
+ssh prod "cd /root/summaly/tools/curl-cffi-fetcher && uv run fetch '$URL' --impersonate chrome120"
+
+# 4. CF Workers proxy 経由 (sqex の経路を流用)
+node scripts/check-via-worker.mjs  # url を埋めて
+
+# 1=OK, 2=OK, 3=NG, 4=NG → fail mode J 確定 (residential proxy 必要)
+# 1=NG, 2=OK, 3=OK, 4=OK → fail mode H (yodobashi パターン、curl_cffi で救援可)
+# 1=NG, 2=NG, 3=NG, 4=NG → 真の fail mode I (JS 必須、Playwright)
+```
 
 ## 関連
 
-- skill `/url-preview-check` — fail mode I として組み込み済
-- 関連 fail mode H: TLS layer 切断 (静的 HTML には OGP がある場合、curl_cffi で救援可能 = yodobashi パターン)
-- phase12.5: curl_cffi (libcurl-impersonate) 統合 (fail mode I を切り分ける道具にもなる — 静的 HTML の中身を確実に見れる)
-- phase15.4: ニトリプラグイン (隠れ JSON API + curl_cffi で救援、本セクションの実例)
-- phase15.1: Playwright モード (真の fail mode I 救援、JSON API も無い SPA を実ブラウザレンダリングで救援)
+- skill `/url-preview-check` — fail mode I + J を組み込み (J は今回の発見で追加)
+- 関連 fail mode H: TLS layer 切断 (datacenter IP も curl_cffi で通る、yodobashi)
+- 関連 fail mode J: TLS layer 切断 + datacenter IP 全般 block (nitori、本セクション)
+- phase12.5: curl_cffi (libcurl-impersonate) 統合
+- phase15.4: ニトリプラグイン (家庭用 IP では救援可、本番 Vultr では fail mode J で実用不能)
+- phase15.1: Playwright モード (要 residential 等価環境がなければ J も完全救援は難しい)

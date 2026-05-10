@@ -42,4 +42,16 @@ export default [ // eslint-disable-line import/no-default-export
 			'@typescript-eslint/no-var-requires': 'off',
 		},
 	},
+	{
+		// 運用者ローカル one-shot 検証スクリプト (scripts/*.mjs)。secret は env 経由で受け取る。
+		// Node 環境の globals (console / process / fetch 等) を有効化。
+		files: ['scripts/**/*.mjs'],
+		languageOptions: {
+			globals: {
+				console: 'readonly',
+				process: 'readonly',
+				fetch: 'readonly',
+			},
+		},
+	},
 ];

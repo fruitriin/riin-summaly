@@ -1,6 +1,6 @@
 # Phase 15.4 — ニトリ (nitori-net.jp) プラグイン (公式 JSON API + curl_cffi 経路)
 
-> 状態: **本番動作確認待ち (2026-05-10、初回リリース後 followup #1 で curl_cffi CLI に headers 上書き機構追加)**
+> 状態: **完了 (fail mode J 確定で本番運用は救援不可、2026-05-10 Followup #2)**。プラグインのコードと登録は残し、両 config example の `[plugins].allowed` からはコメントアウト形式で外す。家庭用 IP / library 直接利用者は引き続き使える。Followup #1 (curl_cffi CLI の `--header` 機構) は他の JSON API ケース用に資産として残す。
 > 種別: 機能拡張 / プラグイン追加
 > サイズ: **M**
 > 依存: [phase2.1](phase2.1-plugin-infrastructure.md) (`name` フィールド規約)、[phase12.5](phase12.5-curl-cffi-fetcher.md) (curl_cffi 統合)
@@ -256,3 +256,33 @@ Accept-Encoding 等の上書きは TLS / WAF 検査と矛盾するリスクが�
 **オーナー追加コメント (2026-05-10)**: 「proxy で IP ブロック回避パターンや、IP ブロックを回避しつつ
 curl_cffi 的なアプローチも組み合わせる的な方法も検討していいかもね」 — phase15.4b で B-1 + B-2 の
 両建てを設計検討すること。
+
+## Followup #2 (2026-05-10): fail mode J 確定で本番運用は救援不可
+
+Followup #1 deploy 後も本番ログで `HTTP/2 INTERNAL_ERROR` が継続。`scripts/check-nitori-via-worker.mjs`
+で CF Workers proxy 経由を検証した結果:
+
+- HMAC は通って Worker から `forbidden` (Worker `ALLOWED_DOMAINS` 未設定) → 一時的に `nitori-net.jp`
+  追加 + redeploy
+- 再検証で **`status 520 + content-type: text/plain` (Cloudflare 標準の "Web Server Returns Unknown
+  Error")** が返る → CF Workers の egress IP (AS13335) でも Akamai が異常レスポンスを返す
+- ローカル MacOS (家庭 IP) からは引き続き 200 OK + JSON
+
+→ **fail mode J 確定: ニトリは datacenter IP 全般を block している**。CF Workers / Vultr / 別 VPS
+どこから叩いても救援不可。Residential proxy 商用サービスが必要だが summaly のスコープ外。
+
+### Followup #2 の対処
+
+- [x] `tools/cf-proxy-worker/wrangler.toml` の `ALLOWED_DOMAINS` から `nitori-net.jp` を削除 (一時追加を revert)
+- [x] `data/domain-strategy-bootstrap.jsonl` から `nitori-net.jp` / `www.nitori-net.jp` の curl_cffi エントリ削除
+- [x] `config.example.toml` / `docs/deploy-examples/summaly-config.example.toml` の `[plugins].allowed` から `"nitori"` をコメントアウト形式に変更し、「fail mode J で本番運用は救援不可」を明記
+- [x] knowhow `spa-dynamic-ogp-unfixable.md` を更新: ニトリ救援断念の経緯 + 経路ごとの実機検証結果 + fail mode J 新セクション (yodobashi の H との比較表 + 切り分けチェックリスト)
+- [x] **プラグイン本体 `src/plugins/nitori.ts` は維持** (家庭用 IP / library 直接利用者は引き続き使える、Followup #1 の curl_cffi CLI `--header` 機構は他の JSON API ケース用に資産として残す)
+- [x] Worker は `wrangler deploy` でユーザー側で revert を反映 (運用者が判断して deploy)
+
+### 教訓: ローカル動作確認だけで Plan を完了にしない
+
+Plan Step 4「dev サーバ動作確認」までで OK 判定したことが直接の原因。「ローカルで動く」 ≠ 「本番で動く」。
+
+- **再発防止**: ADDF テンプレート (`ProgressTemplate.addf.md` ステップ 4.5 ドキュメント突き合わせ) または skill `/url-preview-check` の Phase 2 で「**本番 ssh 経由 (`ssh prod "uv run fetch ..."` または `ssh prod "curl ..."`) で実機確認を必須化**」する Step を組み込むと、phase15.4 の二度手間が再発しない
+- **ノウハウ昇格候補**: 上記教訓 (datacenter IP block の早期切り分け) は他のプロジェクトでも有用な「本番 IP からの実機確認をローカル成功前後に必須化する」プラクティスなので、ADDF 本体の `ProgressTemplate.addf.md` への寄与候補として `.claude/Feedback.md` に記録

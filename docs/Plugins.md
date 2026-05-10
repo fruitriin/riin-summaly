@@ -309,20 +309,22 @@ interface SummalyPlugin {
 | 運用要件 | Fastify モードで `[plugins].allowed` に `"kakuyomu"`、embed 機能を使う場合は `[server].publicUrl` (https only) + `[embed].enabled = true` + `allowedPlugins = ["kakuyomu"]` (or syosetu と併記) 設定。library mode では player.url=null で card style のみ動作 |
 | 実装メモ | Apollo state は深いネストを持つため `findWorkInApolloState` / `lookupAuthorName` で再帰探索 + `WeakSet` 循環参照ガード。`__NEXT_DATA__` の構造変更で parse 不能になったらプラグインが null を返すので最終的に汎用 OGP 経路にフォールバック (kakuyomu.jp の OGP は完備) |
 
-### nitori (ニトリネット)
+### nitori (ニトリネット) ※ Default disable (fail mode J)
 
 実装: [src/plugins/nitori.ts](../src/plugins/nitori.ts)
 
 | 項目 | 内容 |
 |:--|:--|
+| **運用注意** | ⚠️ **datacenter IP 全般 block (fail mode J) のため Vultr 等の VPS で運用する Fastify モードでは機能しない**。家庭用 IP / library 直接利用者は引き続き使える。両 config example の `[plugins].allowed` からは既定で外す (コメントアウト形式)。詳細は [knowhow/spa-dynamic-ogp-unfixable.md](knowhow/spa-dynamic-ogp-unfixable.md) の fail mode J セクション |
 | マッチ | `(?:www\.)?nitori-net\.jp` (anchored) + path `/ec/product/<sku>/?` (商品詳細ページ固定形) |
 | 取得方法 | **公式 SAP Commerce OCC API** (`/occ/v2/nitorinet/nitori/products/<sku>?handleError=true&lang=ja&curr=JPY`) を **`viaCurlCffi` (libcurl-impersonate) 経由で直叩き**。HTML scraping ではない (商品 HTML は SPA shell でサーバ側 OGP が無い、いわゆる fail mode I) |
-| 経路必須性 | ニトリは **TLS layer + UA layer の二重 bot block** + **JS 動的 OGP 注入** の三重壁。HTML / JSON API ともに `SummalyBot` / `facebookexternalhit` / `Twitterbot` どの UA でも HTTP/2 INTERNAL_ERROR で TLS 切断される。Chrome JA3 を curl_cffi で偽装する経路が唯一の正解 |
+| 経路必須性 | ニトリは **TLS layer + UA layer + ASN layer の三重 bot block** + **JS 動的 OGP 注入** という四重壁。HTML / JSON API ともに `SummalyBot` / `facebookexternalhit` / `Twitterbot` どの UA でも HTTP/2 INTERNAL_ERROR で TLS 切断される。家庭用 IP で Chrome JA3 を curl_cffi で偽装すれば通るが、datacenter IP (Vultr / CF Workers AS13335 等) は ASN-based でも block される |
 | 抽出フィールド | API レスポンスの `skuData.name` (title) / `skuData.productDescription` (HTML strip → 300 文字 clip) / `skuData.mediasList[0]` (type=image) (thumbnail) / `brand.imageUrl` (icon) / `brand.name` (sitename, 通常 `"ニトリ"`) を採用 |
 | エラーハンドリング | `error.errorCode === 'INVALID_PRODUCT'` (存在しない SKU) は `StatusError(404)` を throw → `category: 'not_found'` に分類されて parse failure 集約から除外。`skuData.name` 欠如 (API 仕様変更) は `Error('failed summarize: ...')` で可視化 |
 | `skipRedirectResolution` | `true`。HEAD probe も TLS layer で切断されるため、`resolveRedirect` 段の 20 秒空回りを構造的に回避 (yodobashi と同じ理由) |
-| 運用要件 | Fastify モードで `[plugins].allowed` に `"nitori"` + `[scraping.curl_cffi]` で `enabled = true` + `tools/curl-cffi-fetcher/` の `uv sync` 完了。`bootstrap.jsonl` の `nitori-net.jp → curl_cffi` エントリで `curlCffiFallback.domains` allowlist に自動的に含まれる (phase16.3 で `domains` TOML キー廃止、bootstrap 自動導出設計)。curl_cffi 設定不備時はプラグインが明示エラーを throw する設計 (silent fail を避ける) |
+| 運用要件 (家庭 IP / library) | `[plugins].allowed` で `"nitori"` を有効化 (両 config example では既定でコメントアウト) + `[scraping.curl_cffi]` で `enabled = true` + `tools/curl-cffi-fetcher/` の `uv sync` 完了 + bootstrap.jsonl に `nitori-net.jp → curl_cffi` を運用者が手動追加 (Followup #2 で削除済、必要時に手動復活)。Library 直接利用なら `opts.curlCffiFallback` を渡す。curl_cffi 設定不備時はプラグインが明示エラーを throw する設計 (silent fail を避ける) |
 | 設計判断 | yodobashi/sqex は `scpaping` 経由 + 経路学習キャッシュで cache hit fast path を使うが、ニトリは **JSON API のため `getJson` (経路学習キャッシュ非統合) しか選択肢が無く、経路が curl_cffi に一意確定する** ため `viaCurlCffi` 直接呼びの個別 hardcode 方式を採用。`getJson` 統合は phase15.5 (仮) で別途検討 |
+| Plan B (将来) | Playwright モード ([phase15.1](plans/phase15.1-playwright-fallback.md)) でブラウザフィンガープリントの完全再現を試みる、別 ASN datacenter VPS、residential proxy 商用サービス連携、のいずれか。Followup #1 で実装した curl_cffi CLI `--header` 機構は他の JSON API ケース用に資産として残る |
 
 カスタムプラグインの書き方
 ----------------------------------------------------------------

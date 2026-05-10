@@ -20,7 +20,7 @@ phase11.4 / 11.6 / 11.7 / 11.9 / 12.1 で確立した「動かない URL の切�
 
 ```
 [症状特定] → [再現テスト] → [fail mode 分類] → [修正レイヤ選定] → [実装] → [動作確認]
-   ログ        curl 各種        5 種類            5 layer         + テスト       4-5 URL バリエーション
+   ログ        curl 各種        A〜J             5 layer         + テスト       4-5 URL バリエーション + 本番 IP 実機
 ```
 
 ## テスト用エンドポイント
@@ -120,12 +120,28 @@ curl -sS -L -A "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_ua
 # D) HEAD only (phase9.1 resolveRedirect の挙動再現)
 curl -sS -I -L -A "Mozilla/5.0" -w "final=%{url_effective} status=%{http_code}\n" "$URL"
 
-# E) Worker proxy 経由 (phase12.1 認証トークン環境変数あり)
+# E) Worker proxy 経由 (phase12.1、HMAC 認証は scripts/check-via-worker 経由が安全)
+#    secret を直接 curl に渡さず、scripts/check-nitori-via-worker.mjs を参考に
+#    対象 URL を差し替えた検証スクリプトを書く方が事故りにくい (env 経由)。
+#    一発で叩きたい場合のみ:
 ENC=$(node -e "console.log(encodeURIComponent('$URL'))")
-curl -sS -L -A "Mozilla/5.0" -o /tmp/proxy.html \
-  -H "x-summaly-token: ${SUMMALY_PROXY_TOKEN:-riin-summaly}" \
+TS=$(date +%s)000
+SIG=$(printf '%s\n%s' "$URL" "$TS" | openssl dgst -sha256 -hmac "${SUMMALY_PROXY_SECRET}" -hex | awk '{print $2}')
+curl -sS -L -o /tmp/proxy.html \
+  -H "x-summaly-sig: $SIG" -H "x-summaly-ts: $TS" \
+  -H "x-summaly-forward-ua: Mozilla/5.0" \
   -w "status=%{http_code} ct=%{content_type} size=%{size_download}\n" \
-  "https://summaly-proxy.riinsworkspace.workers.dev/?url=${ENC}"
+  "${SUMMALY_PROXY_URL}/?url=${ENC}"
+
+# F) curl_cffi (libcurl-impersonate) でローカル MacOS から TLS 偽装 (家庭 IP の挙動)
+cd tools/curl-cffi-fetcher && uv run fetch "$URL" --impersonate chrome120 \
+  --header "Accept:application/json" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('status:', d.get('status'), 'ct:', d.get('content_type'))"
+
+# G) 本番 ssh 経由で同じ curl_cffi を叩く (datacenter IP の挙動)
+#    ローカルで OK でも本番 (Vultr 等) で失敗するケース (fail mode J) を切り分けるために必須。
+ssh prod 'cd /root/summaly/tools/curl-cffi-fetcher && uv run fetch '"'$URL'"' --impersonate chrome120' \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('status:', d.get('status'), 'category:', d.get('category', '-'))"
 ```
 
 各 HTML から meta タグを抽出して比較:
@@ -143,7 +159,7 @@ done
 
 ## Phase 3: Fail mode の分類
 
-curl 結果のパターンから **5 タイプ**に分類:
+curl 結果のパターンから以下のいずれかに分類 (A〜J、加筆順):
 
 ### A. UA 文字列で弾く WAF (phase11.9 で対処済み)
 
@@ -223,23 +239,63 @@ curl 結果のパターンから **5 タイプ**に分類:
 - **判断条件**: 対象サイトが OGP を整備していて (= share させたい意思あり、static HTML に OGP が入っている)、curl_cffi (chrome120 impersonate) で 200 + OGP が取れれば実装する価値あり
 - 関連 knowhow: [curl-cffi-tls-impersonation.md](../../docs/knowhow/curl-cffi-tls-impersonation.md)、[domain-strategy-cache.md](../../docs/knowhow/domain-strategy-cache.md)、[src/plugins/yodobashi.ts](../../src/plugins/yodobashi.ts)、[data/domain-strategy-bootstrap.jsonl](../../data/domain-strategy-bootstrap.jsonl)
 
-### I. SPA で OGP が JS 実行後の DOM にだけ入るサイト (救援不可、保留)
+### I. SPA で OGP が JS 実行後の DOM にだけ入るサイト (JSON API があれば救援可、無ければ保留)
 
 - **兆候**:
   - curl_cffi 等で取得すると `200 + 小さな (~10〜30 KB) SPA shell HTML` が返る (`<title>` はサイト共通の汎用タイトル、og/twitter meta 全く無し)
   - **ブラウザで開くと OGP meta が入っている** (= JavaScript で `<head>` に動的挿入)
   - `<meta name="occ-backend-base-url" ...>` (SAP Commerce Cloud) や React/Vue の SPA shell の特徴 (`<div id="root">` など) が見える
-  - 公式 JSON API (`/occ/v2/...` 等) は 403 Access Denied
-- **意味**: サーバが返す静的 HTML には OGP が無いため、**Twitter / Facebook / Slack 等の bot は誰一人として展開できない**。サイト側の実装ミス (react-helmet 等で `<head>` を書き換えるだけで prerender 設定が無い)、または share 対応する気がない
 - **切り分け方法**:
   ```bash
   # サーバ HTML の OGP 確認 (JS 未実行)
   uv run fetch <URL> | python3 -c "import json,sys,re; d=json.load(sys.stdin); print(len(re.findall(r'<meta[^>]+og:', d['body'])), 'og: tags')"
   # 0 件かつブラウザで開くと OGP が見える → fail mode I 確定
   ```
-- **対処**: **summaly のスコープ外**。Playwright/Puppeteer 等の実ブラウザレンダリング基盤が必要だが summaly では採用しない判断 (メモリ・レイテンシ・コスト全部割に合わない)。Misskey 側で **URL のみのフォールバック表示** を許容
-- **実例 (2026-05-06)**: `nitori-net.jp` (SAP Commerce Cloud SPA、JS で OGP 注入、`/occ/v2/` API は Akamai で 403)
-- **次の手**: サイトに「prerender 入れて」と要望するか諦めるか。本来 OGP プレビュー対応は **サーバ側の責務**
+- **fail mode I 判定の前段に「隠れ JSON API 探索」を 1 段挟む** (phase15.4 の教訓):
+  - DevTools Network タブで XHR / fetch を監視 → 商品ページ表示時に走る JSON 系 path (`product-details` / `products/<id>` 等) を探す
+  - EC エンジン共通 path を試す: SAP Commerce OCC (`/occ/v2/<tenant>/products/<sku>`)、Salesforce Commerce、Shopify Storefront API、Magento REST 等
+  - JSON API が見つかれば **fail mode F (Cloudflare Bot Management) パターン** または **fail mode J (datacenter IP block)** に流す
+- **真の fail mode I (JSON API も無い / 全 path 塞がれている)**: **summaly のスコープ外**。Playwright/Puppeteer 等の実ブラウザレンダリング基盤が必要だが採用しない判断 (メモリ・レイテンシ・コスト全部割に合わない)。Misskey 側で **URL のみのフォールバック表示** を許容
+- 関連 knowhow: [spa-dynamic-ogp-unfixable.md](../../docs/knowhow/spa-dynamic-ogp-unfixable.md)
+- 関連 phase: [phase15.1-playwright-fallback.md](../../docs/plans/phase15.1-playwright-fallback.md) (将来の Plan B)
+
+### J. datacenter IP 全般 block (residential proxy が無いと救援不可、phase15.4 で発見)
+
+H (yodobashi 系の TLS 切断) より厳格で、**TLS フィンガープリントを偽装しても datacenter IP からは block** されるパターン。家庭用 IP (一般 ISP / NAT) からは curl_cffi で通るが、Vultr Tokyo / CF Workers AS13335 / 別 datacenter どこから叩いても block される。
+
+- **兆候**:
+  - 家庭 IP + curl_cffi (chrome120) → ✅ 200 OK
+  - 本番 Vultr / CF Workers proxy → ❌ HTTP/2 INTERNAL_ERROR / 520 Web Server Returns Unknown Error / `upstream_fetch_error`
+  - UA / TLS フィンガープリント偽装すべて無効
+- **切り分け方法 (4 段階チェックリスト)**:
+  ```bash
+  # 1. 家庭用 IP からの基本確認
+  curl -A "Mozilla/5.0 ...Chrome/131..." "$URL"  # 200 OK ?
+
+  # 2. 家庭用 IP + curl_cffi (TLS 偽装で通るか)
+  cd tools/curl-cffi-fetcher && uv run fetch "$URL" --impersonate chrome120  # 200 OK ?
+
+  # 3. 本番 (datacenter IP) から同じ curl_cffi
+  ssh prod 'cd /root/summaly/tools/curl-cffi-fetcher && uv run fetch "'"$URL"'" --impersonate chrome120'
+
+  # 4. CF Workers proxy 経由 (別 ASN datacenter)
+  #    scripts/check-nitori-via-worker.mjs を URL 差し替えて流用 (env から secret 読み)
+  node scripts/check-via-worker.mjs
+
+  # 1=OK, 2=OK, 3=NG, 4=NG → fail mode J 確定 (residential proxy 必要)
+  # 1=NG, 2=OK, 3=OK, 4=OK → fail mode H (yodobashi パターン、curl_cffi で救援可)
+  # 1=NG, 2=NG, 3=NG, 4=NG → 真の fail mode I (JS 必須、Playwright)
+  ```
+- **判別の決め手**: ステップ 2 では OK なのにステップ 3 で NG になる。**TLS フィンガープリント単独問題なら 3 でも OK のはず**。3 で NG = ASN-based block。
+- **対処**: summaly のスコープでは救援困難:
+  1. **Playwright モード ([phase15.1](../../docs/plans/phase15.1-playwright-fallback.md))** — ブラウザフィンガープリント完全再現で通る可能性 (要実機検証、ただし Vultr IP は変わらない)
+  2. **別 ASN の datacenter VPS** — 家庭 ISP に近い ASN の VPS から egress、要実験
+  3. **Residential proxy 商用サービス** (BrightData / Smartproxy / Soax 等) — 月額サブスクリプションで summaly のスコープ外
+  4. **コードベース上は残しつつ default disable** — 家庭 IP / library 直接利用者は使える、本番では disable (nitori プラグインの方針)
+- **実例 (2026-05-10)**: `nitori-net.jp` (SAP Commerce OCC API はあるが Akamai が ASN-based でも block、`src/plugins/nitori.ts` は default disable で残置)
+- 関連 knowhow: [spa-dynamic-ogp-unfixable.md](../../docs/knowhow/spa-dynamic-ogp-unfixable.md) の fail mode J セクション
+- 関連 phase: [phase15.4-plugin-nitori.md](../../docs/plans/phase15.4-plugin-nitori.md) (Followup #2 で fail mode J 確定)
+- 検証ツール: [scripts/check-nitori-via-worker.mjs](../../scripts/check-nitori-via-worker.mjs) (Worker 経由検証、env から secret 読み、URL 差し替えで他サイトでも流用可)
 
 ## Phase 4: 修正レイヤの選定
 
@@ -259,6 +315,7 @@ curl 結果のパターンから **5 タイプ**に分類:
 2. 上記 + URL 正規化が必要 (短縮 URL や `?ref_=...` 等) → プラグインを新設して `test()` + URL 正規化を実装、bootstrap entry も追加
 3. 上記 + DOM 直読みや公式 API 直叩きが必要 → プラグインで `summarize()` をフル実装 (npmjs / amazon パターン)
 4. ブラウザ JS 実行が必須 (fail mode I) → **summaly のスコープ外** (Misskey 側で URL のみ表示にフォールバック)
+5. **datacenter IP 全般 block (fail mode J)** → コードベース上は残しつつ default disable (`[plugins].allowed` から外す + bootstrap entry も削除)。家庭 IP / library 直接利用者は使える形を保ちつつ、本番では実用不能と明示する (nitori パターン)
 
 ## Phase 5: 実装 + テスト
 
@@ -294,6 +351,24 @@ pnpm dev                                     # dev サーバ起動 → サンプ
 ```
 
 dev サーバの sample-urls からワンクリックで JSON / カードプレビューが取れることを確認。proxy fallback が必要なケースは env を設定して checkbox を ON にする (phase12.1 dev 統合で対応済み)。
+
+### 本番デプロイ前 (実機 IP 確認の必須化、phase15.4 Followup #2 教訓)
+
+**ローカル動作確認だけで Plan を完了にしない**。phase15.4 ではローカル MacOS (家庭 IP) で `uv run fetch <api>` が 200 OK だったため OK 判定で本番 deploy したが、本番 Vultr IP からは `HTTP/2 INTERNAL_ERROR` で完全に動かなかった (fail mode J)。これは **「TLS フィンガープリント偽装で通るのは家庭 IP だけ、datacenter IP は ASN-based でも block されている」** という事実を見落としていたため。
+
+**curl_cffi / TLS 偽装系のサイト対応では Plan Step に必須化する**:
+
+```bash
+# Plan Step 4.5 必須化: 本番 ssh 経由で curl_cffi を直接叩いて 200 OK を確認
+ssh prod 'cd /root/summaly/tools/curl-cffi-fetcher && uv run fetch "'"$URL"'" --impersonate chrome120' \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print('status:', d.get('status'), 'category:', d.get('category', '-'))"
+
+# 期待: status: 200
+# datacenter IP block (fail mode J) なら status エラー or category: 'tls'/'network' が返る
+# → ローカル成功でも本番では動かないことが判明 → fail mode J 整理 + default disable
+```
+
+`scripts/check-nitori-via-worker.mjs` を URL 差し替えて流用すれば Worker 経由 (CF Workers AS13335) も同時に検証できる (env から secret 読み)。**家庭 IP / 本番 Vultr / CF Workers の 3 ASN で挙動を比べる**ことで fail mode H (TLS 切断、curl_cffi で救援可) と fail mode J (datacenter 全般 block、救援不可) を区別できる。
 
 ### 本番デプロイ後
 
