@@ -330,9 +330,15 @@ async function fetchResponse(
 		// HedgedRaceAllFailedError から「最も意味のある cause」を取り出して再 throw する。
 		// 優先順位: champion > challenger (champion の error はサイトの本来の挙動を反映している可能性が高い)
 		if (err instanceof HedgedRaceAllFailedError) {
+			// **phase18.1 修正**: hedge race throw 経路でも recState に hedge 情報を伝搬する
+			// (Fastify ハンドラの logHedgeIfFired がこの情報を pino ログに出すため、本番診断必須)
+			if (recState != null) {
+				recState.hedgeFired = err.hedgeFired;
+				recState.hedgeOutcomes = err.outcomes;
+				recState.hedgeLatencyMs = err.latencyMs;
+			}
 			// 全 cause が「gate failed (no strategy enabled)」= config 上使える経路がない中立状態。
 			// cache hit エントリを失敗カウントせず温存するため `gateFailedNeutral = true` をセット
-			// (phase14 中立性 / M-1 review feedback)
 			const allGateFailed = err.causes.every((c) =>
 				c.error instanceof Error && c.error.message === 'gate failed (no strategy enabled)',
 			);

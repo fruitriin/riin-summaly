@@ -88,16 +88,32 @@ export type ValidityCheckFn<T> = (response: T) => boolean | Promise<boolean>;
  *
  * `causes` で各経路の失敗原因を保持。pino ログには `causes.map(c => c.strategy + ': ' + c.error.message)`
  * で十分な診断情報が出る。
+ *
+ * **phase18.1 修正**: catch 経路でも hedge 情報を伝搬するため `hedgeFired` / `outcomes` / `latencyMs` を含める。
+ * (本番診断で「hedge fire したのに challenger 全 gate_failed で throw」のときも `hedge_fired: true` ログを出すため)
  */
 export class HedgedRaceAllFailedError extends Error {
 	readonly causes: ReadonlyArray<{ strategy: DomainStrategy; error: unknown }>;
-	constructor(causes: ReadonlyArray<{ strategy: DomainStrategy; error: unknown }>) {
+	readonly hedgeFired: boolean;
+	readonly outcomes: Partial<Record<DomainStrategy, HedgedOutcome>>;
+	readonly latencyMs: Partial<Record<DomainStrategy, number>>;
+	constructor(
+		causes: ReadonlyArray<{ strategy: DomainStrategy; error: unknown }>,
+		extras: {
+			hedgeFired?: boolean;
+			outcomes?: Partial<Record<DomainStrategy, HedgedOutcome>>;
+			latencyMs?: Partial<Record<DomainStrategy, number>>;
+		} = {},
+	) {
 		const summary = causes
 			.map((c) => `${c.strategy}: ${c.error instanceof Error ? c.error.message : String(c.error)}`)
 			.join('; ');
 		super(`hedged race: all strategies failed (${summary})`);
 		this.name = 'HedgedRaceAllFailedError';
 		this.causes = causes;
+		this.hedgeFired = extras.hedgeFired ?? false;
+		this.outcomes = extras.outcomes ?? {};
+		this.latencyMs = extras.latencyMs ?? {};
 	}
 }
 
@@ -278,13 +294,17 @@ export async function hedgedRace<T>(
 			if (championError != null && !causes.some((c) => c.strategy === config.champion)) {
 				causes.unshift({ strategy: config.champion, error: championError });
 			}
+			// hedge 情報 (hedgeFired / outcomes / latencyMs) を error に載せて catch 側に伝える。
+			// hedge fire しているケース (= 全 challenger fail で error 集約) でも本番診断が可能。
+			const hedgeInfo = { hedgeFired: true, outcomes: { ...outcomes }, latencyMs: { ...latencyMs } };
 			if (causes.length === 0) {
 				// 全 gate_failed (= config 上使える経路がなかった、champion も即時 gate_failed だった)
 				throw new HedgedRaceAllFailedError(
 					settledList.map((s) => ({ strategy: s.strategy, error: new Error('gate failed (no strategy enabled)') })),
+					hedgeInfo,
 				);
 			}
-			throw new HedgedRaceAllFailedError(causes);
+			throw new HedgedRaceAllFailedError(causes, hedgeInfo);
 		}
 	} finally {
 		if (thresholdHandle != null) clearTimeout(thresholdHandle);
