@@ -24,6 +24,7 @@ summaly のプラグインシステムと、組み込み 14 プラグインの�
   - [nintendo-store](#nintendo-store)
   - [yodobashi](#yodobashi)
   - [sqex](#sqex)
+  - [dmm (FANZA)](#dmm-fanza)
 - [カスタムプラグインの書き方](#カスタムプラグインの書き方)
 - [共通ユーティリティ](#共通ユーティリティ)
 
@@ -274,6 +275,21 @@ interface SummalyPlugin {
 | 背景 | Square Enix e-STORE はデータセンター IP レンジ全般を CDN 段で広く弾く。Vultr Tokyo IP からは **HTTP/200 + `text/html;charset=utf-8` + 正規 404 ページボディ** が返ってくるため、`got` レイヤでは何のエラーも発生しない (= phase12.1 の `getResponseWithProxyFallback` のエラー発火型では救援できない、新パターン)。サーバ HTML には完璧な OGP (`og:title` / `og:description` / `og:image` / `og:site_name`) が入っているので、proxy 経由で IP を変えれば取得できる |
 | 短縮 URL | `sqex.to/<id>` は HEAD で `store.jp.square-enix.com/...` に正常解決可能 (CloudFront 経由)。`summaly()` 冒頭の resolveRedirect で展開 → このプラグインがマッチ |
 | 運用要件 | `[scraping.proxy]` で `enabled = true` + `domains` に `store.jp.square-enix.com` を含む。CF Worker (`tools/cf-proxy-worker/wrangler.toml`) の `ALLOWED_DOMAINS` にも同 host 必須。`[scraping.strategy_cache]` で `enabled = true` (デフォルト)。proxy が未設定な環境では cache fast path がゲート不通過で通常段階に fallthrough (= 404 ページが返る) |
+
+### dmm (FANZA)
+
+実装: [src/plugins/dmm.ts](../src/plugins/dmm.ts)
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `dmm.co.jp` 全サブドメイン (apex 含む) で `pathname` が `/age_check` で始まらないもの。`video.dmm.co.jp` / `book.dmm.co.jp` / `dlsoft.dmm.co.jp` / `games.dmm.co.jp` / `www.dmm.co.jp/digital/...` 等すべて対象 |
+| 取得方法 | UA を `facebookexternalhit/1.1` に **固定** して `scpaping()` → `parseGeneral()` に流す + `skipRedirectResolution = true` |
+| 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準)。`og:site_name` で FANZA / DMM が自動分岐するためプラグイン側で sitename 固定はしない。`sensitive: true` を **常にセット** (`{ ...summary, sensitive: true }`) |
+| 背景 | DMM/FANZA は全サブドメインで年齢認証ゲート (`https://www.dmm.co.jp/age_check/=/?rurl=<encoded>`) が `Vary: User-Agent` で挟まり、`SummalyBot` / 通常ブラウザ UA で叩くと 302 でゲート HTML (空 OGP、~34 KB) に転送される。**`facebookexternalhit/1.1` / `Twitterbot/1.0`** 等の SNS bot UA はサイト側が allowlist しており、ゲート素通しで実コンテンツ HTML (~375 KB、OGP 完備) を返す。`nintendo-store` プラグインと完全同型の救援設計 (skill `/url-preview-check` の Phase 3 fail mode G) |
+| `skipRedirectResolution` の必要性 | `summaly()` 冒頭の HEAD probe は `SummalyBot` UA で送られるため、age_check ゲートに 302 されて URL が `/age_check/=/?rurl=...` に書き換わってしまう。書き換わった URL は `test()` で `/age_check` 除外条件に当たって false → `general()` フォールバックで空 OGP の preview ができる失敗パターンになる。`skipRedirectResolution = true` で resolveRedirect 自体を skip し、原 URL を直接 `summarize()` に渡して fb_bot UA で取得する |
+| 倫理判断 | `nintendo-store` と同じ。DMM が SNS bot UA を allowlist している = OGP を share させたい意思がある (= UA 偽装ではなく share 用導線に乗る使い方) |
+| 副作用 | プラグイン内で `fallbackUserAgent` / `fallbackRetryCategories` を **明示的に未設定** にして UA 上書きが発生しないようにしている (`nintendo-store` と同じ) |
+| 運用要件 | NSFW 慣例で両 config example の `[plugins].allowed` に `# "dmm",` (コメントアウト) で並べる。デプロイ運用者が明示的にオプトインしなければ起動しない |
 
 ### syosetu (小説家になろう)
 

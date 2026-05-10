@@ -161,6 +161,7 @@ riin-summaly の独自軸として、URL 取得を **4 種類の経路** に整�
 | `syosetu` | `(ncode\|novel18).syosetu.com/n<id>/` | 公式 API | 小説家になろう公式 API 直叩き → 作品名 / 作者 / ジャンル / 連載状態 / あらすじを取得。`/embed` で iframe 用 HTML を返す (phase13.1)。R-18 ドメインで `sensitive: true` |
 | `kakuyomu` | `kakuyomu.jp/works/<id>(/episodes/<eid>)?` | SNS Bot UA | カクヨム公式 API が無いため `Twitterbot/1.0` UA で HTML を取得し `<script id="__NEXT_DATA__">` の Apollo state JSON から作品名 / 作者 / ジャンル / 連載状態 / あらすじ / 作品サムネを抽出。`/embed` で iframe 用 HTML を返す (phase15.2)。`isSexual: true` で `sensitive: true` |
 | `nitori` ※ | `(www.)?nitori-net.jp/ec/product/<sku>/` | 公式 API + curl_cffi | 商品詳細を SAP Commerce OCC API (`/occ/v2/nitorinet/nitori/products/<sku>`) を curl_cffi (Chrome JA3 偽装) で直叩き。**※ datacenter IP 全般 block (fail mode J) のため Vultr 等の VPS からは救援不可**、家庭用 IP / library 直接利用者のみ動作。`[plugins].allowed` 既定でコメントアウト (phase15.4) |
+| `dmm` ※ | `dmm.co.jp` 全サブドメイン (`/age_check` 除く) | SNS Bot UA | DMM / FANZA は全サブドメインで年齢認証ゲートが `Vary: User-Agent` で挟まる。`facebookexternalhit/1.1` UA は allowlist されゲート素通しで OGP を返すため UA を固定して取得。`skipRedirectResolution = true` で HEAD probe による gate 書き換えを回避、`sensitive: true` 固定 (phase15.3)。NSFW 慣例で `[plugins].allowed` 既定でコメントアウト |
 
 各プラグインの詳細仕様、カスタムプラグインの書き方、共通ユーティリティは **[docs/Plugins.md](docs/Plugins.md)** にあります。
 

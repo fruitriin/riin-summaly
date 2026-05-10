@@ -92,29 +92,30 @@ DMM/FANZA は全サブドメインが `age_check` ゲート経由になってお
 
 ### Step 1: プラグイン本体
 
-- [ ] `src/plugins/dmm.ts` を新設 (上記設計通り)
-- [ ] `src/plugins/index.ts` の `plugins` 配列に登録 (順序は他プラグインと衝突しないので末尾近く)
+- [x] `src/plugins/dmm.ts` を新設 (上記設計通り)
+- [x] `src/plugins/index.ts` の `plugins` 配列に登録 (末尾に追加)
 
 ### Step 2: テスト
 
-- [ ] `test/plugin-dmm.test.ts` を新設
-  - [ ] `test()` のマッチ判定 (各サブドメイン true / `age_check` パス false / 別ドメイン false)
-  - [ ] `summarize()` のハーネステスト (fixture HTML を `test/htmls/dmm-video-av.html` 等に保存して `test/index.test.ts` 的な fastify mock で実行)
-- [ ] 既存テスト (`pnpm test`) 全件パス
+- [x] テスト追加 (**方針からの変更**: 既存パターン (`nintendo-store` / `sqex` / `yodobashi`) はすべて `test/index.test.ts` に集約されているため、新規ファイル作成ではなく同ファイルに統合)
+  - [x] `test()` のマッチ判定 (各サブドメイン true / `age_check` パス false / 詐称ドメイン false)
+  - [x] `skipRedirectResolution = true` 宣言の確認
+  - [x] `summarize()` の fastify mock テスト (UA が fb_bot で送られる + sensitive: true セット + OGP 抽出)
+- [x] 既存テスト (`pnpm test`) 全件パス (662 件)
 
 ### Step 3: 設定 example 同期 (phase11.4 / 6.1 派生バグの教訓)
 
-- [ ] `config.example.toml` の `[plugins].allowed` に `"dmm",` を追加 (アクティブ)
-- [ ] `docs/deploy-examples/summaly-config.example.toml` の `[plugins].allowed` に `# "dmm",` を追加 (NSFW 慣例でコメントアウト)
-- [ ] `test/config-example-plugins.test.ts` で自動検証されることを確認
+- [x] `config.example.toml` の `[plugins].allowed` に `# "dmm",` を追加 (**方針からの変更**: 当初プランではアクティブ形式と書いたが、既存 NSFW プラグイン群 `dlsite` / `iwara` / `komiflo` / `nijie` がルート config でもコメントアウトで並んでいるため、両 example でコメントアウトに統一する形に修正)
+- [x] `docs/deploy-examples/summaly-config.example.toml` の `[plugins].allowed` に `# "dmm",` を追加 (NSFW 慣例でコメントアウト)
+- [x] `test/config-example-plugins.test.ts` で自動検証されることを確認 (コメントアウト形式 `# "<name>",` も「運用者が判断で活性化できる」のでパス扱いされるロジック)
 
 ### Step 4: ドキュメント
 
-- [ ] `CLAUDE.repo.md` の「対応形式（組み込みプラグイン）」表に dmm 行追加
-- [ ] `docs/Plugins.md` (該当箇所があれば)
-- [ ] `README.md` のプラグイン表 (経路列も更新、phase16.1 で導入)
-- [ ] `dev/sample-urls.ts` に DMM/FANZA サンプル URL 追加 (NSFW セクション)
-- [ ] `CHANGELOG.md` unreleased セクションに `feat(plugin): DMM (FANZA) プラグイン追加` を記録
+- [x] `CLAUDE.repo.md` の「対応形式（組み込みプラグイン）」表に dmm 行追加
+- [x] `docs/Plugins.md` に `dmm (FANZA)` セクションを追加 (目次にも反映)
+- [x] `README.md` のプラグイン表に `dmm` 行を追加 (経路列 = SNS Bot UA、※印で運用者向けコメントアウトデフォルトを明示)
+- [x] `dev/sample-urls.ts` の NSFW セクション (旧名 `dlsite / iwara / komiflo / nijie`) に FANZA video サンプルを追加
+- [x] `CHANGELOG.md` unreleased セクション冒頭に `feat (plugin: dmm)` を記録
 
 ### Step 5: 本番動作確認 (デプロイ後)
 
@@ -143,6 +144,10 @@ skill `/url-preview-check` Phase 6 の **4〜5 URL バリエーション** で�
 - [docs/knowhow/plugin-infrastructure-patterns.md](../knowhow/plugin-infrastructure-patterns.md) — プラグイン基盤
 - skill `/url-preview-check` の **fail mode G** 項
 
+## 将来検討 (本 phase スコープ外)
+
+- **`unwrapAgeAuthUrl` 相当の追加**: ユーザーが age_check URL (`https://www.dmm.co.jp/age_check/=/?rurl=<encoded>`) を直接 summaly に渡した場合に、`?rurl=` パラメータから元 URL を取り出して再度 `summaly()` に流す対策 (syosetu の `unwrapAgeAuthUrl` パターン)。現状は `test()` で `/age_check` を弾く → `general()` フォールバックで空 OGP の preview ができる失敗パターンになるが、ユースケースとして稀のため別 phase で対応判断。`docs/knowhow/age-gate-bypass-pattern.md` の対策 2 に該当 (レビュー S-4)
+
 ## サイズ
 
-S (実装規模 ~100 行 + テスト + ドキュメント、nintendo-store コピペベース)
+S (実装規模 ~50 行 + テスト 3 件 + ドキュメント、nintendo-store コピペベース)

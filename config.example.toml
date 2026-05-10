@@ -131,6 +131,7 @@ allowed = [
   # "iwara",
   # "komiflo",
   # "nijie",
+  # "dmm",
 ]
 
 # プラグイン別の設定セクション (将来拡張用 placeholder)。

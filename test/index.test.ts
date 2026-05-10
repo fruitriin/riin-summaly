@@ -1260,6 +1260,64 @@ describe('local tests', () => {
 				expect(sx!.skipRedirectResolution).toBeFalsy();
 			});
 
+			test('dmm プラグインが dmm.co.jp 全サブドメインにマッチする (phase15.3)', () => {
+				const dmm = builtinPlugins.find(p => p.name === 'dmm');
+				expect(dmm).toBeDefined();
+				const t = (s: string) => dmm!.test(new URL(s));
+
+				// マッチすべき URL (各サブドメイン)
+				expect(t('https://video.dmm.co.jp/av/content/?id=ailb00009')).toBe(true);
+				expect(t('https://book.dmm.co.jp/product/4337228/b900abmps01060/')).toBe(true);
+				expect(t('https://dlsoft.dmm.co.jp/detail/ananas_0079/')).toBe(true);
+				expect(t('https://games.dmm.co.jp/detail/khanmitsu/')).toBe(true);
+				expect(t('https://www.dmm.co.jp/digital/videoa/-/list/')).toBe(true);
+				expect(t('https://dmm.co.jp/')).toBe(true);  // bare apex
+
+				// マッチしないべき URL
+				expect(t('https://www.dmm.co.jp/age_check/=/?rurl=https%3A%2F%2Fvideo.dmm.co.jp%2F')).toBe(false);  // age_check ゲート自身は弾く
+				expect(t('https://dmm.com/')).toBe(false);  // .co.jp ではない
+				expect(t('https://dmm.co.jp.evil.example/')).toBe(false);  // ドメイン詐称
+				expect(t('https://video.dmm.co.jp.evil.example/')).toBe(false);
+			});
+
+			test('dmm プラグインは skipRedirectResolution = true を宣言している (phase15.3)', () => {
+				// HEAD probe が SummalyBot UA で送られて age_check ゲートに 302 されるのを回避するため。
+				const dmm = builtinPlugins.find(p => p.name === 'dmm');
+				expect(dmm).toBeDefined();
+				expect(dmm!.skipRedirectResolution).toBe(true);
+			});
+
+			test('dmm プラグインの summarize() は facebookexternalhit/1.1 UA で取得し sensitive: true を立てる (phase15.3)', async () => {
+				app = fastify();
+				let receivedUA: string | undefined;
+				app.get('/av/content/', (req, reply) => {
+					receivedUA = String(req.headers['user-agent'] ?? '');
+					const html = '<!DOCTYPE html><html><head>'
+						+ '<title>サンプル作品｜FANZA動画</title>'
+						+ '<meta property="og:title" content="サンプル作品">'
+						+ '<meta property="og:description" content="作品説明">'
+						+ '<meta property="og:image" content="https://example.com/thumb.jpg">'
+						+ '<meta property="og:site_name" content="FANZA">'
+						+ '</head><body></body></html>';
+					reply.header('content-length', Buffer.byteLength(html));
+					reply.header('content-type', 'text/html; charset=utf-8');
+					return reply.send(html);
+				});
+				await app.listen({ port });
+				process.env.SUMMALY_ALLOW_PRIVATE_IP = 'true';
+
+				const dmm = await import('@/plugins/dmm.js');
+				const summary = await dmm.summarize(new URL(`${host}/av/content/?id=ailb00009`));
+
+				expect(summary).not.toBeNull();
+				expect(summary!.title).toBe('サンプル作品');
+				expect(summary!.description).toBe('作品説明');
+				expect(summary!.thumbnail).toBe('https://example.com/thumb.jpg');
+				expect(summary!.sitename).toBe('FANZA');
+				expect(summary!.sensitive).toBe(true);  // プラグイン側で常に true をセット
+				expect(receivedUA).toMatch(/facebookexternalhit\/1\.1/);  // UA fb_bot 固定が効いている
+			});
+
 			test('短縮 URL を扱うプラグイン (amazon / branchio-deeplinks) は skipRedirectResolution を宣言していない (phase12.5)', () => {
 				// 短縮 URL 系プラグインで skipRedirectResolution = true にすると resolveRedirect されず、
 				// 初期 URL のままプラグインに渡って正しく動作しなくなるため、絶対に false 相当 (未宣言) にすべき。

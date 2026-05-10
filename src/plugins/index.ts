@@ -16,6 +16,7 @@ import * as sqex from './sqex.js';
 import * as syosetu from './syosetu.js';
 import * as kakuyomu from './kakuyomu.js';
 import * as nitori from './nitori.js';
+import * as dmm from './dmm.js';
 import { SummalyPlugin } from '@/iplugin.js';
 
 export const plugins: SummalyPlugin[] = [
@@ -37,4 +38,5 @@ export const plugins: SummalyPlugin[] = [
 	syosetu,
 	kakuyomu,
 	nitori,
+	dmm,
 ];

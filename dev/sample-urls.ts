@@ -136,13 +136,14 @@ export const sampleGroups: SampleGroup[] = [
 		],
 	},
 	{
-		name: 'dlsite / iwara / komiflo / nijie',
+		name: 'dlsite / iwara / komiflo / nijie / dmm',
 		description: 'NSFW 対応プラグイン（sensitive 判定の動作確認）',
 		urls: [
 			{ label: 'DLsite work', url: 'https://www.dlsite.com/app/work/=/product_id/RJ01355633.html' },
 			{ label: 'iwara video', url: 'https://www.iwara.tv/video/example', note: '差し替え用テンプレ' },
 			{ label: 'komiflo comic', url: 'https://komiflo.com/comics/123456', note: '差し替え用テンプレ' },
 			{ label: 'nijie view', url: 'https://nijie.info/view.php?id=123456', note: '差し替え用テンプレ' },
+			{ label: 'FANZA video (dmm)', url: 'https://video.dmm.co.jp/av/content/?id=ailb00009', note: 'phase15.3 — age_check ゲートを fb_bot UA で素通し、sensitive: true 固定' },
 		],
 	},
 	{

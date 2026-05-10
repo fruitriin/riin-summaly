@@ -143,9 +143,21 @@ bot allowlist は `curl -A '<UA>' -I '<URL>'` で事前検証する (302 → 200
 - **対策 2 の SSRF リスク**: `?url=` パラメータの inner URL を `new URL(inner)` で parse → そのまま fetch すると open SSRF になりうる。**unwrap 後の URL に対して必ず元プラグインの test() を再適用**して、想定ホスト/パスのみ通すこと
 - **redirect 解決系のテスト**: `followRedirects: false` を明示してリトライ機構や redirect 解釈を切り出して unit test できる (bot-block-ua-retry.md でも同パターン使用)
 
+## 実装事例
+
+| プラグイン | gate ホスト / パス | 採用対策 | sitename / sensitive |
+|---|---|---|---|
+| `syosetu` (なろう、phase13.1) | `nl.syosetu.com/redirect/ageauth/?url=...` (R-18 サブドメインのみ) | 1 + 2 (公式 API 経路) | R-18 ドメインで `sensitive: true` |
+| `dmm` (DMM/FANZA、phase15.3) | `www.dmm.co.jp/age_check/=/?rurl=...` (**全サブドメインで挟まる**、`Vary: User-Agent`) | 1 + 3 (HTML scrape + `facebookexternalhit/1.1` UA allowlist) | 全サブドメインが age_check 経由のため `sensitive: true` 固定 |
+| `nintendo-store` (My Nintendo Store、phase12.3) | Akamai Bot Manager の challenge ページ (= 仕組みは違うが allowlist 構造は同じ) | 3 単独 (HEAD probe は SummalyBot UA でも 302 されないため対策 1 不要) | sitename は OGP 任せ |
+
+**DMM ケースの注意点**: 全サブドメインで `Vary: User-Agent` ベースの age_check が挟まるため、HEAD probe (`SummalyBot` UA で送信) が必ず gate URL に書き換わる → 対策 1 (`skipRedirectResolution = true`) が **必須**。対策 3 単独だと `summaly()` 入口の resolveRedirect 段で URL が age_check に書き換わって `test()` がマッチしなくなる失敗パターンになる。一方 nintendo-store は HEAD probe が SummalyBot UA でも 200 を返してくれるため対策 1 不要。**サイトの redirect 挙動 (HEAD vs GET / UA 別の挙動) を事前に curl 検証して必要な対策の組み合わせを決定する** こと。
+
 ## 参照
 
 - [src/plugins/syosetu.ts](../../src/plugins/syosetu.ts) — `skipRedirectResolution` + `unwrapAgeAuthUrl` の実装
+- [src/plugins/dmm.ts](../../src/plugins/dmm.ts) — `skipRedirectResolution` + bot UA allowlist (対策 1 + 3) の組み合わせ実装
+- [src/plugins/nintendo-store.ts](../../src/plugins/nintendo-store.ts) — bot UA allowlist 単独 (対策 3 単独) の実装
 - [src/iplugin.ts](../../src/iplugin.ts) — `skipRedirectResolution?: boolean` interface
 - [src/index.ts](../../src/index.ts) L508 周辺 — `skipRedirectResolution` を見る dispatch ロジック
 - [src/plugins/yodobashi.ts](../../src/plugins/yodobashi.ts) / [src/plugins/sqex.ts](../../src/plugins/sqex.ts) / [src/plugins/nitori.ts](../../src/plugins/nitori.ts) — `skipRedirectResolution = true` の他事例 (ただし TLS 切断対策が主目的、age-gate ではない)
