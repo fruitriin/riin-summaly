@@ -105,6 +105,13 @@ export const sampleGroups: SampleGroup[] = [
 		],
 	},
 	{
+		name: 'nitori (phase15.4 — JSON API + curl_cffi 直行)',
+		description: 'TLS layer + UA layer の二重 bot block + JS 動的 OGP 注入の三重壁。HTML scraping 不能 (fail mode I) だが公式 SAP Commerce OCC API を curl_cffi (Chrome JA3 偽装) 経由で直叩きすると完璧な構造化データが返る',
+		urls: [
+			{ label: 'ニトリ商品 (Nクール ぬいぐるみ)', url: 'https://www.nitori-net.jp/ec/product/2116100013272s/', note: '本番運用では [scraping.curl_cffi].enabled = true + bootstrap.jsonl の nitori-net.jp → curl_cffi エントリが必須' },
+		],
+	},
+	{
 		name: 'sqex (phase12.6 — SQEX e-STORE / proxy 直行)',
 		description: 'データセンター IP 全般を CDN 段で広く弾くため、Vultr 本番から直叩きすると HTTP 200 + 正規 404 ページボディが返る。エラーシグナル無しの IP block なので forceProxyFallback で最初から proxy 経由に行く',
 		urls: [

@@ -120,9 +120,9 @@ riin-summaly の独自軸として、URL 取得を **4 種類の経路** に整�
 | **Summaly UA** | `default` | デフォルト UA `SummalyBot/<version>` で got 経由スクレイプ。最初の選択肢 | 大多数のサイト |
 | **SNS Preview Bot UA** | `fallback_ua` | `facebookexternalhit/1.1` / `Twitterbot/1.0` 等の SNS bot UA に偽装。WAF allowlist 通過 / PV カウント除外狙い / `SummalyBot` 文字列で弾かれる WAF の救援 | `nintendo-store` (Akamai 突破), `kakuyomu` (PV 除外), 汎用 fallback (phase11.9) |
 | **Proxy 経由** | `proxy` | Cloudflare Workers Free を outbound proxy として経由。Vultr Tokyo IP 等の **datacenter IP block** を CF (AS13335) 経由で救援。HMAC-SHA256 認証 + 8 層防御 | `amazon` (`amazon.co.jp` 500 救援), `sqex` (DC IP block) |
-| **curl_cffi** | `curl_cffi` | `tools/curl-cffi-fetcher/` の Python CLI を spawn し、Chrome / Firefox / Safari の **TLS フィンガープリント (JA3) を完全再現**。`SummalyBot` どころか Mozilla UA でも HTTP/2 INTERNAL_ERROR を返す **TLS / HTTP/2 layer の bot block** を突破 | `yodobashi` |
+| **curl_cffi** | `curl_cffi` | `tools/curl-cffi-fetcher/` の Python CLI を spawn し、Chrome / Firefox / Safari の **TLS フィンガープリント (JA3) を完全再現**。`SummalyBot` どころか Mozilla UA でも HTTP/2 INTERNAL_ERROR を返す **TLS / HTTP/2 layer の bot block** を突破 | `yodobashi`, `nitori` (TLS block + JS 動的 OGP の二重壁を JSON API + curl_cffi で迂回) |
 
-これらと直交して、抽出 (extraction) 戦略は別軸です（**公式 JSON API / oEmbed 直叩き** で HTML スクレイプ自体を回避するもの: `wikipedia` / `npmjs` / `syosetu` / `youtube` / `spotify`、**内部 CDN 直叩き** (公式 API ではないが widget 用 JSON が露出している経路): `twitter` (`cdn.syndication.twimg.com` — X の仕様変更で壊れうる)、**HTML 内 state JSON parse**: `kakuyomu`、**DOM 直接抽出**: `amazon`）。経路と抽出戦略は組み合わせ可能で、例えば `kakuyomu` は「SNS Bot UA で取得した HTML」から `__NEXT_DATA__` の Apollo state を parse する複合戦略です。
+これらと直交して、抽出 (extraction) 戦略は別軸です（**公式 JSON API / oEmbed 直叩き** で HTML スクレイプ自体を回避するもの: `wikipedia` / `npmjs` / `syosetu` / `youtube` / `spotify` / `nitori`、**内部 CDN 直叩き** (公式 API ではないが widget 用 JSON が露出している経路): `twitter` (`cdn.syndication.twimg.com` — X の仕様変更で壊れうる)、**HTML 内 state JSON parse**: `kakuyomu`、**DOM 直接抽出**: `amazon`）。経路と抽出戦略は組み合わせ可能で、例えば `kakuyomu` は「SNS Bot UA で取得した HTML」から `__NEXT_DATA__` の Apollo state を parse する複合戦略です。`nitori` は「curl_cffi で TLS block を迂回しつつ公式 JSON API を直叩き」する二重複合戦略です。
 
 ### 経路学習キャッシュ (phase14)
 
@@ -160,6 +160,7 @@ riin-summaly の独自軸として、URL 取得を **4 種類の経路** に整�
 | `sqex` | `(www.)?store.jp.square-enix.com` (短縮 `sqex.to/<id>`) | Proxy | データセンター IP を CDN 段で広く弾く新パターン (HTTP 200 + 正規 404 ページボディ)。経路学習キャッシュ + bootstrap で proxy 直行 |
 | `syosetu` | `(ncode\|novel18).syosetu.com/n<id>/` | 公式 API | 小説家になろう公式 API 直叩き → 作品名 / 作者 / ジャンル / 連載状態 / あらすじを取得。`/embed` で iframe 用 HTML を返す (phase13.1)。R-18 ドメインで `sensitive: true` |
 | `kakuyomu` | `kakuyomu.jp/works/<id>(/episodes/<eid>)?` | SNS Bot UA | カクヨム公式 API が無いため `Twitterbot/1.0` UA で HTML を取得し `<script id="__NEXT_DATA__">` の Apollo state JSON から作品名 / 作者 / ジャンル / 連載状態 / あらすじ / 作品サムネを抽出。`/embed` で iframe 用 HTML を返す (phase15.2)。`isSexual: true` で `sensitive: true` |
+| `nitori` | `(www.)?nitori-net.jp/ec/product/<sku>/` | 公式 API + curl_cffi | 商品詳細を SAP Commerce OCC API (`/occ/v2/nitorinet/nitori/products/<sku>`) を curl_cffi (Chrome JA3 偽装) で直叩き、SPA + JS 動的 OGP の SNS 共有不能ページから完璧な構造化データ (title / description / thumbnail / brand) を救援 (phase15.4) |
 
 各プラグインの詳細仕様、カスタムプラグインの書き方、共通ユーティリティは **[docs/Plugins.md](docs/Plugins.md)** にあります。
 

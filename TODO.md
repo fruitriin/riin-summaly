@@ -32,7 +32,9 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | — | 12.6 | [docs/plans/phase12.6-sqex-store-proxy.md](docs/plans/phase12.6-sqex-store-proxy.md) — Square Enix e-STORE (`store.jp.square-enix.com`) 救援。`forceProxyFallback` フラグ新設 + sqex プラグイン追加。データセンター IP を CDN 段で広く弾く新パターン (HTTP 200 + 正規 404 ページボディ、エラーシグナル無し) を救援 | S〜M | 完了 (2026-05-07、本番デプロイ + 動作確認は運用者側) |
 | 中 | 13.1 | [docs/plans/phase13.1-syosetu-embed.md](docs/plans/phase13.1-syosetu-embed.md) — 小説家になろうプラグイン + `/embed` エンドポイント基盤。プレイヤー iframe で作者・ジャンル・あらすじを表示（JS 一切なしのバニラ HTML+CSS、CSP `default-src 'none'`、XSS 全エスケープ）。なろう公式 API 直叩き、R-18 ドメインで `sensitive: true` | M〜L | ほぼ完了 (Step 1 + 2 + 3 + 4 部分 + 6 + 7 完了 2026-05-08。残 Step 5 dev 手動 — UI 検証必要のため自動化対象外) |
 | 高 | 14 | [docs/plans/phase14-domain-strategy-cache.md](docs/plans/phase14-domain-strategy-cache.md) — 経路学習キャッシュ (host + path prefix 2段、JSONL 永続化、N 連続失敗で invalidate)。bootstrap JSONL 同梱で初回コスト回避。`forceCurlCffiFallback` / `forceProxyFallback` を廃止し、プラグインは「引き出し方の自在性」専用に整理。汎用パスでも自動最適化される | M〜L | ほぼ完了 (Step 1 + 2 系 + 3 + 4 + 6 + 7 + 5 部分 (`/api/strategy-cache` API) 完了 2026-05-08、残る UI パネル + 目視検証のみ — 手動範囲) |
+| 中 | 15.3 | [docs/plans/phase15.3-plugin-dmm.md](docs/plans/phase15.3-plugin-dmm.md) — DMM (FANZA) プラグイン。`dmm.co.jp` 全サブドメインで age_check ゲートを `facebookexternalhit/1.1` UA allowlist 経由で素通し (fail mode G、nintendo-store と同型)。`skipRedirectResolution = true` で HEAD probe による gate 書き換えを回避、`sensitive: true` 固定、deploy example でコメントアウトデフォルト | S | 未着手 |
 | 低 | 15.1 | [docs/plans/phase15.1-playwright-fallback.md](docs/plans/phase15.1-playwright-fallback.md) — Playwright モード (fail mode I 救援、SPA + JS 動的 OGP 注入対応)。phase14 経路学習キャッシュに `'playwright'` strategy を追加。`tools/playwright-fetcher/` 独立構成、allowlist 必須、メモリ要件あり (Vultr 拡張)。実ブラウザレンダリングのため最終手段位置付け | L〜XL | 未着手 (着手トリガー: fail mode I 発生頻度 月 N 件 / 個人的に preview したい SPA EC が増えた時) |
+| — | 15.4 | [docs/plans/phase15.4-plugin-nitori.md](docs/plans/phase15.4-plugin-nitori.md) — ニトリ (nitori-net.jp) プラグイン。公式 JSON API (`/occ/v2/nitorinet/nitori/products/<sku>`) + curl_cffi 経路で TLS layer + UA layer の二重 bot block を迂回。fail mode I (SPA + JS 動的 OGP) に整理されていたが、隠れ JSON API 発見で救援可能と判明。`viaCurlCffi` 直接呼び (個別 hardcode 方式)、`skipRedirectResolution = true` | M | 完了 (2026-05-10、本番デプロイ + 動作確認は運用者側) |
 | — | 16.1 | [docs/plans/phase16.1-docs-route-strategy.md](docs/plans/phase16.1-docs-route-strategy.md) — ドキュメント網羅性更新 (経路優先システムを目玉特徴に位置づけ)。README に「経路優先システム」セクション新設 + 4 経路 (Summaly UA / SNS Bot UA / Proxy / curl_cffi) + 経路学習キャッシュの俯瞰、プラグイン表に kakuyomu 行 + 経路列追加、test/readme-plugins.test.ts で同期漏れを構造的にガード | S〜M | 完了 (2026-05-08) |
 | — | 16.2 | [docs/plans/phase16.2-deprecated-md.md](docs/plans/phase16.2-deprecated-md.md) — 廃止された機能の経緯記述を `DEPRECATED.md` に集約。旧 fastify-cli / 診断エンドポイント / parseFailureLogEndpoint / forceX プラグインフラグの 4 機能について「旧 / 新 / 廃止理由 / 移行手順」を一貫構成で記載、各 docs からは 1 行サマリ + リンクに簡素化 | S〜M | 完了 (2026-05-09) |
 | — | 16.3 | [docs/plans/phase16.3-config-cleanup.md](docs/plans/phase16.3-config-cleanup.md) — config 整理 + 経路依存 fail-fast (breaking)。`[server].publicUrl` → `[embed].publicUrl` 移動 / `[embed].allowedPlugins` 削除 / `[scraping.proxy]` / `[scraping.curl_cffi]` / `[scraping.fallback]` の `categories` / `domains` TOML キー削除 (コード側固定 + bootstrap 自動導出) / `expectKnownKeys` 全セクション起動失敗化 / 経路依存 fail-fast / `useRange` default true / `parseFailureLog` ペア + デフォルト | M〜L | 完了 (2026-05-09) |
@@ -40,12 +42,13 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | 低 | 16.5 | docs/SETUP.md の `[scraping.proxy]` / `[scraping.curl_cffi]` / `[scraping.fallback]` セクションの詳細表 (`categories` / `domains` 設定例) を全面整理。phase16.3 で表面的整合性のみ取った状態のため、内部仕様の説明として残すか / 削除するか判断 | S | 未着手 |
 | 低 | 16.6 | proxy 実 HTTP 疎通テスト。Worker 側に `/health` endpoint 追加 + summaly 起動時に HMAC なしで GET → 200 確認。phase16.4 では placeholder 検出のみで止めた、実 HTTP は別 phase | S〜M | 未着手 |
 | 低 | 17.1 | [docs/plans/phase17.1-addf-upstream-prune-stale-markers.md](docs/plans/phase17.1-addf-upstream-prune-stale-markers.md) — `prune-stale-markers` スキルを ADDF 本体に upstream。summaly 側で実証済 (src/+bin/ で 156→5 件、96.8% 削減)。ADDF 利用プロジェクト全般の履歴マーカー累積問題への横展開 | S〜M | 未着手 (着手トリガー: ADDF 本体への寄与タイミング、急がない) |
+| 高 | 18 | [docs/plans/phase18-hedged-fallback.md](docs/plans/phase18-hedged-fallback.md) — Hedged fallback (champion / challenger 並列発火) で経路選定を全自動化。第一候補 (champion) 失敗 or 5 秒遅延で残り全 strategy を `Promise.any` 並列発火、最速 valid 結果を採用 + 即昇格 (1 回で promotion、N 連続要件なし、降格・除外なし)。`[scraping.proxy].domains` / `[scraping.curl_cffi].domains` allowlist 撤廃 + curl_cffi 側に Python SSRF ガード追加。**経路問題だけのサイト (monotaro クラス) は plugin / config 編集なしで自動救援される**。BREAKING (domains keys 廃止 / `[scraping.fallback].categories` 廃止 + `hedged_threshold_ms` 新規) | M〜L | 未着手 |
 
 ### 将来検討メモ (Plan は未起票)
 
 > **2026-05-08**: Playwright モード (fail mode I 対策) は [docs/plans/phase15.1-playwright-fallback.md](docs/plans/phase15.1-playwright-fallback.md) に Plan 昇格しました。phase14 経路学習キャッシュに統合する設計方針 (旧 `forcePlaywrightFallback` フラグ案は廃止、`'playwright'` strategy を bootstrap JSONL に追加する形に変更)。着手トリガーは引き続き「fail mode I の発生頻度が無視できないレベル」または「個人的に preview したい SPA EC が増えた時」。
 
-(現在、将来検討メモは空)
+- **phase15.5 候補 (Plan 未起票): `getJson` の経路学習キャッシュ統合**: phase15.4 (nitori) で「JSON API も TLS layer block 配下にあり curl_cffi 経由が必要」というパターンが発見された。現状 `getJson` は `getResponse` 直接呼びで経路学習キャッシュ非統合のため、ニトリプラグインは `viaCurlCffi` 直接呼びの個別 hardcode 方式を取った。同種ケース (TLS 配下 JSON API) が再発したり、`getJson` 利用箇所 (spotify / komiflo / twitter / npmjs / youtube / syosetu) で経路学習キャッシュの便益が見えたら、`getJson` 内部を `fetchResponse` 経路 (typeFilter を JSON 用に上書き) に書き換えることで全プラグイン透過的に経路学習キャッシュ恩恵を受けられる。**着手トリガー**: 同種ケース再発 / `getJson` 利用箇所での経路問題発覚 (e.g. komiflo の `api.komiflo.com` 経由が将来 bot block されるケース等)。サイズ M (`getJson` 改修 + 6 プラグインの副作用評価)
 
 ### 外部リポ連携（summaly スコープ外）
 
@@ -96,6 +99,8 @@ phase13.1 ほぼ完了（Step 1+2+3+4 部分+6+7 完了 2026-05-08、Step 5 dev 
 phase14   ほぼ完了（Step 1+2+3+4+6+7+5 部分 (`/api/strategy-cache`) 完了 2026-05-08、残る Step 5 UI パネル + 目視検証のみ — 手動範囲）
    ↓
 phase15.1 未着手（Playwright モード、fail mode I 救援。着手トリガー: 発生頻度月 N 件 / 個人的に preview したい SPA EC 増加）
+   ↓
+phase18   未着手（Hedged fallback、champion / challenger 並列発火で経路選定全自動化、BREAKING）
 ```
 
 ---

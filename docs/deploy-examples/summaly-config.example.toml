@@ -61,6 +61,7 @@ allowed = [
   "sqex",
   "syosetu",
   "kakuyomu",
+  "nitori",
   # 性的コンテンツを含むサイトの組み込みプラグイン。有効化したい場合のみコメントを外す:
   # "dlsite",
   # "iwara",

@@ -15,6 +15,7 @@ import * as yodobashi from './yodobashi.js';
 import * as sqex from './sqex.js';
 import * as syosetu from './syosetu.js';
 import * as kakuyomu from './kakuyomu.js';
+import * as nitori from './nitori.js';
 import { SummalyPlugin } from '@/iplugin.js';
 
 export const plugins: SummalyPlugin[] = [
@@ -35,4 +36,5 @@ export const plugins: SummalyPlugin[] = [
 	sqex,
 	syosetu,
 	kakuyomu,
+	nitori,
 ];
