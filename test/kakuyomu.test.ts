@@ -176,6 +176,25 @@ describe('composeDescription', () => {
 		const desc = composeDescription({ ...SAMPLE_WORK, catchphrase: 'あ'.repeat(500), introduction: null });
 		expect(desc.length).toBeLessThan(150);
 	});
+
+	test('episode URL なら各話タイトルを「」付きで prefix に置く', () => {
+		// 旧実装は末尾に `/ 序章` で付与していたが、新仕様 (あらすじだけ) と組み合わせると
+		// あらすじの一部に見えるため、prefix `「序章」 / あらすじ: ...` で識別性を確保
+		const desc = composeDescription(SAMPLE_WORK, '序章');
+		expect(desc).toMatch(/^「序章」 \/ あらすじ: /);
+		expect(desc).toContain('結婚生活');
+	});
+
+	test('episode URL であらすじが無い場合は各話タイトルだけ返る', () => {
+		const desc = composeDescription({ ...SAMPLE_WORK, catchphrase: null, introduction: null }, '序章');
+		expect(desc).toBe('「序章」');
+	});
+
+	test('episodeTitle が空文字なら付与しない (work URL 扱い)', () => {
+		const desc = composeDescription(SAMPLE_WORK, '');
+		expect(desc).toMatch(/^あらすじ: /);
+		expect(desc).not.toContain('「」');
+	});
 });
 
 describe('buildSummaryFromWork', () => {
@@ -333,5 +352,33 @@ describe('composeEmbedHtml', () => {
 		const html = composeEmbedHtml({ ...SAMPLE_WORK, title: undefined }, null);
 		expect(html).toContain('(タイトル不明)');
 		expect(html).toContain('(作者不明)');
+	});
+
+	test('episode URL では各話タイトルが title 直下に「」付きで表示', () => {
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田', '序章');
+		expect(html).toContain('<div class="episode-title">「序章」</div>');
+		// title (作品名) の直後に episode-title が来ること
+		const titleIdx = html.indexOf('<div class="title">');
+		const epIdx = html.indexOf('<div class="episode-title">');
+		const metaIdx = html.indexOf('<div class="meta">');
+		expect(titleIdx).toBeGreaterThan(0);
+		expect(epIdx).toBeGreaterThan(titleIdx);
+		expect(metaIdx).toBeGreaterThan(epIdx);
+	});
+
+	test('episodeTitle 未指定 (work URL) では episode-title div を出さない', () => {
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田');
+		expect(html).not.toContain('class="episode-title"');
+	});
+
+	test('episodeTitle が空文字でも episode-title div を出さない', () => {
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田', '');
+		expect(html).not.toContain('class="episode-title"');
+	});
+
+	test('XSS: episodeTitle に <script> を含めても escape される', () => {
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田', '<script>alert(1)</script>');
+		expect(html).not.toMatch(/<script>alert/);
+		expect(html).toContain('&lt;script&gt;');
 	});
 });

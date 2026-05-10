@@ -242,10 +242,25 @@ function composeStatusLabel(work: KakuyomuWork): string {
  * `catchphrase` (キャッチコピー) → `introduction` (あらすじ本文) の順でフォールバック。
  * 両方 null なら空文字を返す。
  */
-export function composeDescription(work: KakuyomuWork): string {
+/**
+ * card style 用 description を組み立てる。
+ *
+ * - work URL: `あらすじ: <catchphrase or introduction の 80 文字 clip>` だけ
+ * - episode URL (各話): `「<各話タイトル>」 / あらすじ: <80 文字 clip>` で **各話タイトルを prefix**
+ *   に置き、「あらすじ」の続きと混同されないよう識別性を確保 (旧実装は末尾に `/ <タイトル>` で
+ *   付与していたが、新仕様の「あらすじだけ」と組み合わせると区別がつきにくいため変更)
+ *
+ * `summary` (catchphrase / introduction) が両方 null なら episode title だけ返す
+ * (各話 URL で本文が無い特殊ケース)。両方無ければ空文字。
+ */
+export function composeDescription(work: KakuyomuWork, episodeTitle: string | null = null): string {
 	const summary = asString(work.catchphrase) ?? asString(work.introduction);
-	if (summary == null) return '';
-	return `あらすじ: ${clip(summary, STORY_CARD_CLIP_LENGTH)}`;
+	const summaryPart = summary != null ? `あらすじ: ${clip(summary, STORY_CARD_CLIP_LENGTH)}` : '';
+	if (episodeTitle != null && episodeTitle !== '') {
+		const titlePart = `「${episodeTitle}」`;
+		return summaryPart !== '' ? `${titlePart} / ${summaryPart}` : titlePart;
+	}
+	return summaryPart;
 }
 
 /**
@@ -277,8 +292,13 @@ function formatTags(tags: unknown): string {
  * **警告マーカー**: `<span class="markers">[残酷描写] [性的描写] [暴力描写]</span>` で
  * meta 行末尾に統合、CSS `.markers { color: #c33; }` で赤文字強調。
  */
-export function composeEmbedHtml(work: KakuyomuWork, authorName: string | null): string {
+export function composeEmbedHtml(
+	work: KakuyomuWork,
+	authorName: string | null,
+	episodeTitle: string | null = null,
+): string {
 	const titleSafe = escapeHtml(asString(work.title) ?? '(タイトル不明)');
+	const episodeTitleSafe = episodeTitle != null && episodeTitle !== '' ? escapeHtml(episodeTitle) : '';
 	const authorSafe = escapeHtml(authorName ?? '(作者不明)');
 	const genreSafe = escapeHtml(getKakuyomuGenreName(asString(work.genre) ?? ''));
 	const statusSafe = escapeHtml(composeStatusLabel(work));
@@ -309,7 +329,8 @@ export function composeEmbedHtml(work: KakuyomuWork, authorName: string | null):
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif; padding: 1rem; line-height: 1.5; color: #222; background: #fff; overflow-y: auto; }
-.title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.5rem; word-break: break-word; }
+.title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.25rem; word-break: break-word; }
+.episode-title { font-size: 0.95rem; font-weight: bold; color: #4a4a4a; margin-bottom: 0.5rem; word-break: break-word; }
 .meta { font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; word-break: break-word; }
 .markers { color: #c33; }
 .story { font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; color: #333; margin-bottom: 0.75rem; }
@@ -319,6 +340,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Kak
 </head>
 <body>
 <div class="title">${titleSafe}</div>
+${episodeTitleSafe !== '' ? `<div class="episode-title">「${episodeTitleSafe}」</div>` : ''}
 <div class="meta">${metaLine}</div>
 <div class="story">${introductionSafe}</div>
 ${tagsSafe !== '' ? `<div class="tags">タグ: ${tagsSafe}</div>` : ''}
@@ -426,7 +448,7 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	const extracted = extractWorkAndEpisode(url);
 	if (extracted === null) return null;
 
-	// chapter URL でも作品トップから work data を取る (各話メタは episode URL 側で取れない構造)
+	// episode URL でも作品トップから work data を取る (各話メタは episode URL 側で取れない構造)
 	const workTopUrl = new URL(`https://${url.hostname}/works/${extracted.workId}`);
 	const [workData, episodeTitle] = await Promise.all([
 		fetchWorkData(workTopUrl, opts),
@@ -442,13 +464,13 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	const embedBaseUrl = opts?._embedBaseUrl;
 	const summary = buildSummaryFromWork(workData.work, workData.authorName, url, embedBaseUrl);
 
-	// chapter URL では description 末尾に各話タイトルを付与 (なろうと同パターン)。
-	// **escape 不要の理由** (security review I-2): `summary.description` はプレーンテキストとして
-	// Misskey クライアント側で textContent / v-text 相当で表示されるため、HTML として解釈されない。
-	// embed HTML には `description` ではなく `introduction` が流入する (composeEmbedHtml 参照) ので
-	// XSS 経路にもならない。各話タイトルは Misskey 側でエスケープされる前提で生のまま連結する。
+	// episode URL では `composeDescription` が `「<各話タイトル>」 / あらすじ: ...` 形式で組み立てる。
+	// description を episode title 込みで再生成。
+	// **escape 不要の理由**: `summary.description` はプレーンテキストとして Misskey クライアント側で
+	// textContent / v-text 相当で表示されるため、HTML として解釈されない。embed HTML には
+	// `description` ではなく `introduction` が流入する (composeEmbedHtml 参照) ので XSS 経路にもならない。
 	if (episodeTitle != null) {
-		summary.description = `${summary.description} / ${episodeTitle}`;
+		summary.description = composeDescription(workData.work, episodeTitle);
 	}
 	return summary;
 }
@@ -458,14 +480,21 @@ export async function renderEmbed(url: URL, opts?: GeneralScrapingOptions): Prom
 	if (extracted === null) {
 		throw new Error('kakuyomu renderEmbed: invalid URL (test() を通った URL のはずだが workId が抽出できない)');
 	}
+	// episode URL なら各話タイトルも並列取得して embed HTML に反映する。
+	// summarize() と同じ構造 (作品トップから work data + episode HTML から og:title 抽出)。
 	const workTopUrl = new URL(`https://${url.hostname}/works/${extracted.workId}`);
-	const workData = await fetchWorkData(workTopUrl, opts);
+	const [workData, episodeTitle] = await Promise.all([
+		fetchWorkData(workTopUrl, opts),
+		extracted.episodeId != null
+			? fetchEpisodeTitle(url, opts)
+			: Promise.resolve(null),
+	]);
 	if (workData === null) {
 		// __NEXT_DATA__ parse 失敗 / Work エンティティ不在 (削除作品 / 構造変更)。
 		// renderEmbed の null 返却は型契約上禁止なので throw して /embed 側で 500 に変換させる。
 		throw new Error('kakuyomu renderEmbed: 作品が見つかりません (__NEXT_DATA__ parse 失敗 or Work entity 不在)');
 	}
-	const html = composeEmbedHtml(workData.work, workData.authorName);
+	const html = composeEmbedHtml(workData.work, workData.authorName, episodeTitle);
 	return { body: html, width: 3, height: 2 };
 }
 
