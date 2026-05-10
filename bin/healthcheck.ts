@@ -77,9 +77,9 @@ function checkCurlCffi(config: ParsedConfig): void {
 	}
 
 	// uv 実行可能性チェック (`uv --version` が exit 0 で返るか)
-	let result;
+	let versionResult;
 	try {
-		result = spawnSync(cfg.uvPath, ['--version'], { encoding: 'utf-8', timeout: 5000 });
+		versionResult = spawnSync(cfg.uvPath, ['--version'], { encoding: 'utf-8', timeout: 5000 });
 	} catch (e) {
 		throw new Error(
 			`config: scraping.curl_cffi.uvPath での uv 実行で例外: ${cfg.uvPath}\n`
@@ -87,12 +87,44 @@ function checkCurlCffi(config: ParsedConfig): void {
 			+ `  対処: \`which uv\` で実体パスを確認し、uvPath に設定してください`,
 		);
 	}
-	if (result.error || result.status !== 0) {
-		const msg = result.error?.message ?? result.stderr ?? `exit code ${result.status}`;
+	if (versionResult.error || versionResult.status !== 0) {
+		const msg = versionResult.error?.message ?? versionResult.stderr ?? `exit code ${versionResult.status}`;
 		throw new Error(
 			`config: scraping.curl_cffi.uvPath で uv が実行できません: ${cfg.uvPath}\n`
 			+ `  詳細: ${msg}\n`
 			+ `  対処: uv (https://docs.astral.sh/uv/) をインストールし、PATH 上の実体パスを uvPath に設定してください`,
+		);
+	}
+
+	// **`uv run fetch --help` まで通るか確認** (phase18.1 強化)。
+	// `uv --version` だけでは「curl_cffi 依存 install 済み + fetch script entry point 解決可能」を確認できない。
+	// 本番診断: 「uv は通るが `uv run fetch` が即 error する」(本番 monotaro で curl_cffi 5153ms = 153ms 即 fail) パターンを起動時 fail-fast に。
+	// `--help` なら fetch.py の `import curl_cffi` まで実行されるため、依存欠落 / venv 未初期化を catch できる。
+	// timeout は 60s 余裕 (初回 `uv sync` で venv 構築から始まると数十秒かかる可能性、cold start を含めて運用者に挙動明示)
+	let helpResult;
+	try {
+		helpResult = spawnSync(cfg.uvPath, ['run', 'fetch', '--help'], {
+			encoding: 'utf-8',
+			cwd: cfg.projectDir,
+			timeout: 60000,
+		});
+	} catch (e) {
+		throw new Error(
+			`config: scraping.curl_cffi で \`uv run fetch --help\` 実行で例外: ${cfg.uvPath}\n`
+			+ `  詳細: ${e instanceof Error ? e.message : String(e)}\n`
+			+ `  cwd: ${cfg.projectDir}`,
+		);
+	}
+	if (helpResult.error || helpResult.status !== 0) {
+		const stderr = (helpResult.stderr ?? '').slice(0, 800);
+		throw new Error(
+			`config: scraping.curl_cffi で \`uv run fetch --help\` が失敗: cwd=${cfg.projectDir}\n`
+			+ `  exit code: ${helpResult.status}\n`
+			+ `  stderr (先頭 800 字): ${stderr}\n`
+			+ `  対処の候補:\n`
+			+ `    (a) \`cd ${cfg.projectDir} && uv sync\` で依存をインストール\n`
+			+ `    (b) tools/curl-cffi-fetcher/pyproject.toml の \`[project.scripts]\` に fetch entry point があるか確認\n`
+			+ `    (c) projectDir パスが本当に tools/curl-cffi-fetcher を指しているか確認`,
 		);
 	}
 }
