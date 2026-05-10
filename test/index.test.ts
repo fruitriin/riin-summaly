@@ -1287,15 +1287,138 @@ describe('local tests', () => {
 				expect(dmm!.skipRedirectResolution).toBe(true);
 			});
 
-			test('dmm プラグインの summarize() は facebookexternalhit/1.1 UA で取得し sensitive: true を立てる (phase15.3)', async () => {
+			test('dmm プラグインの summarize() は card 抑制版 (title prefix + 【R-18】 + thumbnail null) を返す (phase15.3 → phase15.5)', async () => {
 				app = fastify();
 				let receivedUA: string | undefined;
 				app.get('/av/content/', (req, reply) => {
 					receivedUA = String(req.headers['user-agent'] ?? '');
+					// icon は HEAD 検証されるので localhost mock の相対 URL を使う
 					const html = '<!DOCTYPE html><html><head>'
 						+ '<title>サンプル作品｜FANZA動画</title>'
 						+ '<meta property="og:title" content="サンプル作品">'
 						+ '<meta property="og:description" content="作品説明">'
+						+ '<meta property="og:image" content="https://example.com/thumb.jpg">'
+						+ '<meta property="og:site_name" content="FANZA">'
+						+ '<link rel="icon" href="/favicon.png">'
+						+ '</head><body></body></html>';
+					reply.header('content-length', Buffer.byteLength(html));
+					reply.header('content-type', 'text/html; charset=utf-8');
+					return reply.send(html);
+				});
+				app.head('/favicon.png', (_req, reply) => {
+					reply.header('content-type', 'image/png');
+					return reply.status(200).send();
+				});
+				await app.listen({ port });
+				process.env.SUMMALY_ALLOW_PRIVATE_IP = 'true';
+
+				const dmm = await import('@/plugins/dmm.js');
+				const summary = await dmm.summarize(new URL(`${host}/av/content/?id=ailb00009`));
+
+				expect(summary).not.toBeNull();
+				// phase15.5: card は「【sitename】og:title」prefix 形式
+				expect(summary!.title).toBe('【FANZA】サンプル作品');
+				// phase15.5: description は固定 (作品あらすじを伏せる)
+				expect(summary!.description).toBe('【R-18】 内容を伏せています');
+				// phase15.5: 作品サムネ (og:image) を出さない
+				expect(summary!.thumbnail).toBeNull();
+				// icon は parseGeneral 由来のサイト favicon を維持 (作品ロゴでなくサイトロゴ)
+				expect(summary!.icon).toBe(`${host}/favicon.png`);
+				expect(summary!.sitename).toBe('FANZA');
+				expect(summary!.sensitive).toBe(true);
+				expect(receivedUA).toMatch(/facebookexternalhit\/1\.1/);  // UA fb_bot 固定
+				// phase15.5 W-1: embedBaseUrl 未設定なので player.url は null (parseGeneral 由来の
+				// oEmbed player を引き継がず明示的に null 化する設計意図の確認)
+				expect(summary!.player.url).toBeNull();
+				expect(summary!.player.width).toBeNull();
+				expect(summary!.player.height).toBeNull();
+			});
+
+			test('dmm プラグインの summarize() は og:title 不在時 sitename だけのプレフィックスにフォールバック (phase15.5)', async () => {
+				app = fastify();
+				app.get('/dc/doujin/-/detail/', (_req, reply) => {
+					// og:title が空文字 → parseGeneral は <head > title> を fallback で拾う
+					const html = '<!DOCTYPE html><html><head>'
+						+ '<title>家出娘、拾いました。｜FANZA同人</title>'
+						+ '<meta property="og:title" content="">'
+						+ '<meta property="og:site_name" content="FANZA">'
+						+ '</head><body></body></html>';
+					reply.header('content-length', Buffer.byteLength(html));
+					reply.header('content-type', 'text/html; charset=utf-8');
+					return reply.send(html);
+				});
+				await app.listen({ port });
+				process.env.SUMMALY_ALLOW_PRIVATE_IP = 'true';
+
+				const dmm = await import('@/plugins/dmm.js');
+				const summary = await dmm.summarize(new URL(`${host}/dc/doujin/-/detail/?cid=d_738103`));
+
+				expect(summary).not.toBeNull();
+				// <head > title> から得られた title を prefix で包む
+				expect(summary!.title).toContain('【FANZA】');
+				expect(summary!.description).toBe('【R-18】 内容を伏せています');
+				expect(summary!.thumbnail).toBeNull();
+			});
+
+			test('dmm プラグインの composeEmbedHtml() は基本入力で作品情報をフル表示する (phase15.5)', async () => {
+				const dmm = await import('@/plugins/dmm.js');
+				const html = dmm.composeEmbedHtml({
+					title: '家出娘、拾いました。',
+					description: 'ある日、家出した女の子を拾った。',
+					thumbnail: 'https://example.com/thumb.jpg',
+					sitename: 'FANZA',
+				});
+				expect(html).toContain('<!DOCTYPE html>');
+				expect(html).toContain('家出娘、拾いました。');
+				expect(html).toContain('ある日、家出した女の子を拾った。');
+				expect(html).toContain('<img src="https://example.com/thumb.jpg"');
+				expect(html).toContain('FANZA');
+			});
+
+			test('dmm プラグインの composeEmbedHtml() は HTML 特殊文字を escape する (phase15.5、XSS 防御)', async () => {
+				const dmm = await import('@/plugins/dmm.js');
+				const html = dmm.composeEmbedHtml({
+					title: '<script>alert(1)</script>',
+					description: '<img onerror=alert(1)>',
+					thumbnail: null,
+					sitename: '<svg onload=alert(1)>',
+				});
+				// 生の `<script>` / 生の `<img onerror>` / 生の `<svg onload>` は出ない
+				expect(html).not.toContain('<script>alert(1)</script>');
+				expect(html).not.toContain('<img onerror=alert(1)>');
+				expect(html).not.toContain('<svg onload=alert(1)>');
+				// 一方で escape された文字列は HTML 中に存在する
+				expect(html).toContain('&lt;script&gt;');
+				expect(html).toContain('&lt;img');
+				expect(html).toContain('&lt;svg');
+			});
+
+			test('dmm プラグインの composeEmbedHtml() は thumbnail が non-https / null なら <img> を出さない (phase15.5)', async () => {
+				const dmm = await import('@/plugins/dmm.js');
+
+				const htmlNull = dmm.composeEmbedHtml({
+					title: 't', description: 'd', thumbnail: null, sitename: 's',
+				});
+				expect(htmlNull).not.toContain('<img');
+
+				const htmlJs = dmm.composeEmbedHtml({
+					title: 't', description: 'd', thumbnail: 'javascript:alert(1)', sitename: 's',
+				});
+				expect(htmlJs).not.toContain('<img');
+
+				const htmlHttp = dmm.composeEmbedHtml({
+					title: 't', description: 'd', thumbnail: 'http://example.com/i.jpg', sitename: 's',
+				});
+				// CSP `img-src https:` 二重防御として http は弾く
+				expect(htmlHttp).not.toContain('<img');
+			});
+
+			test('dmm プラグインの renderEmbed() は OGP フル情報を含む HTML を返す (phase15.5)', async () => {
+				app = fastify();
+				app.get('/av/content/', (_req, reply) => {
+					const html = '<!DOCTYPE html><html><head>'
+						+ '<meta property="og:title" content="サンプル作品">'
+						+ '<meta property="og:description" content="あらすじ">'
 						+ '<meta property="og:image" content="https://example.com/thumb.jpg">'
 						+ '<meta property="og:site_name" content="FANZA">'
 						+ '</head><body></body></html>';
@@ -1307,15 +1430,39 @@ describe('local tests', () => {
 				process.env.SUMMALY_ALLOW_PRIVATE_IP = 'true';
 
 				const dmm = await import('@/plugins/dmm.js');
-				const summary = await dmm.summarize(new URL(`${host}/av/content/?id=ailb00009`));
+				const result = await dmm.renderEmbed(new URL(`${host}/av/content/?id=ailb00009`));
+				expect(result.body).toContain('<!DOCTYPE html>');
+				expect(result.body).toContain('サンプル作品');  // 作品名はフル表示
+				expect(result.body).toContain('あらすじ');     // 作品あらすじもフル表示
+				expect(result.body).toContain('https://example.com/thumb.jpg');  // 作品サムネもフル表示
+				expect(result.body).toContain('FANZA');
+				expect(result.width).toBe(3);
+				expect(result.height).toBe(2);
+			});
 
+			test('dmm プラグインの player.url は embedBaseUrl 設定時に /embed?url=... を返す (phase15.5)', async () => {
+				app = fastify();
+				app.get('/av/content/', (_req, reply) => {
+					const html = '<!DOCTYPE html><html><head>'
+						+ '<meta property="og:title" content="x">'
+						+ '<meta property="og:site_name" content="FANZA">'
+						+ '</head><body></body></html>';
+					reply.header('content-length', Buffer.byteLength(html));
+					reply.header('content-type', 'text/html; charset=utf-8');
+					return reply.send(html);
+				});
+				await app.listen({ port });
+				process.env.SUMMALY_ALLOW_PRIVATE_IP = 'true';
+
+				const dmm = await import('@/plugins/dmm.js');
+				const targetUrl = `${host}/av/content/?id=ailb00009`;
+				const summary = await dmm.summarize(new URL(targetUrl), {
+					_embedBaseUrl: 'https://example.com',
+				});
 				expect(summary).not.toBeNull();
-				expect(summary!.title).toBe('サンプル作品');
-				expect(summary!.description).toBe('作品説明');
-				expect(summary!.thumbnail).toBe('https://example.com/thumb.jpg');
-				expect(summary!.sitename).toBe('FANZA');
-				expect(summary!.sensitive).toBe(true);  // プラグイン側で常に true をセット
-				expect(receivedUA).toMatch(/facebookexternalhit\/1\.1/);  // UA fb_bot 固定が効いている
+				expect(summary!.player.url).toBe(`https://example.com/embed?url=${encodeURIComponent(targetUrl)}`);
+				expect(summary!.player.width).toBe(3);
+				expect(summary!.player.height).toBe(2);
 			});
 
 			test('短縮 URL を扱うプラグイン (amazon / branchio-deeplinks) は skipRedirectResolution を宣言していない (phase12.5)', () => {

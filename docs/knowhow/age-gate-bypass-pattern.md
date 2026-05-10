@@ -153,6 +153,25 @@ bot allowlist は `curl -A '<UA>' -I '<URL>'` で事前検証する (302 → 200
 
 **DMM ケースの注意点**: 全サブドメインで `Vary: User-Agent` ベースの age_check が挟まるため、HEAD probe (`SummalyBot` UA で送信) が必ず gate URL に書き換わる → 対策 1 (`skipRedirectResolution = true`) が **必須**。対策 3 単独だと `summaly()` 入口の resolveRedirect 段で URL が age_check に書き換わって `test()` がマッチしなくなる失敗パターンになる。一方 nintendo-store は HEAD probe が SummalyBot UA でも 200 を返してくれるため対策 1 不要。**サイトの redirect 挙動 (HEAD vs GET / UA 別の挙動) を事前に curl 検証して必要な対策の組み合わせを決定する** こと。
 
+## NSFW 系サイトの「card 抑制 + embed フル表示」二層構造 (phase15.5)
+
+age-gate を突破して preview 取得が動くようになっても、サイトによっては **og:image (作品サムネ) や og:description (作品あらすじ) が直球すぎて URL preview に流すと露骨** という二次問題が起こる (例: DMM/FANZA の AV / 同人カテゴリは作品サムネが完全に R-18、あらすじも直接的)。
+
+**対応パターン (DMM phase15.5 で確立)**:
+- **card preview** (`summarize` 戻り値): `title` を `【<sitename>】<og:title>` の prefix 形式に整形、`description` は固定文言 `【R-18】 内容を伏せています` で上書き、`thumbnail` を `null` に強制 (作品サムネ非表示)、`icon` だけサイト favicon を維持 (作品ロゴでなくサイトロゴ)、`sensitive: true` 固定
+- **embed** (`renderEmbed`): 制限なしで og:title (作品名) / og:description (あらすじ) / og:image (作品サムネ) をフル表示する HTML5 ドキュメントを返す。CSP `default-src 'none'; img-src https:; style-src 'unsafe-inline'` で `<script>` 不可・外部 fetch 不可・画像のみ https: 経由で許可、`escapeHtml` で全ユーザー入力を escape
+
+**設計の根拠**: Misskey 等の UI で embed iframe (`/embed?url=...`) は **明示的にユーザーが展開操作 (preview を開く / クリックする) しないと描画されない仕組み**。つまり embed が描画される時点で「ユーザーが作品情報を見ることに合意している」状態と扱える (= 「踏まなければ表示されない」原則)。card preview は受動的に流れてくるためタイムラインの他の投稿と並んで表示される → こちらは抑制、能動展開された embed はフル表示、というレイヤー分離。
+
+**判断基準**: NSFW 系のサイトで preview を有効化する際、**プラグイン側で `renderEmbed` を実装するかどうかは「カードに乗せる作品情報の直球性」次第**。
+- card に作品名 + あらすじ + サムネを出しても問題ないレベルの NSFW (R-15 程度) → 通常の `summarize` 単独で OK (例: `dlsite` / `iwara` / `komiflo` / `nijie` の現状)
+- card に出すと露骨なレベル (R-18 直球) → 二層構造を採用し card 抑制 + `renderEmbed` でフル表示 (例: `dmm` phase15.5)
+
+**実装の注意**:
+- `composeEmbedHtml` は pure 関数として export してテスト容易化、XSS 防御テスト (`<script>` / `<img onerror>` / `<svg onload>` の入力に対して escape されることを確認) を必ず入れる
+- `<img>` の URL は `https:` のみ通す簡易 sanitize を入れる (CSP との二重防御)
+- `composePlayerUrl(url, embedBaseUrl)` で `<embedBaseUrl>/embed?url=<encoded>` を組み立てて `summary.player.url` にセット、phase16.3 の `[embed].allowedPlugins` auto-fill (`renderEmbed` 実装プラグインで `[plugins].allowed` に含まれるものを自動 enable) に乗る
+
 ## 参照
 
 - [src/plugins/syosetu.ts](../../src/plugins/syosetu.ts) — `skipRedirectResolution` + `unwrapAgeAuthUrl` の実装

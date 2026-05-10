@@ -143,7 +143,8 @@ export const sampleGroups: SampleGroup[] = [
 			{ label: 'iwara video', url: 'https://www.iwara.tv/video/example', note: '差し替え用テンプレ' },
 			{ label: 'komiflo comic', url: 'https://komiflo.com/comics/123456', note: '差し替え用テンプレ' },
 			{ label: 'nijie view', url: 'https://nijie.info/view.php?id=123456', note: '差し替え用テンプレ' },
-			{ label: 'FANZA video (dmm)', url: 'https://video.dmm.co.jp/av/content/?id=ailb00009', note: 'phase15.3 — age_check ゲートを fb_bot UA で素通し、sensitive: true 固定' },
+			{ label: 'FANZA video (dmm)', url: 'https://video.dmm.co.jp/av/content/?id=ailb00009', note: 'phase15.3 → 15.5 — card は title 「【FANZA】...」 / description 「【R-18】 内容を伏せています」 / thumbnail null で抑制。embed iframe を展開すると作品サムネ + あらすじをフル表示' },
+			{ label: 'FANZA 同人 (dmm)', url: 'https://www.dmm.co.jp/dc/doujin/-/detail/=/cid=d_738103/', note: 'phase15.5 — 同人作品の card 抑制 + embed フル表示の確認用' },
 		],
 	},
 	{

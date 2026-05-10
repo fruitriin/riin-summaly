@@ -284,12 +284,15 @@ interface SummalyPlugin {
 |:--|:--|
 | マッチ | `dmm.co.jp` 全サブドメイン (apex 含む) で `pathname` が `/age_check` で始まらないもの。`video.dmm.co.jp` / `book.dmm.co.jp` / `dlsoft.dmm.co.jp` / `games.dmm.co.jp` / `www.dmm.co.jp/digital/...` 等すべて対象 |
 | 取得方法 | UA を `facebookexternalhit/1.1` に **固定** して `scpaping()` → `parseGeneral()` に流す + `skipRedirectResolution = true` |
-| 抽出フィールド | `parseGeneral` 経由 (OG / Twitter Card 標準)。`og:site_name` で FANZA / DMM が自動分岐するためプラグイン側で sitename 固定はしない。`sensitive: true` を **常にセット** (`{ ...summary, sensitive: true }`) |
-| 背景 | DMM/FANZA は全サブドメインで年齢認証ゲート (`https://www.dmm.co.jp/age_check/=/?rurl=<encoded>`) が `Vary: User-Agent` で挟まり、`SummalyBot` / 通常ブラウザ UA で叩くと 302 でゲート HTML (空 OGP、~34 KB) に転送される。**`facebookexternalhit/1.1` / `Twitterbot/1.0`** 等の SNS bot UA はサイト側が allowlist しており、ゲート素通しで実コンテンツ HTML (~375 KB、OGP 完備) を返す。`nintendo-store` プラグインと完全同型の救援設計 (skill `/url-preview-check` の Phase 3 fail mode G) |
-| `skipRedirectResolution` の必要性 | `summaly()` 冒頭の HEAD probe は `SummalyBot` UA で送られるため、age_check ゲートに 302 されて URL が `/age_check/=/?rurl=...` に書き換わってしまう。書き換わった URL は `test()` で `/age_check` 除外条件に当たって false → `general()` フォールバックで空 OGP の preview ができる失敗パターンになる。`skipRedirectResolution = true` で resolveRedirect 自体を skip し、原 URL を直接 `summarize()` に渡して fb_bot UA で取得する |
+| 抽出フィールド (card) | **phase15.5 で card 抑制設計**: title = `【<sitename>】<og:title>` (例: 「【FANZA】家出娘、拾いました。」)、description = 固定文言 `【R-18】 内容を伏せています`、thumbnail = `null` (作品サムネ非表示)、icon = `parseGeneral` 由来のサイト favicon (作品ロゴでなくサイトロゴ)、sitename = `og:site_name` (FANZA / DMM 自動分岐)、sensitive = `true` 固定、player.url = `<embedBaseUrl>/embed?url=<encoded>` (`renderEmbed` 連動) |
+| 抽出フィールド (embed) | `renderEmbed` 実装 (phase15.5)。**制限なしで作品情報をフル表示**: og:title (作品名) / og:description (作品あらすじ) / og:image (作品サムネ) / og:site_name。CSP `default-src 'none'; img-src https:; style-src 'unsafe-inline'`、`<img>` の URL は `https:` のみ通す二重防御、`escapeHtml` で全ユーザー入力を escape (XSS 防御)。Misskey UI 上で明示的に embed 展開操作しないと描画されない原則を利用してフル表示する経路 |
+| 背景 (UA allowlist) | DMM/FANZA は全サブドメインで年齢認証ゲート (`https://www.dmm.co.jp/age_check/=/?rurl=<encoded>`) が `Vary: User-Agent` で挟まり、`SummalyBot` / 通常ブラウザ UA で叩くと 302 でゲート HTML (空 OGP、~34 KB) に転送される。**`facebookexternalhit/1.1` / `Twitterbot/1.0`** 等の SNS bot UA はサイト側が allowlist しており、ゲート素通しで実コンテンツ HTML (~375 KB、OGP 完備) を返す。`nintendo-store` プラグインと同型の救援設計 (skill `/url-preview-check` の Phase 3 fail mode G) |
+| 背景 (card 抑制 + embed フル表示の二層) | phase15.3 の素朴実装では og:image / og:description が直球すぎて Misskey タイムラインに流すと露骨だった (オーナーフィードバック 2026-05-10)。embed は明示展開操作が必要な仕組みを利用して「踏まなければ表示されない」原則で対応。NSFW 系プラグインの新パターンとして `docs/knowhow/age-gate-bypass-pattern.md` に記録 |
+| `skipRedirectResolution` の必要性 | `summaly()` 冒頭の HEAD probe は `SummalyBot` UA で送られるため、age_check ゲートに 302 されて URL が `/age_check/=/?rurl=...` に書き換わる。書き換わった URL は `test()` で `/age_check` 除外条件に当たって false → `general()` フォールバックで空 OGP の preview ができる失敗パターンになる。`skipRedirectResolution = true` で resolveRedirect 自体を skip し、原 URL を直接 `summarize()` に渡して fb_bot UA で取得する |
 | 倫理判断 | `nintendo-store` と同じ。DMM が SNS bot UA を allowlist している = OGP を share させたい意思がある (= UA 偽装ではなく share 用導線に乗る使い方) |
 | 副作用 | プラグイン内で `fallbackUserAgent` / `fallbackRetryCategories` を **明示的に未設定** にして UA 上書きが発生しないようにしている (`nintendo-store` と同じ) |
-| 運用要件 | NSFW 慣例で両 config example の `[plugins].allowed` に `# "dmm",` (コメントアウト) で並べる。デプロイ運用者が明示的にオプトインしなければ起動しない |
+| 運用要件 | NSFW 慣例で両 config example の `[plugins].allowed` に `# "dmm",` (コメントアウト) で並べる。デプロイ運用者が明示的にオプトインしなければ起動しない。`[plugins].allowed` で `"dmm"` を有効化すると `[embed].allowedPlugins` の auto-fill (phase16.3) で embed も自動的に有効化される |
+| pure 関数 export | `composeEmbedHtml({ title, description, thumbnail, sitename })` をテスト容易性のため pure 関数として export (XSS 防御テスト含む 9 件のユニットテストを担保) |
 
 ### syosetu (小説家になろう)
 
