@@ -301,8 +301,8 @@ interface SummalyPlugin {
 | マッチ | `kakuyomu.jp` (anchored) + path `/works/<id>` または `/works/<id>/episodes/<eid>` (id は数値) |
 | 取得方法 | カクヨムには公式 API が無いため、HTML 内の `<script id="__NEXT_DATA__" type="application/json">` の Apollo (Relay 風) 正規化キャッシュ JSON を parse して `Work:<id>` エンティティを取得。`Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (phase12.3 nintendo-store と同類) |
 | 抽出フィールド | Work エンティティから title / catchphrase / introduction / genre (enum 文字列) / serialStatus (`RUNNING`/`COMPLETED`) / publicEpisodeCount / totalCharacterCount / isCruel / isSexual / isViolent / tagLabels / ogImageUrl / lastEpisodePublishedAt を抽出。author は `{__ref:"UserAccount:<id>"}` 経由で別エンティティから name を lookup |
-| card style description | `composeDescription`: `作者: <name> / <ジャンル名> / 連載中 (169話) / [残酷描写] [性的描写] [暴力描写] / あらすじ: <catchphrase or introduction の 80 文字 clip>` を 1 行整形 |
-| embed (renderEmbed) | `composeEmbedHtml`: 完全な HTML5 ドキュメント (タイトル / 作者 / ジャンル + 状態 + 文字数 + マーカー / あらすじ 300 文字 clip / タグ上位 5 件 / 最終話日付) を返す。**全フィールド `escapeHtml` で entity 化** + CSP `default-src 'none'` で二重 XSS 防御 |
+| card style description | `composeDescription`: **あらすじだけ**を `あらすじ: <catchphrase or introduction の 80 文字 clip>` 形式で返す (Misskey カード幅で description が複数要素入るとあらすじが見切れるため、メタ情報は embed iframe に集約。syosetu と同じ設計) |
+| embed (renderEmbed) | `composeEmbedHtml`: 完全な HTML5 ドキュメント (タイトル / **「作者 / 連載ステータス / ジャンル / 警告」を 1 行統合** / あらすじ 300 文字 clip / タグ上位 5 件 / 最終話日付 / sitename) を返す。連載ステータスは `連載中 (169話 / 282,850文字)` 形式で話数+文字数を内包。警告マーカー (`[残酷描写]` `[性的描写]` `[暴力描写]`) は meta 行内 `<span class="markers">` で **赤文字 `#c33` 強調**。**全フィールド `escapeHtml` で entity 化** + CSP `default-src 'none'` で二重 XSS 防御 |
 | サムネ | `Work.ogImageUrl` (`cdn-static.kakuyomu.jp/works/<id>/ogimage.png`) を `Summary.thumbnail` に採用。作品ごとのカスタムサムネが取れるためなろうのサイトロゴ固定より見栄え良い |
 | R-18 / sensitive | `Work.isSexual === true` で `sensitive: true` を返す。`isCruel` / `isViolent` は description にマーカー表示するが sensitive flag には含めない (なろう基準と揃える) |
 | ジャンル enum | `src/utils/kakuyomu-genres.ts` の `GENRE_NAMES` で `LOVE_STORY` / `FANTASY` / `SF` 等 → 日本語表示名を変換。未知 enum は `'その他'` フォールバック (本番ログから収集して都度補強) |

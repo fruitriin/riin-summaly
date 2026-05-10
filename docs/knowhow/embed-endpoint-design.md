@@ -141,6 +141,67 @@ if (frameAncestors.includes('*')) {
 - **アスペクト比指定**: `width` / `height` は `padding-bottom: height/width * 100%` で計算される (絶対値ではなく **比率**)。`width: 3, height: 2` で 3:2 アスペクト
 - **`transformPlayerUrl` のクエリ汚染**: Misskey が embed URL に `autoplay=1` / `auto_play=1` を勝手に追加するため、embed エンドポイントは **未知クエリを静かに無視** する設計が必須 (厳密 query 検証で 400 を返さない)
 
+### カード description vs embed iframe の責任分担
+
+Misskey の URL preview カードは description が **1 行幅** (CSS で折り返しなしか数行 clip) で表示されるため、複数要素を ` / ` で区切って詰め込むと **肝心の情報 (あらすじ等) が見切れる**。
+
+旧設計 (失敗例):
+```
+作者: 山田太郎 / ハイファンタジー〔ファンタジー〕 / 連載中 / [残酷描写] / あらすじ: 異世界に転生した主人公…
+```
+→ カード幅で「あらすじ:」以降が表示されない / 数文字で切れる。
+
+新設計:
+
+| 要素 | card description | embed iframe (renderEmbed) |
+|---|:---:|:---:|
+| タイトル | (Summary.title 別フィールド) | 上部見出し |
+| **あらすじ** (重要) | **80 文字 clip だけ**を入れる | 300 文字 clip + 改行保持 |
+| 作者 | × (省略) | meta 行 |
+| ジャンル | × (省略) | meta 行 |
+| 連載状態 | × (省略) | meta 行 |
+| マーカー (R-15 / 残酷描写 等) | × (省略) | meta 行末尾、span で赤文字強調 |
+| タグ | × (省略) | あらすじの後ろ |
+| サイト名 | (Summary.sitename 別フィールド) | 下部 |
+
+実装 (`src/plugins/syosetu.ts`):
+```typescript
+export function composeDescription(novel: SyosetuNovelData): string {
+  const story = asString(novel.story);
+  if (story == null) return '';
+  return `あらすじ: ${clip(story, STORY_CARD_CLIP_LENGTH)}`;
+}
+```
+
+#### embed UI 内部のレイアウト制約
+
+Mi 側プレイヤー iframe には以下の制約がある:
+- **縦幅 = 横幅依存** (`padding-bottom: height/width * 100%` でアスペクト比固定)
+- **iframe 内のスクロールは無効** (Misskey 側が `scrolling="no"` で出す環境がある)
+
+→ **重要要素を上に寄せる**: タイトル → meta 行 (1 行統合) → あらすじ → タグ → サイト名
+
+meta 行を 3 行 (作者 / ジャンル / 連載状態) から 1 行統合に変えると、上部 1/3 にあらすじまで届くようになり、iframe 高さが固定でも肝心情報が見える。
+
+```
+タイトル
+作者: 山田太郎 / 連載中 / ハイファンタジー〔ファンタジー〕 / [残酷描写]
+あらすじ本文 (300 文字)
+タグ: ...
+サイト名
+```
+
+警告マーカー (`[残酷描写]` `[R-15]` `[BL]` `[GL]` 等) は meta 行内 `<span class="markers">` で囲んで CSS `.markers { color: #b22; }` で赤文字強調。block レベル div で独立させる必要はない。
+
+#### 順序の選定根拠
+
+`作者 / 連載ステータス / ジャンル / 警告` の順序は以下の理屈:
+
+1. **作者**: 検索/識別の主軸。最初に出す
+2. **連載ステータス**: 「読み進められるか / 既に完結しているか」の判断材料 (連載中作品をすぐ読み始めたい人 vs 完結を待ってからまとめ読みする人で行動が変わる)
+3. **ジャンル**: 興味があるジャンルかの判断材料
+4. **警告マーカー**: センシティブ要素 (R-15 / BL / GL / 残酷描写) は最後に置いて視認性を上げる (`<span class="markers">` で赤文字、目に飛び込む)
+
 ### library mode と Fastify mode の分離
 
 `embedBaseUrl` / `embedConfig` は **Fastify モード専用**。library mode (`summaly()` 関数直接呼び出し) で `/embed` エンドポイントは存在しないため、これらの設定は無視される (= player.url は null になる)。これは既存の `parseFailureLog` / `inMemoryCache` 等と同じ運用モデル。

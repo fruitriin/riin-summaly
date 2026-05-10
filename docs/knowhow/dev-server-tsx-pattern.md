@@ -120,6 +120,109 @@ const port = (rawPort != null && /^\d+$/.test(rawPort)) ? parseInt(rawPort, 10) 
 
 dev サーバが LAN に意図せず公開されると、`SUMMALY_ALLOW_PRIVATE_IP=true` の状態で外部から SSRF レイテンシ計測等に使われるリスクがある。`??` ではなく明示的な空文字検証を入れる。
 
+## embed iframe を dev サーバで動作確認する 3 点セット
+
+本番 Fastify モード (`pnpm serve`) には `/embed` ルートが組み込まれているが、`pnpm dev` の dev サーバには **embed 機能が組み込まれていない**。`renderEmbed` 対応プラグイン (syosetu / kakuyomu 等) の動作確認をローカルで行うには、以下の **3 箇所同時修正** が必要。
+
+### (1) `embedBaseUrl` を `summaly()` の opts に渡す
+
+これがないと `Summary.player.url` が `null` になり、UI 上で「player.url が null」エラーになる:
+
+```typescript
+// dev/server.ts
+const embedBaseUrl = process.env.EMBED_PUBLIC_URL ?? `http://localhost:${port}`;
+
+const opts: SummalyOptions = {
+  // ...
+  embedBaseUrl,  // ← renderEmbed 対応プラグインが Summary.player.url を組み立てる
+};
+```
+
+`composePlayerUrl` (各プラグイン) は `embedBaseUrl == null || embedBaseUrl === ''` のとき `null` を返す設計なので、env で明示的に上書きしない限り `http://localhost:<port>/embed?url=...` が使われる。
+
+### (2) dev サーバに `/embed` ルートを最小再実装
+
+本番 (`src/index.ts` L904-) のロジックを dev 用に簡略化して登録する:
+
+```typescript
+// dev/server.ts
+import { plugins as builtinPlugins } from '../src/plugins/index.js';
+
+app.get<{ Querystring: { url?: string } }>('/embed', async (req, reply) => {
+  const rawUrl = req.query.url;
+  if (rawUrl == null || rawUrl === '') return reply.code(400).type('text/plain; charset=utf-8').send('url query required');
+  let parsedUrl: URL;
+  try { parsedUrl = new URL(rawUrl); } catch { return reply.code(400).send('invalid url'); }
+  if (parsedUrl.protocol !== 'https:') return reply.code(400).send('https only');
+  const plugin = builtinPlugins.find(p =>
+    p.name != null && p.renderEmbed != null && p.test(parsedUrl)
+  );
+  if (plugin?.renderEmbed == null) return reply.code(404).send('no plugin matched');
+  let result;
+  try { result = await plugin.renderEmbed(parsedUrl, {}); }
+  catch (err) { app.log.error({ err }, 'embed renderEmbed failed'); return reply.code(500).send('render failed'); }
+  if (/<script[\s>/]/i.test(result.body)) return reply.code(500).send('render failed');
+  reply.type('text/html; charset=utf-8');
+  // dev では frame-ancestors を localhost に限定 (本番は config 経由)
+  reply.header(
+    'Content-Security-Policy',
+    `default-src 'none'; img-src https:; style-src 'unsafe-inline'; frame-ancestors 'self' http://localhost:${port} http://127.0.0.1:${port}`,
+  );
+  reply.header('X-Content-Type-Options', 'nosniff');
+  reply.header('Referrer-Policy', 'no-referrer');
+  return result.body;
+});
+```
+
+本番との違い:
+- `[embed].allowedPlugins` 制限なし (dev はすべての renderEmbed 対応プラグインを試したい)
+- `frameAncestors` は `localhost:PORT` / `127.0.0.1:PORT` に固定 (本番 TOML 設定読み取りなし)
+- body 512KB cap は dev では省略 (本番のみ defense-in-depth)
+
+### (3) dev UI の player.url スキームチェックを localhost 許可に緩和
+
+`dev/public/app.js` で `^https:` のみ許可していると、`http://localhost:3000/embed?...` が弾かれる:
+
+```javascript
+// 旧: https のみ許可
+if (!/^https:\/\//i.test(player.url)) { /* スキップ */ }
+
+// 新: https または http://localhost / 127.0.0.1 を許可
+const isHttps = /^https:\/\//i.test(player.url);
+const isLocalDev = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(player.url);
+if (!isHttps && !isLocalDev) { /* スキップ */ }
+```
+
+### tsx HMR の落とし穴
+
+`pnpm dev` は内部で `tsx dev/server.ts` を実行する。tsx は変更を watch して再起動する HMR 機能を持つが、**古いプロセスが port を保持したまま新しいプロセスが起動失敗** することがある (`EADDRINUSE`)。
+
+#### 動作確認時の運用
+
+- **コードを変更したら必ず Ctrl+C → `pnpm dev`** で完全再起動 (HMR を信用しない)
+- 別 `PORT` で並行起動して新コードを試す: `PORT=3001 pnpm dev`
+- 検証後に `pkill -f "tsx dev/server.ts"` で確実に停止
+
+```bash
+# クリーン再起動
+pkill -f "tsx dev/server.ts" 2>/dev/null
+sleep 1
+PORT=3002 pnpm dev > /tmp/dev3002.log 2>&1 &
+sleep 4
+curl -s 'http://localhost:3002/api/summaly?url=<URL>' | python3 -m json.tool
+curl -s 'http://localhost:3002/embed?url=<URL>' | head -c 500
+```
+
+### CSP `frame-ancestors` の dev 設定
+
+本番では `[embed].frameAncestors = ["https://misskey.example.com"]` 等で明示制限するが、dev では UI 自身 (`localhost:PORT`) が iframe を埋め込むため:
+
+```
+frame-ancestors 'self' http://localhost:PORT http://127.0.0.1:PORT
+```
+
+`'self'` だけでも localhost:PORT は通るはずだが、`127.0.0.1` でアクセスする場合との互換性のため両方明示。本番の origin-only 厳格検証 (`embed-endpoint-design.md` のヘッダインジェクション防御) を dev で踏襲する必要はない (ローカル限定のため)。
+
 ## DOM レンダリングのサニタイズ
 
 ユーザーデータ（`SummalyResult` のフィールド）を DOM に流し込むときは:

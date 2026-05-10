@@ -217,34 +217,35 @@ function composeMarkers(work: KakuyomuWork): string {
 	return markers.length > 0 ? markers.map(m => `[${m}]`).join(' ') : '';
 }
 
-/** 連載状態 (RUNNING / COMPLETED) を日本語化。話数情報も含める */
+/**
+ * 連載状態 (RUNNING / COMPLETED) を日本語化。話数 + 文字数を括弧内にまとめる。
+ * 例: `連載中 (169話 / 282,850 文字)` / `完結 (169話 / 282,850 文字)` / `連載中` (count/char ともに不明)
+ */
 function composeStatusLabel(work: KakuyomuWork): string {
 	const status = asString(work.serialStatus);
 	const count = asNumber(work.publicEpisodeCount);
+	const charCount = asNumber(work.totalCharacterCount);
 	const base = status === 'COMPLETED' ? '完結' : status === 'RUNNING' ? '連載中' : '';
 	if (base === '') return '';
-	return count != null && count > 0 ? `${base} (${count}話)` : base;
+	const detailParts: string[] = [];
+	if (count != null && count > 0) detailParts.push(`${count}話`);
+	if (charCount != null && charCount > 0) detailParts.push(`${charCount.toLocaleString('ja-JP')}文字`);
+	return detailParts.length > 0 ? `${base} (${detailParts.join(' / ')})` : base;
 }
 
 /**
  * card style 用 description を組み立てる。
- * 例: `作者: 山田太郎 / 異世界恋愛 / 連載中 (169話) / [残酷描写] / あらすじ: ...`
+ * **あらすじだけ** を返す方針 (Misskey カード幅で description が複数要素入るとあらすじが
+ * 見切れるため、メタ情報は embed iframe に集約。syosetu プラグインと同じ設計)。
+ * 例: `あらすじ: 異世界に転生した主人公が、運命の少女と出会い世界を救うまでの…`
+ *
+ * `catchphrase` (キャッチコピー) → `introduction` (あらすじ本文) の順でフォールバック。
+ * 両方 null なら空文字を返す。
  */
-export function composeDescription(work: KakuyomuWork, authorName: string | null): string {
-	const parts: string[] = [];
-	if (authorName != null) parts.push(`作者: ${authorName}`);
-	const genre = asString(work.genre);
-	if (genre != null) parts.push(getKakuyomuGenreName(genre));
-	const status = composeStatusLabel(work);
-	if (status !== '') parts.push(status);
-	const markers = composeMarkers(work);
-	if (markers !== '') parts.push(markers);
-	// catchphrase が無い作品も多いので、catchphrase → introduction の順でフォールバック
+export function composeDescription(work: KakuyomuWork): string {
 	const summary = asString(work.catchphrase) ?? asString(work.introduction);
-	if (summary != null) {
-		parts.push(`あらすじ: ${clip(summary, STORY_CARD_CLIP_LENGTH)}`);
-	}
-	return parts.join(' / ');
+	if (summary == null) return '';
+	return `あらすじ: ${clip(summary, STORY_CARD_CLIP_LENGTH)}`;
 }
 
 /**
@@ -264,7 +265,17 @@ function formatTags(tags: unknown): string {
 
 /**
  * `/embed` 用の HTML を組み立てる。すべてのユーザー入力は `escapeHtml` を通す。
- * なろうの `composeEmbedHtml` を参考にした構造 (`<style>` ブロック + flex / 通常フロー、CSP 完全対応)。
+ *
+ * **レイアウト方針** (syosetu プラグインと統一、Mi 側プレイヤー iframe の縦幅=横幅依存
+ * + スクロール不可制約に対応): タイトル → meta 行 1 行統合 (作者 / 連載ステータス /
+ * ジャンル / 警告) → あらすじ → タグ → 最終話 → サイト名。重要要素を上に寄せて
+ * iframe 高さが固定でも肝心情報が見えるようにする。
+ *
+ * **連載ステータス**: `連載中 (169話 / 282,850 文字)` の形式で話数 + 文字数を内包し、
+ * 読み応え情報を 1 単位として表示。
+ *
+ * **警告マーカー**: `<span class="markers">[残酷描写] [性的描写] [暴力描写]</span>` で
+ * meta 行末尾に統合、CSS `.markers { color: #c33; }` で赤文字強調。
  */
 export function composeEmbedHtml(work: KakuyomuWork, authorName: string | null): string {
 	const titleSafe = escapeHtml(asString(work.title) ?? '(タイトル不明)');
@@ -275,12 +286,19 @@ export function composeEmbedHtml(work: KakuyomuWork, authorName: string | null):
 	const introductionRaw = asString(work.introduction) ?? '';
 	const introductionSafe = escapeHtml(clip(introductionRaw, STORY_EMBED_CLIP_LENGTH));
 	const tagsSafe = escapeHtml(formatTags(work.tagLabels));
-	const charCount = asNumber(work.totalCharacterCount);
-	const charCountSafe = charCount != null ? escapeHtml(`${charCount.toLocaleString('ja-JP')}文字`) : '';
 	const lastPub = asString(work.lastEpisodePublishedAt);
 	// ISO datetime から日付部分だけ取り出し (escape は不要、固定書式)
 	const lastPubSafe = lastPub != null ? escapeHtml(lastPub.slice(0, 10)) : '';
 	const sitenameSafe = escapeHtml(SITENAME);
+
+	// 1 行に「作者 / 連載ステータス / ジャンル / 警告」を統合 (syosetu と同順序)。
+	// 空項目は push 自体をスキップ (末尾余白 ` / ` が残らない)。
+	// 警告マーカーは `<span class="markers">` で囲んで CSS で赤文字強調。
+	const metaParts = [`作者: ${authorSafe}`];
+	if (statusSafe !== '') metaParts.push(statusSafe);
+	if (genreSafe !== '') metaParts.push(genreSafe);
+	if (markersSafe !== '') metaParts.push(`<span class="markers">${markersSafe}</span>`);
+	const metaLine = metaParts.join(' / ');
 
 	return `<!DOCTYPE html>
 <html lang="ja">
@@ -290,26 +308,18 @@ export function composeEmbedHtml(work: KakuyomuWork, authorName: string | null):
 <title>${titleSafe}</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif; background: #fafafa; color: #222; line-height: 1.5; padding: 12px; height: 100vh; overflow-y: auto; }
-.title { font-size: 1.1rem; font-weight: bold; margin-bottom: 4px; }
-.author { font-size: 0.85rem; color: #666; margin-bottom: 8px; }
-.meta { font-size: 0.8rem; color: #444; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
-.meta span { background: #eee; padding: 2px 6px; border-radius: 3px; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif; padding: 1rem; line-height: 1.5; color: #222; background: #fff; overflow-y: auto; }
+.title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.5rem; word-break: break-word; }
+.meta { font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; word-break: break-word; }
 .markers { color: #c33; }
-.story { font-size: 0.85rem; margin: 8px 0; padding: 8px; background: #fff; border-left: 3px solid #4a90e2; white-space: pre-wrap; }
-.tags { font-size: 0.75rem; color: #888; margin-top: 6px; }
-.sitename { font-size: 0.7rem; color: #aaa; margin-top: 6px; text-align: right; }
+.story { font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; color: #333; margin-bottom: 0.75rem; }
+.tags { font-size: 0.8rem; color: #888; margin-bottom: 0.25rem; word-break: break-word; }
+.sitename { font-size: 0.75rem; color: #888; margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid #eee; }
 </style>
 </head>
 <body>
 <div class="title">${titleSafe}</div>
-<div class="author">作者: ${authorSafe}</div>
-<div class="meta">
-<span>${genreSafe}</span>
-${statusSafe !== '' ? `<span>${statusSafe}</span>` : ''}
-${charCountSafe !== '' ? `<span>${charCountSafe}</span>` : ''}
-${markersSafe !== '' ? `<span class="markers">${markersSafe}</span>` : ''}
-</div>
+<div class="meta">${metaLine}</div>
 <div class="story">${introductionSafe}</div>
 ${tagsSafe !== '' ? `<div class="tags">タグ: ${tagsSafe}</div>` : ''}
 ${lastPubSafe !== '' ? `<div class="tags">最終話: ${lastPubSafe}</div>` : ''}
@@ -328,7 +338,7 @@ export function buildSummaryFromWork(
 	embedBaseUrl: string | undefined,
 ): Summary {
 	const title = asString(work.title) ?? '(タイトル不明)';
-	const description = composeDescription(work, authorName);
+	const description = composeDescription(work);
 	const playerUrl = composePlayerUrl(url, embedBaseUrl);
 	const thumbnail = asString(work.ogImageUrl) ?? SITE_LOGO;
 	const sensitive = asBoolean(work.isSexual) === true;

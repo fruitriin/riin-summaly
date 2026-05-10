@@ -147,47 +147,34 @@ describe('extractApolloState + findWorkInApolloState', () => {
 });
 
 describe('composeDescription', () => {
-	test('連載中 + 残酷描写 + 作者 + ジャンル + あらすじ', () => {
-		const desc = composeDescription(SAMPLE_WORK, '山田太郎');
-		expect(desc).toContain('作者: 山田太郎');
-		expect(desc).toContain('恋愛'); // LOVE_STORY → 恋愛 (公式ジャンルページ確認済)
-		expect(desc).toContain('連載中 (169話)');
-		expect(desc).toContain('[残酷描写]');
-		expect(desc).toContain('あらすじ:');
-	});
+	// **設計**: card description は **あらすじだけ** を返す方針 (Misskey カード幅で
+	// description が複数要素入るとあらすじが見切れるため、メタ情報は embed iframe に集約。
+	// syosetu プラグインと同じ設計)。
 
-	test('完結作品', () => {
-		const desc = composeDescription({ ...SAMPLE_WORK, serialStatus: 'COMPLETED' }, '山田');
-		expect(desc).toContain('完結');
+	test('あらすじだけが返る (作者・ジャンル・連載ステータス・マーカーは含めない)', () => {
+		const desc = composeDescription(SAMPLE_WORK);
+		expect(desc).toMatch(/^あらすじ: /);
+		expect(desc).toContain('結婚生活'); // catchphrase の冒頭
+		expect(desc).not.toContain('作者:');
 		expect(desc).not.toContain('連載中');
+		expect(desc).not.toContain('恋愛');
+		expect(desc).not.toContain('[残酷描写]');
 	});
 
 	test('catchphrase が無ければ introduction が使われる', () => {
-		const desc = composeDescription({ ...SAMPLE_WORK, catchphrase: null }, '山田');
-		expect(desc).toContain('あらすじ');
+		const desc = composeDescription({ ...SAMPLE_WORK, catchphrase: null });
+		expect(desc).toMatch(/^あらすじ: /);
 		expect(desc).toContain('これはあらすじです');
 	});
 
-	test('catchphrase があれば優先される', () => {
-		const desc = composeDescription(SAMPLE_WORK, '山田');
-		expect(desc).toContain('結婚生活'); // catchphrase の冒頭
+	test('catchphrase / introduction 両方無ければ空文字', () => {
+		const desc = composeDescription({ ...SAMPLE_WORK, catchphrase: null, introduction: null });
+		expect(desc).toBe('');
 	});
 
-	test('未知ジャンル enum は "その他" にフォールバック', () => {
-		const desc = composeDescription({ ...SAMPLE_WORK, genre: 'UNKNOWN_GENRE_2026' }, '山田');
-		expect(desc).toContain('その他');
-	});
-
-	test('author null でも壊れない', () => {
-		const desc = composeDescription(SAMPLE_WORK, null);
-		expect(desc).not.toContain('作者:');
-	});
-
-	test('複数マーカー (残酷 + 性的 + 暴力)', () => {
-		const desc = composeDescription({ ...SAMPLE_WORK, isCruel: true, isSexual: true, isViolent: true }, '山田');
-		expect(desc).toContain('[残酷描写]');
-		expect(desc).toContain('[性的描写]');
-		expect(desc).toContain('[暴力描写]');
+	test('あらすじが clip 80 文字で切れる', () => {
+		const desc = composeDescription({ ...SAMPLE_WORK, catchphrase: 'あ'.repeat(500), introduction: null });
+		expect(desc.length).toBeLessThan(150);
 	});
 });
 
@@ -246,6 +233,65 @@ describe('composeEmbedHtml', () => {
 		expect(html).toContain('山田');
 		expect(html).toContain('これはあらすじです');
 		expect(html).toContain('恋愛, 異世界, 戦争, 中佐, じゃじゃ馬');
+		// author の独立 div は撤廃 (meta 行先頭に統合)
+		expect(html).not.toContain('class="author"');
+	});
+
+	test('meta 行は「作者 / 連載ステータス / ジャンル / 警告」順 1 行統合', () => {
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田');
+		// SAMPLE_WORK: serialStatus=RUNNING, episodes=169, char=282850, genre=LOVE_STORY (恋愛), isCruel=true
+		// → `作者: 山田 / 連載中 (169話 / 282,850文字) / 恋愛 / <span>[残酷描写]</span>`
+		expect(html).toMatch(/<div class="meta">作者: 山田 \/ 連載中 \(169話 \/ 282,850文字\) \/ 恋愛 \/ <span class="markers">\[残酷描写\]<\/span><\/div>/);
+		// flex pill デザイン (`<span>genre</span>` 個別) は撤廃
+		expect(html).not.toMatch(/<span>恋愛<\/span>/);
+	});
+
+	test('連載ステータスに話数+文字数を内包 (読み応え情報を 1 単位に集約)', () => {
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田');
+		expect(html).toContain('連載中 (169話 / 282,850文字)');
+	});
+
+	test('完結作品で「完結 (...)」表記', () => {
+		const html = composeEmbedHtml({ ...SAMPLE_WORK, serialStatus: 'COMPLETED' }, '山田');
+		expect(html).toContain('完結 (169話 / 282,850文字)');
+		expect(html).not.toContain('連載中');
+	});
+
+	test('文字数が無い作品は status の括弧から省略', () => {
+		const html = composeEmbedHtml({ ...SAMPLE_WORK, totalCharacterCount: null }, '山田');
+		expect(html).toContain('連載中 (169話)');
+		expect(html).not.toContain('文字)');
+	});
+
+	test('話数も文字数も無い作品は base ステータスのみ', () => {
+		const html = composeEmbedHtml(
+			{ ...SAMPLE_WORK, publicEpisodeCount: null, totalCharacterCount: null },
+			'山田',
+		);
+		expect(html).toMatch(/\/ 連載中 \//);
+		expect(html).not.toMatch(/連載中 \(/);
+	});
+
+	test('複数マーカー (残酷 + 性的 + 暴力) は span 内にスペース区切りで連結', () => {
+		const html = composeEmbedHtml(
+			{ ...SAMPLE_WORK, isCruel: true, isSexual: true, isViolent: true },
+			'山田',
+		);
+		expect(html).toMatch(/<span class="markers">\[残酷描写\] \[性的描写\] \[暴力描写\]<\/span>/);
+	});
+
+	test('マーカー無しの作品は警告 span が省略される', () => {
+		const html = composeEmbedHtml(
+			{ ...SAMPLE_WORK, isCruel: false, isSexual: false, isViolent: false },
+			'山田',
+		);
+		expect(html).not.toContain('<span class="markers">');
+		expect(html).not.toContain('[残酷描写]');
+	});
+
+	test('CSS で警告 span を赤文字強調', () => {
+		const html = composeEmbedHtml(SAMPLE_WORK, '山田');
+		expect(html).toContain('.markers { color: #c33; }');
 	});
 
 	test('XSS: title に <script> を含めても escape される', () => {
