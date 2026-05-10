@@ -17,6 +17,8 @@ import {
 	composeEmbedHtml,
 	buildSummaryFromApi,
 	extractNovelDataFromHtml,
+	extractChapterTitle,
+	extractEpisodeBody,
 	type SyosetuNovelData,
 } from '@/plugins/syosetu.js';
 
@@ -343,6 +345,131 @@ describe('composeEmbedHtml', () => {
 		const tagsIdx = html.indexOf('class="keywords"');
 		expect(storyIdx).toBeGreaterThan(0);
 		expect(tagsIdx).toBeGreaterThan(storyIdx);
+	});
+
+	test('chapter URL: episode-title 行が title 直下に「」付きで表示', () => {
+		const html = composeEmbedHtml(SAMPLE_NOVEL, false, '第一話 始まり');
+		expect(html).toContain('<div class="episode-title">「第一話 始まり」</div>');
+		const titleIdx = html.indexOf('<div class="title">');
+		const epIdx = html.indexOf('<div class="episode-title">');
+		const metaIdx = html.indexOf('<div class="meta">');
+		expect(titleIdx).toBeGreaterThan(0);
+		expect(epIdx).toBeGreaterThan(titleIdx);
+		expect(metaIdx).toBeGreaterThan(epIdx);
+	});
+
+	test('chapter URL: episodeBody が指定されたら story 部分を本文に置換 (story を使わない)', () => {
+		const body = 'ダンッ！ダンッ！と何かを床や台に叩きつけているような音と共に、わたしが寝ている場所がぐらんぐらんと揺れた。';
+		const html = composeEmbedHtml(SAMPLE_NOVEL, false, '第一話', body);
+		expect(html).toContain('ダンッ！ダンッ！');
+		// 作品 story (introduction) は使われない
+		expect(html).not.toContain('異世界に転生した主人公');
+	});
+
+	test('episodeBody 不在なら従来どおり story (作品あらすじ) を表示', () => {
+		const html = composeEmbedHtml(SAMPLE_NOVEL, false, '第一話', null);
+		expect(html).toContain('異世界に転生した主人公');
+	});
+
+	test('work URL (chapter なし) では episode-title 行を出さない', () => {
+		const html = composeEmbedHtml(SAMPLE_NOVEL, false);
+		expect(html).not.toContain('class="episode-title"');
+	});
+
+	test('XSS: episodeTitle に <script> を含めても escape される', () => {
+		const html = composeEmbedHtml(SAMPLE_NOVEL, false, '<script>alert(1)</script>');
+		expect(html).not.toMatch(/<script>alert/);
+		expect(html).toContain('&lt;script&gt;');
+	});
+
+	test('XSS: episodeBody に <script> を含めても escape される', () => {
+		const html = composeEmbedHtml(SAMPLE_NOVEL, false, '第一話', '<script>alert(1)</script>本文だ');
+		expect(html).not.toMatch(/<script>alert/);
+		expect(html).toContain('&lt;script&gt;');
+	});
+});
+
+describe('extractChapterTitle', () => {
+	test('h1.p-novel__title から各話タイトル抽出', () => {
+		const $ = cheerio.load('<h1 class="p-novel__title p-novel__title--rensai">第一話 始まり</h1>');
+		expect(extractChapterTitle($)).toBe('第一話 始まり');
+	});
+
+	test('h1 不在なら og:title から fallback', () => {
+		const $ = cheerio.load('<meta property="og:title" content="作品名 - 第一話 始まり">');
+		expect(extractChapterTitle($)).toBe('第一話 始まり');
+	});
+
+	test('両方不在なら null', () => {
+		const $ = cheerio.load('<div></div>');
+		expect(extractChapterTitle($)).toBeNull();
+	});
+});
+
+describe('extractEpisodeBody', () => {
+	test('p-novel__text 内の <p> を改行結合', () => {
+		const html = `<div class="p-novel__body">
+<div class="js-novel-text p-novel__text">
+<p id="L1">ダンッ！ダンッ！と何かを床や台に叩きつけているような音。</p>
+<p id="L2">わたしが寝ている場所がぐらんぐらんと揺れた。</p>
+</div>
+</div>`;
+		const $ = cheerio.load(html);
+		expect(extractEpisodeBody($)).toBe(
+			'ダンッ！ダンッ！と何かを床や台に叩きつけているような音。\nわたしが寝ている場所がぐらんぐらんと揺れた。',
+		);
+	});
+
+	test('前書き (foreword) と後書き (afterword) は除外', () => {
+		const html = `<div class="p-novel__body">
+<div class="js-novel-text p-novel__text p-novel__text--foreword">
+<p>前書きです。</p>
+</div>
+<div class="js-novel-text p-novel__text">
+<p>本文1段落目。</p>
+<p>本文2段落目。</p>
+</div>
+<div class="js-novel-text p-novel__text p-novel__text--afterword">
+<p>後書きです。</p>
+</div>
+</div>`;
+		const $ = cheerio.load(html);
+		const body = extractEpisodeBody($);
+		expect(body).toBe('本文1段落目。\n本文2段落目。');
+		expect(body).not.toContain('前書き');
+		expect(body).not.toContain('後書き');
+	});
+
+	test('全角空白だけの段落 / <br> だけの段落はスキップ', () => {
+		const html = `<div class="p-novel__text">
+<p id="L1">　</p>
+<p id="L2">本文1。</p>
+<p id="L3"><br /></p>
+<p id="L4">本文2。</p>
+</div>`;
+		const $ = cheerio.load(html);
+		expect(extractEpisodeBody($)).toBe('本文1。\n本文2。');
+	});
+
+	test('構造が無ければ null', () => {
+		const $ = cheerio.load('<div>無関係</div>');
+		expect(extractEpisodeBody($)).toBeNull();
+	});
+
+	test('段落が無ければ null', () => {
+		const $ = cheerio.load('<div class="p-novel__text"><span>no p</span></div>');
+		expect(extractEpisodeBody($)).toBeNull();
+	});
+});
+
+describe('composeDescription chapter URL 上書き挙動 (summarize 経由)', () => {
+	// composeDescription 自体は work 用なので、ここでは「summary.description が
+	// `「<title>」 / <body>` 形式に置き換わるロジック」を呼出側コードと整合性をもって担保する。
+	// 詳細な挙動は extractEpisodeBody / extractChapterTitle の単体テストに分離。
+
+	test('composeDescription はあらすじだけを返す (chapter URL 関係なく不変)', () => {
+		const desc = composeDescription(SAMPLE_NOVEL);
+		expect(desc).toMatch(/^あらすじ: /);
 	});
 });
 

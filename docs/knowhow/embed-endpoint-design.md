@@ -206,6 +206,123 @@ meta 行を 3 行 (作者 / ジャンル / 連載状態) から 1 行統合に�
 
 `embedBaseUrl` / `embedConfig` は **Fastify モード専用**。library mode (`summaly()` 関数直接呼び出し) で `/embed` エンドポイントは存在しないため、これらの設定は無視される (= player.url は null になる)。これは既存の `parseFailureLog` / `inMemoryCache` 等と同じ運用モデル。
 
+### 各話 / chapter URL 対応パターン (連載コンテンツ)
+
+なろう (`syosetu`) / カクヨム (`kakuyomu`) のような **連載コンテンツの各話 URL** で「作品全体のあらすじ」ではなく **その話の本文先頭** をプレビューする設計パターン (両プラグインで実証)。
+
+#### 課題
+
+各話 URL (`/works/<wid>/episodes/<eid>` / `/<ncode>/<chapter>/`) のプレビューが「作品全体のあらすじ」だけだと、ユーザーは「この話を踏んだ意味」(その話の冒頭は何か) が分からない。あらすじは作品トップ URL のときだけ表示し、各話 URL では本文先頭を表示するのが自然。
+
+#### 実装パターン (3 + 1 step)
+
+##### Step 1: `extractEpisodeBody($)` 純関数を export
+
+サイト固有のセレクタで本文段落を抽出。前書き / 後書きクラス (`--foreword` / `--afterword` 等) は除外。
+
+```typescript
+// なろう (syosetu): <div class="js-novel-text p-novel__text"> 配下の <p>
+export function extractEpisodeBody($: CheerioAPI): string | null {
+  const $main = $('.p-novel__text:not(.p-novel__text--foreword):not(.p-novel__text--afterword)').first();
+  if ($main.length === 0) return null;
+  const paragraphs: string[] = [];
+  $main.find('p').each((_, p) => {
+    const text = $(p).text().trim();
+    if (text !== '') paragraphs.push(text); // 全角空白だけ / <br> だけの段落は除外
+  });
+  return paragraphs.length > 0 ? paragraphs.join('\n') : null;
+}
+
+// カクヨム (kakuyomu): <div class="widget-episodeBody js-episode-body"> 配下の <p>
+export function extractEpisodeBody($: CheerioAPI): string | null {
+  const $body = $('.widget-episodeBody').first().length > 0
+    ? $('.widget-episodeBody').first()
+    : $('.js-episode-body').first();
+  // ...同様に <p> を改行結合
+}
+```
+
+純関数として export することで、cheerio fixture を渡す単体テスト (構造変更時の早期検出) が容易。
+
+##### Step 2: `fetchEpisodeData(url, opts)` で title + body を 1 リクエストで取得
+
+旧: `fetchEpisodeTitle` (title だけ) → 新: `fetchEpisodeData` (`{ title, body }`) に置換。1 リクエストで両方抽出することで HTTP コスト + PV カウント影響を抑える。
+
+```typescript
+async function fetchEpisodeData(url: URL, opts?): Promise<{ title: string | null; body: string | null } | null> {
+  const res = await scpaping(url.href, { ...opts, userAgent: 'Twitterbot/1.0' });
+  const title = extractEpisodeTitle(res.$);
+  const body = extractEpisodeBody(res.$);
+  if (title === null && body === null) return null; // 両方失敗 = 構造変更検出
+  return { title, body };
+}
+```
+
+`Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (作品トップ取得と同 UA、bot allowlist 仕様を尊重)。
+
+##### Step 3: `composeDescription` / `composeEmbedHtml` 拡張
+
+card description は **本文 80 文字 clip** を「あらすじ」ラベル無しで表示 (本文は「あらすじ」ではないため誤認を避ける):
+
+```typescript
+export function composeDescription(work, episodeTitle = null, episodeBody = null): string {
+  const hasEpisodeTitle = episodeTitle != null && episodeTitle !== '';
+  const titlePart = hasEpisodeTitle ? `「${episodeTitle}」` : '';
+
+  // episode body 優先 (各話 URL でユーザーが見たいのは「その話の冒頭」)
+  if (hasEpisodeTitle && episodeBody != null && episodeBody !== '') {
+    return `${titlePart} / ${clip(episodeBody, 80)}`;
+  }
+  // fallback: 作品全体のあらすじ (kakuyomu: catchphrase / syosetu: novel.story)
+  // ...
+}
+```
+
+embed HTML は title 直下に `<div class="episode-title">「<title>」</div>` を太字で挿入し、`<div class="story">` には episodeBody (取れたら) / 作品 introduction (fallback) を流す:
+
+```typescript
+// CSS
+.title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.25rem; }
+.episode-title { font-size: 0.95rem; font-weight: bold; color: #4a4a4a; margin-bottom: 0.5rem; }
+
+// HTML 構造
+<div class="title">${workTitleSafe}</div>
+${episodeTitleSafe !== '' ? `<div class="episode-title">「${episodeTitleSafe}」</div>` : ''}
+<div class="meta">${metaLine}</div>
+<div class="story">${episodeBody ?? workIntroduction}</div>  // clip 300 文字
+```
+
+##### Step 4 (重要): `summarize` と `renderEmbed` 両方で並列取得
+
+`summarize` だけだと card description は更新されるが embed HTML は古い work data 経由のままになる。`renderEmbed` でも同じ `fetchEpisodeData` を Promise.all で並列実行:
+
+```typescript
+export async function renderEmbed(url, opts) {
+  const extracted = extractWorkAndEpisode(url);
+  const [workData, episodeData] = await Promise.all([
+    fetchWorkData(workTopUrl, opts),
+    extracted.episodeId != null ? fetchEpisodeData(url, opts) : Promise.resolve(null),
+  ]);
+  return { body: composeEmbedHtml(workData.work, ..., episodeData?.title ?? null, episodeData?.body ?? null), ... };
+}
+```
+
+#### 落とし穴
+
+- **本文 fallback の漏れ**: episodeBody 不在時に `work.introduction` / `work.story` に fallback しないと、HTML 構造変更で全プレビューが空文字になる
+- **空段落の判定**: 全角空白だけ `<p>U+3000</p>` / `<br>` だけの段落は trim() で空判定してスキップ。これがないと先頭が改行だらけになる
+- **前書き / 後書きの除外**: `--foreword` / `--afterword` クラスは「本文」ではない (作者の挨拶 / 補足)。`<p>` を全部結合すると先頭にこれらが混入する。`:not()` セレクタ or class 文字列マッチで除外
+- **コメント内の全角空白**: ESLint `no-irregular-whitespace` がコメント内の `U+3000` を弾く。文字列リテラル内では許容されるが、JSDoc 等のコメントには `U+3000` の代わりに `<p>U+3000</p>` のような表記で書く
+- **PV カウント配慮**: 本文を取りに行くため、`Twitterbot/1.0` 等の bot UA で叩いて PV カウント除外を狙う。サイト側の bot allowlist 仕様を事前に `curl -A '<UA>' -I '<URL>'` で確認
+- **倫理判断**: 本文全文ではなく 80〜300 文字 clip の preview 用途。ユーザーは preview を見て本文を読みに行く動機を持つため、サイトへの誘導効果はむしろ高まる方向
+
+#### 実証
+
+- syosetu (n4830bu/2/): 「新しい生活」 / ダンッ！ダンッ！と何かを床や台に...
+- kakuyomu (works/.../episodes/...): 「序章」 / 後宮の下っ端宮女の雨妹は、今日も元気に掃除に勤しんでいる。
+
+各話と作品トップで embed UI 構造が自動的に切り替わる (episode-title 行の有無、story 内容)。
+
 ## 拡張時の踏み台
 
 新しいサイトに renderEmbed を実装するとき:

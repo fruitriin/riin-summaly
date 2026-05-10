@@ -216,8 +216,14 @@ function formatKeywords(raw: string): string {
  * `display: grid` は使わず flex / 通常フローで PC / モバイル両対応 (古いブラウザ耐性)。
  * `iframe` 内で `overflow-y: auto` を効かせて長いあらすじをスクロールさせる。
  */
-export function composeEmbedHtml(novel: SyosetuNovelData, isR18: boolean): string {
+export function composeEmbedHtml(
+	novel: SyosetuNovelData,
+	isR18: boolean,
+	episodeTitle: string | null = null,
+	episodeBody: string | null = null,
+): string {
 	const titleSafe = escapeHtml(asString(novel.title) ?? '(タイトル不明)');
+	const episodeTitleSafe = episodeTitle != null && episodeTitle !== '' ? escapeHtml(episodeTitle) : '';
 	const writerSafe = escapeHtml(asString(novel.writer) ?? '(作者不明)');
 	const bigGenreId = asNumber(novel.biggenre);
 	const genreId = asNumber(novel.genre);
@@ -240,7 +246,9 @@ export function composeEmbedHtml(novel: SyosetuNovelData, isR18: boolean): strin
 	const sitenameSafe = escapeHtml(isR18 ? SITENAME_R18 : SITENAME_REGULAR);
 	const keywordRaw = asString(novel.keyword) ?? '';
 	const keywordsSafe = escapeHtml(formatKeywords(keywordRaw));
-	const storyRaw = asString(novel.story) ?? '';
+	// **本文 vs あらすじの優先**: chapter URL で本文が取れた場合は本文 (1〜N 段落) を表示、
+	// 無ければ作品全体の story (introduction) を表示。どちらも escape + 300 文字 clip で同じ扱い。
+	const storyRaw = (episodeBody != null && episodeBody !== '') ? episodeBody : (asString(novel.story) ?? '');
 	const storySafe = escapeHtml(clip(storyRaw, STORY_EMBED_CLIP_LENGTH));
 
 	// 1 行に「作者 / 連載ステータス / ジャンル / 警告」を統合。Mi 側プレイヤーが
@@ -264,7 +272,8 @@ export function composeEmbedHtml(novel: SyosetuNovelData, isR18: boolean): strin
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif; padding: 1rem; line-height: 1.5; color: #222; background: #fff; overflow-y: auto; }
-.title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.5rem; word-break: break-word; }
+.title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.25rem; word-break: break-word; }
+.episode-title { font-size: 0.95rem; font-weight: bold; color: #4a4a4a; margin-bottom: 0.5rem; word-break: break-word; }
 .meta { font-size: 0.85rem; color: #555; margin-bottom: 0.5rem; word-break: break-word; }
 .markers { color: #b22; }
 .story { font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; color: #333; margin-bottom: 0.75rem; }
@@ -274,6 +283,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino San
 </head>
 <body>
 <div class="title">${titleSafe}</div>
+${episodeTitleSafe !== '' ? `<div class="episode-title">「${episodeTitleSafe}」</div>` : ''}
 <div class="meta">${metaLine}</div>
 <div class="story">${storySafe}</div>
 ${keywordsSafe !== '' ? `<div class="keywords">タグ: ${keywordsSafe}</div>` : ''}
@@ -396,26 +406,66 @@ async function fetchNovelFromHtml(url: URL, opts?: GeneralScrapingOptions): Prom
 }
 
 /**
- * chapter URL (`/<ncode>/<num>/`) のページから「各話タイトル」を抽出する。
+ * chapter ページの HTML から「各話タイトル」を抽出する pure 関数 (export してテスト容易化)。
  *
  * - 1st choice: `<h1 class="p-novel__title">` (chapter ページではここが各話タイトル)。
  *   `p-novel__title--rensai` 修飾が付くがクラスセレクタは含む方向で動く。
  * - 2nd choice: `og:title` は `"WorkTitle - ChapterTitle"` 結合形式。最初の ` - ` で split する
  *   (作品タイトルに ` - ` が含まれる場合は誤抽出するが、h1 が取れている前提で fallback としてのみ使用)。
- *
- * 戻り値: 各話タイトル / 取得失敗時 null。
  */
-export async function fetchChapterTitle(url: URL, opts?: GeneralScrapingOptions): Promise<string | null> {
-	const res = await scpaping(url.href, { ...opts, userAgent: 'Twitterbot/1.0' });
-	const fromH1 = res.$('h1.p-novel__title').first().text().trim();
+export function extractChapterTitle($: CheerioAPI): string | null {
+	const fromH1 = $('h1.p-novel__title').first().text().trim();
 	if (fromH1 !== '') return fromH1;
-	const ogTitle = res.$('meta[property="og:title"]').attr('content')?.trim() ?? '';
+	const ogTitle = $('meta[property="og:title"]').attr('content')?.trim() ?? '';
 	const sepIdx = ogTitle.indexOf(' - ');
 	if (sepIdx >= 0) {
 		const right = ogTitle.slice(sepIdx + 3).trim();
 		return right !== '' ? right : null;
 	}
 	return null;
+}
+
+/**
+ * chapter ページの HTML から各話本文の冒頭テキストを抽出する pure 関数 (export してテスト容易化)。
+ *
+ * 構造: `<div class="p-novel__body">` → `<div class="js-novel-text p-novel__text">` (本文)
+ *   + `<div class="js-novel-text p-novel__text p-novel__text--foreword">` (前書き、除外)
+ *   + `<div class="js-novel-text p-novel__text p-novel__text--afterword">` (後書き、除外)
+ *
+ * **本文** (前書き / 後書き以外の `.p-novel__text`) の `<p>` を改行結合する。空段落
+ * (全角空白だけ `<p>U+3000</p>` / `<br>` だけ等) は trim() で空判定してスキップ。
+ *
+ * 失敗時 (構造変更 / 段落不在) は null。
+ */
+export function extractEpisodeBody($: CheerioAPI): string | null {
+	const $main = $('.p-novel__text:not(.p-novel__text--foreword):not(.p-novel__text--afterword)').first();
+	if ($main.length === 0) return null;
+	const paragraphs: string[] = [];
+	$main.find('p').each((_, p) => {
+		const text = $(p).text().trim();
+		if (text !== '') paragraphs.push(text);
+	});
+	if (paragraphs.length === 0) return null;
+	return paragraphs.join('\n');
+}
+
+/**
+ * chapter URL (`/<ncode>/<num>/`) のページから `{ title, body }` を抽出する。
+ * - title: 各話タイトル (h1 → og:title fallback)
+ * - body: 各話本文の冒頭 (前書き / 後書き除く `.p-novel__text` の `<p>` を改行結合)
+ *
+ * `Twitterbot/1.0` UA で叩いて PV カウント除外を狙う (作品トップ取得と同 UA)。
+ * 両方 null の場合は戻り値全体を null として返す (構造変更の検出用)。
+ */
+export async function fetchChapterData(
+	url: URL,
+	opts?: GeneralScrapingOptions,
+): Promise<{ title: string | null; body: string | null } | null> {
+	const res = await scpaping(url.href, { ...opts, userAgent: 'Twitterbot/1.0' });
+	const title = extractChapterTitle(res.$);
+	const body = extractEpisodeBody(res.$);
+	if (title === null && body === null) return null;
+	return { title, body };
 }
 
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
@@ -427,11 +477,11 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	const apiUrl = buildApiUrl(extracted.ncode, extracted.isR18);
 
 	// **chapter URL では API + chapter HTML を並列取得** して 1 round-trip 分節約する。
-	// chapter 番号が無い (= 作品トップ URL) ときは chapterTitle は null のままで従来通り。
-	const [body, chapterTitle] = await Promise.all([
+	// chapter 番号が無い (= 作品トップ URL) ときは chapterData は null のままで従来通り。
+	const [body, chapterData] = await Promise.all([
 		getJson(apiUrl, undefined, opts),
 		extracted.chapter != null
-			? fetchChapterTitle(resolvedUrl, opts).catch(() => null)
+			? fetchChapterData(resolvedUrl, opts).catch(() => null)
 			: Promise.resolve(null),
 	]);
 
@@ -463,12 +513,25 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 		}
 	}
 
-	// **chapter URL では description を「各話タイトル」に上書き**。card preview で
-	// 「タイトル=作品名 / Description=各話タイトル」と並べて表示することで、各話 URL がどの作品の
-	// どの話かが一目で分かるようにする。chapter HTML 取得失敗 (null) のときは作品トップと同じ
-	// description (composeDescription の作品メタ) のままにする。
-	if (chapterTitle !== null) {
-		summary.description = chapterTitle;
+	// **chapter URL では description を「各話タイトル + 本文先頭」に上書き** (kakuyomu と同パターン)。
+	// - title + body 両方 → `「<title>」 / <body 80 文字 clip>` (本文先頭をあらすじ代わりに)
+	// - title だけ取れた → `「<title>」` (本文取得失敗、構造変更時)
+	// - body だけ取れた (h1 / og:title 不在) → `<body 80 文字 clip>` (タイトル無し)
+	// - 両方 null → API 由来の作品あらすじを維持 (`buildSummaryFromApi` の composeDescription 結果)
+	//
+	// **escape 不要の理由**: `summary.description` はプレーンテキストとして Misskey クライアント側で
+	// textContent / v-text 相当で表示されるため、HTML として解釈されない。embed HTML には別途
+	// `composeEmbedHtml` で escapeHtml を通すため XSS 経路にもならない。
+	if (chapterData !== null) {
+		const titlePart = chapterData.title != null ? `「${chapterData.title}」` : '';
+		const bodyPart = chapterData.body != null ? clip(chapterData.body, STORY_CARD_CLIP_LENGTH) : '';
+		if (titlePart !== '' && bodyPart !== '') {
+			summary.description = `${titlePart} / ${bodyPart}`;
+		} else if (titlePart !== '') {
+			summary.description = titlePart;
+		} else if (bodyPart !== '') {
+			summary.description = bodyPart;
+		}
 	}
 
 	return summary;
@@ -479,14 +542,29 @@ export async function renderEmbed(url: URL, opts?: GeneralScrapingOptions): Prom
 	if (extracted === null) {
 		throw new Error('syosetu renderEmbed: invalid URL (test() を通った URL のはずだが ncode が抽出できない)');
 	}
+	const resolvedUrl = unwrapAgeAuthUrl(url) ?? url;
 	const apiUrl = buildApiUrl(extracted.ncode, extracted.isR18);
-	const body = await getJson(apiUrl, undefined, opts);
+
+	// chapter URL なら各話タイトル + 本文も並列取得して embed HTML に反映する。
+	// summarize() と同じ構造 (API + chapter HTML 並列、catch で失敗を nullable に)。
+	const [body, chapterData] = await Promise.all([
+		getJson(apiUrl, undefined, opts),
+		extracted.chapter != null
+			? fetchChapterData(resolvedUrl, opts).catch(() => null)
+			: Promise.resolve(null),
+	]);
+
 	const novel = parseNovelApiResponse(body);
 	if (novel === null) {
 		// allcount=0 = 作品が見つからない / 削除済み。renderEmbed の null 返却は型契約上禁止
 		// なので throw して /embed 側で 500 エラーに変換させる。
 		throw new Error('syosetu renderEmbed: 作品が見つかりません (allcount=0)');
 	}
-	const html = composeEmbedHtml(novel, extracted.isR18);
+	const html = composeEmbedHtml(
+		novel,
+		extracted.isR18,
+		chapterData?.title ?? null,
+		chapterData?.body ?? null,
+	);
 	return { body: html, width: 3, height: 2 };
 }
