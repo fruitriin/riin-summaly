@@ -167,9 +167,9 @@ phase15.6 で **NSFW 系プラグイン (`dmm` / `dlsite` / `iwara` / `komiflo` 
 
 **判断基準** (phase15.6 で再整理): **共通 helper `applyNsfwCardSuppression` は `summary.sensitive === true` のときのみ抑制を発火させる設計** のため、プラグイン側はサイト固有の sensitive 判定ロジック (path-based / host-based / 固定) をそのまま維持しつつ、最終 summary に helper を 1 行通すだけで二層構造に乗れる。
 
-- **常時 NSFW** (例: `dmm` / `komiflo` / `nijie`) → プラグイン側で常に `sensitive: true` 強制 → 全件抑制
+- **常時 NSFW** (例: `dmm` / `iwara` / `komiflo` / `nijie`) → プラグイン側で常に `sensitive: true` 強制 → 全件抑制
 - **path-based 判定** (例: `dlsite` の `/maniax/` 抑制 / `/comic/` 素通し) → `SAFE_PATH_PATTERN` 等で sensitive を分岐 → アダルト経路のみ抑制
-- **host-based 判定** (例: `iwara` の `ecchi.` 抑制 / `www.` 素通し) → host で sensitive を分岐 → R-18 サブドメインのみ抑制
+- **判定の変更履歴**: 初期は `iwara` を host-based (`ecchi.` のみ抑制) としていたが、`www.iwara.tv` 自体が MMD/3D アニメで R-15〜R-18 混在のため全件抑制に変更 (phase15.6 followup 2026-05-11)。サイト全体の NSFW 比率が高い場合は host 分岐より「常時抑制」のほうが運用上安全
 
 **実装の注意**:
 - 共通 helper を使う場合 `src/utils/nsfw-card-suppress.ts` (`applyNsfwCardSuppression`) と `src/utils/nsfw-embed-html.ts` (`composeNsfwEmbedHtml`) を import して `summarize` 末尾 + `renderEmbed` 内で使うだけで OK

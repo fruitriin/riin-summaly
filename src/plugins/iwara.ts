@@ -14,10 +14,10 @@ export function test(url: URL): boolean {
 }
 
 /**
- * **NSFW 二層構造** (phase15.6): `ecchi.iwara.tv` 着地時 sensitive=true となり、
- * `applyNsfwCardSuppression` が card preview を抑制 + embed iframe (`renderEmbed`) で
- * フル表示する経路に切り替わる。`www.iwara.tv` は sensitive=false のまま素通しで、
- * 通常の OGP プレビューが出る (既存挙動と同じ)。
+ * **NSFW 二層構造** (phase15.6 → followup 2026-05-11): iwara.tv は `www.` / `ecchi.` 問わず
+ * MMD/3D モデルアニメで R-15〜R-18 が混在する動画共有サイトのため、**全件 sensitive=true 強制**
+ * に変更 (旧仕様: `ecchi.` のみ sensitive)。`applyNsfwCardSuppression` が常に発火して
+ * card preview を抑制 + embed iframe (`renderEmbed`) でフル表示する経路に切り替わる。
  */
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
 	const summary = await summarizeRaw(url, opts);
@@ -86,10 +86,9 @@ export function enrichWithIwara(
 		}
 	}
 
-	// `ecchi.iwara.tv` サブドメインに着地した場合 sensitive
-	if (landingUrl.hostname === 'ecchi.iwara.tv') {
-		summary.sensitive = true;
-	}
+	// iwara.tv は MMD/3D モデルアニメで R-15〜R-18 が混在するサイトのため、
+	// `www.` / `ecchi.` 問わず全件 sensitive=true 強制 (phase15.6 followup 2026-05-11)
+	summary.sensitive = true;
 
 	return summary;
 }

@@ -3351,13 +3351,17 @@ describe('local tests', () => {
 				expect(result.thumbnail).toBe('https://www.iwara.tv/img/thumb.jpg');
 			});
 
-			test('ecchi.iwara.tv ホストで sensitive', async () => {
+			test('iwara.tv は host 問わず全件 sensitive=true (phase15.6 followup 2026-05-11)', async () => {
+				// MMD/3D モデルアニメで R-15〜R-18 が混在するサイトのため、www. / ecchi. 問わず全件 NSFW 扱い
 				const cheerio = await import('cheerio');
 				const { enrichWithIwara } = await import('@/plugins/iwara.js');
 				const $ = cheerio.load('<html></html>');
-				const summary = baseSummary();
-				const result = enrichWithIwara(summary, $, new URL('https://ecchi.iwara.tv/videos/abc'));
-				expect(result.sensitive).toBe(true);
+
+				const wwwResult = enrichWithIwara(baseSummary(), $, new URL('https://www.iwara.tv/videos/abc'));
+				expect(wwwResult.sensitive).toBe(true);
+
+				const ecchiResult = enrichWithIwara(baseSummary(), $, new URL('https://ecchi.iwara.tv/videos/abc'));
+				expect(ecchiResult.sensitive).toBe(true);
 			});
 
 			test('description が title と一致する場合は採用しない', async () => {

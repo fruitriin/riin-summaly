@@ -191,8 +191,8 @@ interface SummalyPlugin {
 | 取得方法 | `scpaping → parseGeneral → enrichWithIwara` パターン |
 | description 補完 | `parseGeneral` が `description: null` のとき `.field-type-text-with-summary` の `.text()` を 500 文字 `clip`（cheerio の `.text()` は HTML エンティティをデコード済みなので `decodeHtml` は重ねない） |
 | thumbnail 補完 | `#video-player[poster]` または `.field-name-field-images a:first[href]` を `new URL(.., landingUrl)` で解決 |
-| sensitive 判定 | `landingUrl.hostname === 'ecchi.iwara.tv'` のとき `true` |
-| NSFW 二層構造 (phase15.6) | sensitive=true (`ecchi.` 着地) のときのみ card 抑制 + `renderEmbed` フル表示。`www.iwara.tv` は素通し (既存挙動維持) |
+| sensitive 判定 | `www.` / `ecchi.` 問わず**全件 `true` 強制** (phase15.6 followup 2026-05-11、MMD/3D モデルアニメで R-15〜R-18 が混在するサイトのため全件 NSFW 扱い) |
+| NSFW 二層構造 (phase15.6) | 全件 sensitive=true なので常に card 抑制 + `renderEmbed` フル表示が発火 |
 | ヘルパ export | `enrichWithIwara(summary, $, landingUrl): Summary` |
 
 ### komiflo

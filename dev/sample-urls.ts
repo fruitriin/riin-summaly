@@ -140,7 +140,7 @@ export const sampleGroups: SampleGroup[] = [
 		description: 'NSFW 対応プラグイン（sensitive 判定 + card 抑制 + embed フル表示の二層構造、phase15.6 で 5 プラグイン共通化）',
 		urls: [
 			{ label: 'DLsite work (sensitive 経路)', url: 'https://www.dlsite.com/app/work/=/product_id/RJ01355633.html', note: 'phase15.6 — /app/ は sensitive=true → card 抑制 + embed フル表示。/comic/ は素通し' },
-			{ label: 'iwara video', url: 'https://www.iwara.tv/video/example', note: '差し替え用テンプレ。www. は sensitive=false で素通し、ecchi. なら抑制発火' },
+			{ label: 'iwara video', url: 'https://www.iwara.tv/video/example', note: '差し替え用テンプレ。phase15.6 followup — www. / ecchi. 問わず全件 sensitive=true 強制で抑制発火' },
 			{ label: 'komiflo comic', url: 'https://komiflo.com/comics/123456', note: '差し替え用テンプレ。phase15.6 — API 取得成功で card 抑制 + embed フル表示' },
 			{ label: 'nijie view', url: 'https://nijie.info/view.php?id=123456', note: '差し替え用テンプレ。phase15.6 — /view.php 着地で card 抑制 + embed フル表示' },
 			{ label: 'FANZA video (dmm)', url: 'https://video.dmm.co.jp/av/content/?id=ailb00009', note: 'phase15.3 → 15.5 → 15.6 — card は title 「【FANZA】...」 / description 「【R-18】 内容を伏せています」 / thumbnail null。embed iframe で作品サムネ + あらすじフル表示' },
