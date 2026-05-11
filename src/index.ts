@@ -290,7 +290,7 @@ export type SummalyOptions = {
 	 * **Fastify モードの自身が公開されている URL ベース**。
 	 * 例: `https://summaly.example.com`
 	 *
-	 * 設定すると、`renderEmbed` を実装したプラグイン (現在は `syosetu` のみ) が
+	 * 設定すると、`renderEmbed` を実装したプラグイン (syosetu / kakuyomu / dlsite / iwara / komiflo / nijie / dmm 等) が
 	 * Summary の `player.url` を `<embedBaseUrl>/embed?url=<encoded>` として組み立てる。
 	 * 未設定の場合は player は無効化 (library mode のデフォルト挙動と同じ)。
 	 *

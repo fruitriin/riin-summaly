@@ -150,10 +150,10 @@ riin-summaly の独自軸として、URL 取得を **4 種類の経路** に整�
 | `youtube` | `(www\|m).youtube.com/{watch,v,playlist,shorts}` / `youtu.be` | 公式 API | oEmbed エンドポイント直叩きで 1 リクエスト |
 | `spotify` | `open.spotify.com` | 公式 API | oEmbed エンドポイント直叩き |
 | `twitter` | `(twitter\|x).com/<user>/status/<id>` | 内部 CDN (非公式) | `cdn.syndication.twimg.com` から JSON 取得して title/description/thumbnail を返す。複数画像は `medias[]`、player は null（Misskey の「ポストを展開」と重複しないため）。**X 側仕様変更で壊れうるため要メンテ** |
-| `dlsite` | `www.dlsite.com` | Summaly UA | `/announce/` ↔ `/work/` の 404 リトライ + パス分類で sensitive 判定 |
-| `iwara` | `(www\|ecchi).iwara.tv` | Summaly UA | description / thumbnail を DOM から補完、`ecchi.` ホストで sensitive |
-| `komiflo` | `komiflo.com/comics/<id>` | Summaly UA | thumbnail フォールバック時に `api.komiflo.com` から取得 + sensitive |
-| `nijie` | `nijie.info/view.php` | Summaly UA | JSON-LD `ImageObject` から description / thumbnail を補完 + sensitive |
+| `dlsite` | `www.dlsite.com` | Summaly UA | `/announce/` ↔ `/work/` の 404 リトライ + パス分類で sensitive 判定。**sensitive 時 card 抑制 + embed フル表示** (`/maniax/` 等のアダルト経路。`/comic/` 等のセーフパスは素通し、phase15.6) |
+| `iwara` | `(www\|ecchi).iwara.tv` | Summaly UA | description / thumbnail を DOM から補完。**sensitive 時 (`ecchi.` 着地) card 抑制 + embed フル表示** (`www.` 経路は素通し、phase15.6) |
+| `komiflo` | `komiflo.com/comics/<id>` | Summaly UA | thumbnail フォールバック時に `api.komiflo.com` から取得 + sensitive。**card 抑制 + embed フル表示** (phase15.6) |
+| `nijie` | `nijie.info/view.php` | Summaly UA | JSON-LD `ImageObject` から description / thumbnail を補完 + sensitive。**card 抑制 + embed フル表示** (phase15.6) |
 | `npmjs` | `(www.)?npmjs.com/package/...` | 公式 API | Cloudflare 配下の HTML を諦め `registry.npmjs.org` を直叩き、`dist-tags.latest` から title / description を組み立てる |
 | `nintendo-store` | `store(-<TLD>)?.nintendo.com` | SNS Bot UA | Akamai JS challenge 回避: UA を `facebookexternalhit/1.1` に固定して OGP 取得 (Nintendo が SNS bot UA を allowlist している事実を利用) |
 | `yodobashi` | `(www.)?yodobashi.com` | curl_cffi | TLS/HTTP2 層で bot 切断される厳しい WAF。経路学習キャッシュ + bootstrap で curl_cffi (Chrome JA3 偽装) 直行 |

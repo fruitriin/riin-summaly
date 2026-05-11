@@ -1360,9 +1360,9 @@ describe('local tests', () => {
 				expect(summary!.thumbnail).toBeNull();
 			});
 
-			test('dmm プラグインの composeEmbedHtml() は基本入力で作品情報をフル表示する (phase15.5)', async () => {
-				const dmm = await import('@/plugins/dmm.js');
-				const html = dmm.composeEmbedHtml({
+			test('composeNsfwEmbedHtml() は基本入力で作品情報をフル表示する (phase15.6 共通 helper)', async () => {
+				const { composeNsfwEmbedHtml } = await import('@/utils/nsfw-embed-html.js');
+				const html = composeNsfwEmbedHtml({
 					title: '家出娘、拾いました。',
 					description: 'ある日、家出した女の子を拾った。',
 					thumbnail: 'https://example.com/thumb.jpg',
@@ -1375,9 +1375,9 @@ describe('local tests', () => {
 				expect(html).toContain('FANZA');
 			});
 
-			test('dmm プラグインの composeEmbedHtml() は HTML 特殊文字を escape する (phase15.5、XSS 防御)', async () => {
-				const dmm = await import('@/plugins/dmm.js');
-				const html = dmm.composeEmbedHtml({
+			test('composeNsfwEmbedHtml() は HTML 特殊文字を escape する (phase15.6 共通 helper、XSS 防御)', async () => {
+				const { composeNsfwEmbedHtml } = await import('@/utils/nsfw-embed-html.js');
+				const html = composeNsfwEmbedHtml({
 					title: '<script>alert(1)</script>',
 					description: '<img onerror=alert(1)>',
 					thumbnail: null,
@@ -1393,24 +1393,92 @@ describe('local tests', () => {
 				expect(html).toContain('&lt;svg');
 			});
 
-			test('dmm プラグインの composeEmbedHtml() は thumbnail が non-https / null なら <img> を出さない (phase15.5)', async () => {
-				const dmm = await import('@/plugins/dmm.js');
+			test('composeNsfwEmbedHtml() は thumbnail が non-https / null なら <img> を出さない (phase15.6 共通 helper)', async () => {
+				const { composeNsfwEmbedHtml } = await import('@/utils/nsfw-embed-html.js');
 
-				const htmlNull = dmm.composeEmbedHtml({
+				const htmlNull = composeNsfwEmbedHtml({
 					title: 't', description: 'd', thumbnail: null, sitename: 's',
 				});
 				expect(htmlNull).not.toContain('<img');
 
-				const htmlJs = dmm.composeEmbedHtml({
+				const htmlJs = composeNsfwEmbedHtml({
 					title: 't', description: 'd', thumbnail: 'javascript:alert(1)', sitename: 's',
 				});
 				expect(htmlJs).not.toContain('<img');
 
-				const htmlHttp = dmm.composeEmbedHtml({
+				const htmlHttp = composeNsfwEmbedHtml({
 					title: 't', description: 'd', thumbnail: 'http://example.com/i.jpg', sitename: 's',
 				});
 				// CSP `img-src https:` 二重防御として http は弾く
 				expect(htmlHttp).not.toContain('<img');
+			});
+
+			test('applyNsfwCardSuppression() は sensitive=true で title prefix + R-18 description + thumbnail null に変換 (phase15.6 共通 helper)', async () => {
+				const { applyNsfwCardSuppression } = await import('@/utils/nsfw-card-suppress.js');
+				const result = applyNsfwCardSuppression({
+					title: '原タイトル',
+					icon: 'https://example.com/favicon.png',
+					description: '原あらすじ',
+					thumbnail: 'https://example.com/thumb.jpg',
+					sitename: 'FANZA',
+					sensitive: true,
+					player: { url: null, width: null, height: null, allow: [] },
+					activityPub: null,
+					fediverseCreator: null,
+				}, new URL('https://video.dmm.co.jp/av/content/?id=x'), 'https://embed.example');
+
+				expect(result.title).toBe('【FANZA】原タイトル');
+				expect(result.description).toBe('【R-18】 内容を伏せています');
+				expect(result.thumbnail).toBeNull();
+				expect(result.icon).toBe('https://example.com/favicon.png');  // icon は維持
+				expect(result.sitename).toBe('FANZA');
+				expect(result.sensitive).toBe(true);
+				expect(result.player.url).toBe('https://embed.example/embed?url=' + encodeURIComponent('https://video.dmm.co.jp/av/content/?id=x'));
+				expect(result.player.width).toBe(3);
+				expect(result.player.height).toBe(2);
+			});
+
+			test('applyNsfwCardSuppression() は sensitive=false なら summary を素通しで返す (phase15.6 共通 helper)', async () => {
+				const { applyNsfwCardSuppression } = await import('@/utils/nsfw-card-suppress.js');
+				const original = {
+					title: '原タイトル',
+					icon: 'https://example.com/favicon.png',
+					description: '原あらすじ',
+					thumbnail: 'https://example.com/thumb.jpg',
+					sitename: 'DLsite',
+					sensitive: false,
+					player: { url: null, width: null, height: null, allow: [] },
+					activityPub: null,
+					fediverseCreator: null,
+				};
+				const result = applyNsfwCardSuppression(original, new URL('https://www.dlsite.com/comic/work/=/product_id/RJ123.html'), 'https://embed.example');
+
+				// sensitive=false は素通し (dlsite の /comic/ セーフパス等)
+				expect(result.title).toBe('原タイトル');
+				expect(result.description).toBe('原あらすじ');
+				expect(result.thumbnail).toBe('https://example.com/thumb.jpg');
+				expect(result.sensitive).toBe(false);
+			});
+
+			test('applyNsfwCardSuppression() は embedBaseUrl 未設定時 player を明示的に null 化 (phase15.6、W-1 防衛)', async () => {
+				const { applyNsfwCardSuppression } = await import('@/utils/nsfw-card-suppress.js');
+				const result = applyNsfwCardSuppression({
+					title: 't',
+					icon: null,
+					description: 'd',
+					thumbnail: 'https://example.com/thumb.jpg',
+					sitename: 'site',
+					sensitive: true,
+					// parseGeneral 由来の oEmbed player を持っていても引き継がない
+					player: { url: 'https://malicious.example/oembed-player', width: 640, height: 360, allow: [] },
+					activityPub: null,
+					fediverseCreator: null,
+				}, new URL('https://example.com/path'), undefined);
+
+				expect(result.player.url).toBeNull();
+				expect(result.player.width).toBeNull();
+				expect(result.player.height).toBeNull();
+				expect(result.player.allow).toEqual([]);
 			});
 
 			test('dmm プラグインの renderEmbed() は OGP フル情報を含む HTML を返す (phase15.5)', async () => {
@@ -3207,10 +3275,14 @@ describe('local tests', () => {
 				const dlsite = await import('@/plugins/dlsite.js');
 				const summary = await dlsite.summarize(new URL(`${host}/maniax/announce/=/product_id/RJ999.html`));
 				expect(summary).not.toBeNull();
-				expect(summary!.title).toBe('DLsite Work');
+				// phase15.6: /maniax/ は SAFE_PATH_PATTERN にマッチしないため sensitive=true →
+				// applyNsfwCardSuppression が card を抑制 (title prefix + 【R-18】 description + thumbnail null)
+				// og:site_name なし → parseGeneral が hostname (localhost:3060) を sitename に埋める
+				expect(summary!.title).toBe('【localhost:3060】DLsite Work');
+				expect(summary!.description).toBe('【R-18】 内容を伏せています');
+				expect(summary!.thumbnail).toBeNull();
 				expect(announceHits).toBe(1);
 				expect(workHits).toBe(1);
-				// /maniax/ は SAFE_PATH_PATTERN にマッチしないため sensitive
 				expect(summary!.sensitive).toBe(true);
 			});
 
@@ -3228,8 +3300,35 @@ describe('local tests', () => {
 				const dlsite = await import('@/plugins/dlsite.js');
 				const summary = await dlsite.summarize(new URL(`${host}/comic/work/RJ123.html`));
 				expect(summary).not.toBeNull();
-				// dlsite プラグインが sensitive=true を立てないこと（parseGeneral 由来の false はそのまま）
+				// phase15.6: sensitive=false なので applyNsfwCardSuppression は素通し → title 等は素のまま
 				expect(summary!.sensitive).not.toBe(true);
+				expect(summary!.title).toBe('X');  // prefix されない (sensitive=false なので素通し)
+				expect(summary!.description).not.toBe('【R-18】 内容を伏せています');
+			});
+
+			test('phase15.6: dlsite renderEmbed が /maniax/ で OGP フル情報を返す', async () => {
+				app = fastify();
+				app.get('/maniax/work/=/product_id/RJ999.html', (_req, reply) => {
+					const html = '<!DOCTYPE html><html><head>'
+						+ '<meta property="og:title" content="サンプル作品">'
+						+ '<meta property="og:description" content="作品あらすじ">'
+						+ '<meta property="og:image" content="https://example.com/thumb.jpg">'
+						+ '<meta property="og:site_name" content="DLsite">'
+						+ '</head><body></body></html>';
+					reply.header('content-length', Buffer.byteLength(html));
+					reply.header('content-type', 'text/html');
+					return reply.send(html);
+				});
+				await app.listen({ port });
+
+				const dlsite = await import('@/plugins/dlsite.js');
+				const result = await dlsite.renderEmbed(new URL(`${host}/maniax/work/=/product_id/RJ999.html`));
+				expect(result.body).toContain('<!DOCTYPE html>');
+				expect(result.body).toContain('サンプル作品');     // 作品名フル表示
+				expect(result.body).toContain('作品あらすじ');   // あらすじフル表示
+				expect(result.body).toContain('https://example.com/thumb.jpg');  // サムネフル表示
+				expect(result.width).toBe(3);
+				expect(result.height).toBe(2);
 			});
 		});
 

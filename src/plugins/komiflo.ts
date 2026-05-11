@@ -1,6 +1,9 @@
 import type Summary from '@/summary.js';
+import type { EmbedRenderResult } from '@/iplugin.js';
 import { parseGeneral, type GeneralScrapingOptions } from '@/general.js';
 import { scpaping, getJson } from '@/utils/got.js';
+import { applyNsfwCardSuppression } from '@/utils/nsfw-card-suppress.js';
+import { composeNsfwEmbedHtml } from '@/utils/nsfw-embed-html.js';
 
 export const name = 'komiflo';
 
@@ -15,7 +18,22 @@ export function test(url: URL): boolean {
 	return url.hostname === 'komiflo.com';
 }
 
+/**
+ * **NSFW 二層構造** (phase15.6): `/comics/<id>` で API 取得成功時 sensitive=true となり、
+ * `applyNsfwCardSuppression` が card preview を抑制 + embed iframe (`renderEmbed`) で
+ * フル表示する経路に切り替わる。それ以外の経路は通常の OGP プレビューが出る。
+ */
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
+	const summary = await summarizeRaw(url, opts);
+	if (summary == null) return null;
+	return applyNsfwCardSuppression(summary, url, opts?._embedBaseUrl);
+}
+
+/**
+ * 抑制前の生 summary を取得する pure な内部ヘルパー (phase15.6)。
+ * `summarize` (card 抑制版) と `renderEmbed` (フル表示版) から共有される。
+ */
+async function summarizeRaw(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
 	const res = await scpaping(url.href, opts);
 	const summary = await parseGeneral(url, res);
 	if (summary == null) return null;
@@ -42,6 +60,22 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	}
 
 	return summary;
+}
+
+export async function renderEmbed(url: URL, opts?: GeneralScrapingOptions): Promise<EmbedRenderResult> {
+	// API 失敗時は summarizeRaw が sensitive=undefined の summary を返す。その場合 embed は
+	// カバー画像なしの通常 OGP フル表示になる (= 機能縮退、実害なし、catch {} の意図と整合)
+	const summary = await summarizeRaw(url, opts);
+	if (!summary) {
+		throw new Error('komiflo renderEmbed: parseGeneral returned null');
+	}
+	const html = composeNsfwEmbedHtml({
+		title: summary.title ?? '',
+		description: summary.description ?? '',
+		thumbnail: summary.thumbnail,
+		sitename: summary.sitename ?? 'komiflo',
+	});
+	return { body: html, width: 3, height: 2 };
 }
 
 /**

@@ -153,24 +153,31 @@ bot allowlist は `curl -A '<UA>' -I '<URL>'` で事前検証する (302 → 200
 
 **DMM ケースの注意点**: 全サブドメインで `Vary: User-Agent` ベースの age_check が挟まるため、HEAD probe (`SummalyBot` UA で送信) が必ず gate URL に書き換わる → 対策 1 (`skipRedirectResolution = true`) が **必須**。対策 3 単独だと `summaly()` 入口の resolveRedirect 段で URL が age_check に書き換わって `test()` がマッチしなくなる失敗パターンになる。一方 nintendo-store は HEAD probe が SummalyBot UA でも 200 を返してくれるため対策 1 不要。**サイトの redirect 挙動 (HEAD vs GET / UA 別の挙動) を事前に curl 検証して必要な対策の組み合わせを決定する** こと。
 
-## NSFW 系サイトの「card 抑制 + embed フル表示」二層構造 (phase15.5)
+## NSFW 系サイトの「card 抑制 + embed フル表示」二層構造 (phase15.5 → phase15.6 で汎用化)
 
 age-gate を突破して preview 取得が動くようになっても、サイトによっては **og:image (作品サムネ) や og:description (作品あらすじ) が直球すぎて URL preview に流すと露骨** という二次問題が起こる (例: DMM/FANZA の AV / 同人カテゴリは作品サムネが完全に R-18、あらすじも直接的)。
 
-**対応パターン (DMM phase15.5 で確立)**:
+phase15.6 で **NSFW 系プラグイン (`dmm` / `dlsite` / `iwara` / `komiflo` / `nijie`) 全般の共通パターンとして昇格**。共通 helper は `src/utils/nsfw-card-suppress.ts` の `applyNsfwCardSuppression(summary, url, embedBaseUrl)` と `src/utils/nsfw-embed-html.ts` の `composeNsfwEmbedHtml(...)` の 2 つ。各プラグインは `summarizeRaw` (生 summary) + `summarize` (card 抑制版) + `renderEmbed` (フル表示版) の 3 関数構造になる。
+
+**対応パターン (DMM phase15.5 で確立、phase15.6 で 5 プラグインに横展開)**:
 - **card preview** (`summarize` 戻り値): `title` を `【<sitename>】<og:title>` の prefix 形式に整形、`description` は固定文言 `【R-18】 内容を伏せています` で上書き、`thumbnail` を `null` に強制 (作品サムネ非表示)、`icon` だけサイト favicon を維持 (作品ロゴでなくサイトロゴ)、`sensitive: true` 固定
 - **embed** (`renderEmbed`): 制限なしで og:title (作品名) / og:description (あらすじ) / og:image (作品サムネ) をフル表示する HTML5 ドキュメントを返す。CSP `default-src 'none'; img-src https:; style-src 'unsafe-inline'` で `<script>` 不可・外部 fetch 不可・画像のみ https: 経由で許可、`escapeHtml` で全ユーザー入力を escape
 
 **設計の根拠**: Misskey 等の UI で embed iframe (`/embed?url=...`) は **明示的にユーザーが展開操作 (preview を開く / クリックする) しないと描画されない仕組み**。つまり embed が描画される時点で「ユーザーが作品情報を見ることに合意している」状態と扱える (= 「踏まなければ表示されない」原則)。card preview は受動的に流れてくるためタイムラインの他の投稿と並んで表示される → こちらは抑制、能動展開された embed はフル表示、というレイヤー分離。
 
-**判断基準**: NSFW 系のサイトで preview を有効化する際、**プラグイン側で `renderEmbed` を実装するかどうかは「カードに乗せる作品情報の直球性」次第**。
-- card に作品名 + あらすじ + サムネを出しても問題ないレベルの NSFW (R-15 程度) → 通常の `summarize` 単独で OK (例: `dlsite` / `iwara` / `komiflo` / `nijie` の現状)
-- card に出すと露骨なレベル (R-18 直球) → 二層構造を採用し card 抑制 + `renderEmbed` でフル表示 (例: `dmm` phase15.5)
+**判断基準** (phase15.6 で再整理): **共通 helper `applyNsfwCardSuppression` は `summary.sensitive === true` のときのみ抑制を発火させる設計** のため、プラグイン側はサイト固有の sensitive 判定ロジック (path-based / host-based / 固定) をそのまま維持しつつ、最終 summary に helper を 1 行通すだけで二層構造に乗れる。
+
+- **常時 NSFW** (例: `dmm` / `komiflo` / `nijie`) → プラグイン側で常に `sensitive: true` 強制 → 全件抑制
+- **path-based 判定** (例: `dlsite` の `/maniax/` 抑制 / `/comic/` 素通し) → `SAFE_PATH_PATTERN` 等で sensitive を分岐 → アダルト経路のみ抑制
+- **host-based 判定** (例: `iwara` の `ecchi.` 抑制 / `www.` 素通し) → host で sensitive を分岐 → R-18 サブドメインのみ抑制
 
 **実装の注意**:
-- `composeEmbedHtml` は pure 関数として export してテスト容易化、XSS 防御テスト (`<script>` / `<img onerror>` / `<svg onload>` の入力に対して escape されることを確認) を必ず入れる
-- `<img>` の URL は `https:` のみ通す簡易 sanitize を入れる (CSP との二重防御)
-- `composePlayerUrl(url, embedBaseUrl)` で `<embedBaseUrl>/embed?url=<encoded>` を組み立てて `summary.player.url` にセット、phase16.3 の `[embed].allowedPlugins` auto-fill (`renderEmbed` 実装プラグインで `[plugins].allowed` に含まれるものを自動 enable) に乗る
+- 共通 helper を使う場合 `src/utils/nsfw-card-suppress.ts` (`applyNsfwCardSuppression`) と `src/utils/nsfw-embed-html.ts` (`composeNsfwEmbedHtml`) を import して `summarize` 末尾 + `renderEmbed` 内で使うだけで OK
+- `summarize` を 2 段化: `summarizeRaw` (生 summary) + `summarize` = `summarizeRaw` → `applyNsfwCardSuppression` の構造に。`renderEmbed` は `summarizeRaw` を呼んで `composeNsfwEmbedHtml` で HTML 化
+- `composeNsfwEmbedHtml` は pure 関数として utils にあり、XSS 防御テスト (`<script>` / `<img onerror>` / `<svg onload>` の入力に対して escape されることを確認) は共通 helper のテストで担保
+- `<img>` の URL は `pickHttpsImage` で `https:` のみ通す簡易 sanitize (CSP `img-src https:` との二重防御)
+- `applyNsfwCardSuppression` 内で `composePlayerUrl(url, embedBaseUrl)` を使って `<embedBaseUrl>/embed?url=<encoded>` を組み立てて `summary.player.url` にセット。phase16.3 の `[embed].allowedPlugins` auto-fill (`renderEmbed` 実装プラグインで `[plugins].allowed` に含まれるものを自動 enable) に乗る
+- **player の oEmbed fallthrough 防止**: `embedBaseUrl` 未設定 (library mode) のとき、`parseGeneral` 由来の oEmbed player を引き継がず明示的に `{ url: null, width: null, height: null, allow: [] }` で null 化 (DMM W-1 で発見したパターン、共通 helper で担保)
 
 ## 参照
 

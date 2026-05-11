@@ -179,6 +179,7 @@ interface SummalyPlugin {
 | マッチ | `www.dlsite.com` |
 | 取得方法 | `general(url)` を呼び、`StatusError.statusCode === 404` のとき `/announce/` ↔ `/work/` を入れ替えて 1 度だけリトライ（無限ループ防止のフラグあり） |
 | sensitive 判定 | 結果 URL のパスが `/(home\|comic\|soft\|app\|ai)/` のどれにも該当しなければ `sensitive = true` |
+| NSFW 二層構造 (phase15.6) | sensitive=true のときのみ `applyNsfwCardSuppression` 経由で card 抑制 (title prefix + R-18 description + thumbnail null + embed player.url 組立)、`renderEmbed` で `composeNsfwEmbedHtml` 経由のフル表示。`/comic/` 等のセーフパスは素通し (既存挙動維持) |
 
 ### iwara
 
@@ -191,6 +192,7 @@ interface SummalyPlugin {
 | description 補完 | `parseGeneral` が `description: null` のとき `.field-type-text-with-summary` の `.text()` を 500 文字 `clip`（cheerio の `.text()` は HTML エンティティをデコード済みなので `decodeHtml` は重ねない） |
 | thumbnail 補完 | `#video-player[poster]` または `.field-name-field-images a:first[href]` を `new URL(.., landingUrl)` で解決 |
 | sensitive 判定 | `landingUrl.hostname === 'ecchi.iwara.tv'` のとき `true` |
+| NSFW 二層構造 (phase15.6) | sensitive=true (`ecchi.` 着地) のときのみ card 抑制 + `renderEmbed` フル表示。`www.iwara.tv` は素通し (既存挙動維持) |
 | ヘルパ export | `enrichWithIwara(summary, $, landingUrl): Summary` |
 
 ### komiflo
@@ -204,6 +206,7 @@ interface SummalyPlugin {
 | 抽出 | `named_imgs.cover.filename` と `variants` に `'346_mobile'` がある場合に `https://t.komiflo.com/346_mobile/<filename>` を thumbnail に採用 + `sensitive = true` |
 | 失敗時 | 例外は静かに握りつぶしてフォールバック（library として `console.log` には出さない） |
 | メンテリスク | `346_mobile` variant 固定。komiflo 側仕様変更で陳腐化しうる |
+| NSFW 二層構造 (phase15.6) | sensitive=true (API 取得成功時) のときのみ card 抑制 + `renderEmbed` フル表示 |
 | ヘルパ export | `extractCoverFilename(api: unknown): string \| null` |
 
 ### nijie
@@ -218,6 +221,7 @@ interface SummalyPlugin {
 | 抽出 | `<script type="application/ld+json">` 全件を走査して `@type === 'ImageObject'` のものから `thumbnailUrl` / `description` を採用 |
 | エスケープ | JSON-LD に生制御文字（`\n` / `\r` / `\t` 等 U+0000-U+001F）が含まれるため、Unicode エスケープに置換してから `JSON.parse` |
 | sensitive 判定 | `view.php` 着地で `true` |
+| NSFW 二層構造 (phase15.6) | sensitive=true (`/view.php` 着地時) のときのみ card 抑制 + `renderEmbed` フル表示 |
 | ヘルパ export | `enrichWithNijie(summary, $, landingUrl): Summary` |
 
 ### npmjs
