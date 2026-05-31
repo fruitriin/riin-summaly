@@ -48,6 +48,14 @@ export const sampleGroups: SampleGroup[] = [
 		],
 	},
 	{
+		name: 'google-drive',
+		description: '共有ファイルの /preview を player iframe に組み立て（動画 / PDF / 画像 / Docs）',
+		urls: [
+			{ label: 'Drive 横動画', url: 'https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3/view?usp=sharing', note: 'オーナー提供 (2026-06-01)' },
+			{ label: 'Drive 縦動画', url: 'https://drive.google.com/file/d/109c4LMg9MaCkbzNtz_JkSHKeZuYBxHvC/view?usp=sharing', note: 'オーナー提供 (2026-06-01)' },
+		],
+	},
+	{
 		name: 'wikipedia',
 		description: 'MediaWiki API から intro 抽出',
 		urls: [

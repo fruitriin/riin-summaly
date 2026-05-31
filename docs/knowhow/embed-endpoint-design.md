@@ -125,6 +125,28 @@ for (const origin of v) {
 
 iframe 許可は **CSP `frame-ancestors`** (旧 `X-Frame-Options`)。**CORS (`Access-Control-Allow-Origin`)** は fetch 用で iframe には無関係。embed エンドポイントには CORS ヘッダを出さない (誤って出すと「埋め込み許可したつもり」の混乱招く)。
 
+### 外部 player URL を返すプラグインは「その URL が iframe 可能か」を実装前に確認する (phase19.1)
+
+`Summary.player.url` に **外部サイトの URL を直接入れる** プラグイン (`youtube` の oEmbed iframe、`google-drive` の `/preview` 等) を作るとき、対象サイトが第三者 framing を許可しているかを **`curl -I` で実装前に確認する**:
+
+```bash
+curl -sI "https://target.example/embed-url" | grep -iE "x-frame-options|content-security-policy"
+```
+
+- **`X-Frame-Options: SAMEORIGIN` / `DENY`** または CSP `frame-ancestors 'self'` を返すサイトは **構造的に iframe 不可** (Misskey の preview 枠に出ない)。回避不能なのでプラグイン化しても無駄。
+  - 実例 (phase19.1): **Google Drive** `…/preview` は frame ブロックヘッダなし → iframe player 可。**Google Photos** `photos.google.com` は `X-Frame-Options: SAMEORIGIN` → iframe 不可、card 表示 (`og:image` → thumbnail) しか手段がない。同じ「Google の共有 URL」でも可否が割れる。
+- iframe 不可サイトで「リッチ表示」を諦めたくない場合の代替は **card のみ** (`thumbnail` / `medias[]` に画像を出す)。ただし対象が SPA で `og:image` を JS 動的注入していると fail mode I で取れない (`docs/knowhow/spa-dynamic-ogp-unfixable.md`)。
+- `player.url` は完全ハードコードのテンプレートでも `new URL(playerUrl).protocol !== 'https:'` の再検証を残す (組み立て方変更時の安全網)。外部 URL を入れる以上、出口 sanitize (`docs/knowhow/sanitize-and-agent-patterns.md`) と二重で `https:` を保証する。
+
+### player のアスペクト比を外部 thumbnail の pixel 寸法から決める (phase19.1 followup)
+
+iframe player の `width`/`height` は **絶対値ではなく比率** (Misskey は `padding-bottom: height/width * 100%`)。ハードコード (例 16:9) だと **縦動画が横長枠でレターボックス**になる。動画 / 画像の **実アスペクト比が事前に分からない** とき、対象サイトが「実寸比を保った thumbnail」を公開していれば、その画像の pixel 寸法を読んで `width`/`height` に入れれば向きが正しく出る。
+
+- 実例 (Google Drive): `drive.google.com/thumbnail?id=<id>&sz=w1000` → 横動画 JPEG `1000×562` / 縦動画 JPEG `1000×1778`。この比率を player にそのまま入れると縦動画が縦長表示になる。
+- **寸法パーサは外部依存を増やさず自前で**: JPEG/PNG/GIF/WebP はヘッダ先頭バイトだけで寸法が読める (`src/utils/image-dimensions.ts`)。完全デコード不要なので数 KB の先頭チャンクで足りる。
+- **落とし穴**: `got` の `rawBody` は **`Uint8Array`** で返り、`Buffer` ではない。`buf.readUInt16BE` 等の Buffer ヘルパは無いので `Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength)` で wrap する (コピーなし view 共有)。`Buffer.isBuffer(rawBody)` は false になる点に注意。
+- **グレースフルデグレード必須**: 寸法フェッチは独立 `try/catch` にして、失敗時は安全なデフォルト比率 (16:9 等) で player を成立させる。メタ補完 (title 等) と並列で投げるなら `Promise.all` だが、片方の失敗が全体を倒さないよう各々で catch する。
+
 ### `frame-ancestors *` のデフォルト + warning
 
 開発初期は `*` で全許可だが、商用は `https://misskey.example.com` 等で明示制限すべき。config-loader で `*` を含む場合は **stderr に warning** を出す:

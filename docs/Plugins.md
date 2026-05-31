@@ -25,6 +25,7 @@ summaly のプラグインシステムと、組み込み 14 プラグインの�
   - [yodobashi](#yodobashi)
   - [sqex](#sqex)
   - [dmm (FANZA)](#dmm-fanza)
+  - [google-drive](#google-drive)
 - [カスタムプラグインの書き方](#カスタムプラグインの書き方)
 - [共通ユーティリティ](#共通ユーティリティ)
 
@@ -297,6 +298,25 @@ interface SummalyPlugin {
 | 副作用 | プラグイン内で `fallbackUserAgent` / `fallbackRetryCategories` を **明示的に未設定** にして UA 上書きが発生しないようにしている (`nintendo-store` と同じ) |
 | 運用要件 | NSFW 慣例で両 config example の `[plugins].allowed` に `# "dmm",` (コメントアウト) で並べる。デプロイ運用者が明示的にオプトインしなければ起動しない。`[plugins].allowed` で `"dmm"` を有効化すると `[embed].allowedPlugins` の auto-fill (phase16.3) で embed も自動的に有効化される |
 | pure 関数 export | `composeEmbedHtml({ title, description, thumbnail, sitename })` をテスト容易性のため pure 関数として export (XSS 防御テスト含む 9 件のユニットテストを担保) |
+
+### google-drive
+
+実装: [src/plugins/google-drive.ts](../src/plugins/google-drive.ts)
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `drive.google.com` (anchored host) かつ pathname が `/file/d/<id>` で始まるもの。`/view` / `/preview` / `/edit` / 末尾なし いずれも許容。`?usp=sharing` 等のクエリは無視 |
+| 取得方法 | URL から file ID を正規表現 (`/^\/file\/d\/([a-zA-Z0-9_-]{10,200})(?:\/\|$)/`) で抽出し、Google 公式の embed URL `https://drive.google.com/file/d/<id>/preview` を `Summary.player.url` に組み立てる。`extractFileId(url)` / `buildSummaryFromUrl(url)` を pure 関数として export (テスト容易化)。さらに `summarize()` は **2 本の補助フェッチを並列実行** してメタを補完する (下記) |
+| player | `url = https://drive.google.com/file/d/<id>/preview`、`allow` = `PLAYER_ALLOW_OEMBED` (autoplay / encrypted-media / fullscreen 等)。組み立てた URL は `new URL(...).protocol !== 'https:'` で再検証 |
+| アスペクト比 (縦動画対応) | **公開 thumbnail エンドポイント** `https://drive.google.com/thumbnail?id=<id>&sz=w1000` は file の実アスペクト比を保った画像を返す (縦動画なら縦長 JPEG)。これを取得して `src/utils/image-dimensions.ts` の `getImageDimensions` で pixel 寸法を読み、`player.width` / `player.height` に **実比率**を入れる。Misskey は height/width 比率で iframe の縦横比を計算するため、**縦動画は縦長プレビュー / 横動画は横長プレビュー**になる。取得失敗時は **16:9 にフォールバック** (`buildSummaryFromUrl` の base 値)。実測: 横動画 → `1000×562`、縦動画 → `1000×1778` |
+| title | `/view` ページを `facebookexternalhit/1.1` UA で叩くと Drive が `og:title` に **file 名**を返す (匿名で取れる唯一のメタデータ)。これを `Summary.title` に採用 (例: 「cam01.mp4」)。取得失敗時は null |
+| thumbnail | アスペクト比判定で取得した thumbnail URL (`…/thumbnail?id=<id>&sz=w1000`) を `Summary.thumbnail` にも採用。player 非対応クライアントでも向き付きの絵が出る。取得失敗時は null |
+| グレースフルデグレード | thumbnail / title の各フェッチは独立した `try/catch` + `Promise.all` で、どちらが失敗してもプレビュー自体は base (`/preview` player + 16:9) で成立する。フェッチには 8 秒 timeout + 2 MiB content-length cap |
+| `/preview` の汎用性 | Google の `/preview` は動画・PDF・画像・Google Docs すべてをレンダリングするため、URL から file 種別を判定する必要がない (Drive は URL に種別を露出しない)。同一コードで全種別をカバー |
+| `skipRedirectResolution` の必要性 | `/view` URL は `summaly()` 冒頭の HEAD probe (`SummalyBot` UA) でログインゲートにリダイレクトされうる。本プラグインは scrape せず URL から player を組み立てるだけなので probe 先は無関係だが、probe が別ホストへ飛んで `test()` が外れ汎用パスに落ちるのを防ぐため `skipRedirectResolution = true` を宣言 (純損失なし) |
+| 非公開 file の扱い | summaly は file の公開状態を検証しない (匿名 API が無いため不可能)。非公開 file の player URL を返すと iframe 内で Google がログイン要求を表示する (Google 側の正常動作、情報漏洩リスクなし) |
+| Google フォト非対応 | `photos.google.com` は `X-Frame-Options: SAMEORIGIN` を返すため第三者サイト (Misskey) の iframe には**構造的に**表示できない (実機確認 2026-06-01)。本プラグインは Drive のみを扱う。将来 Playwright モード (phase15.1) 導入後に「`og:image` カバー画像を thumbnail に出す card 表示のみ (player なし)」で再検討する余地あり |
+| 運用要件 | 両 config example の `[plugins].allowed` に `"google-drive"` (アクティブ形式、NSFW ではない)。embed エンドポイントは使わない (`renderEmbed` 未実装、player iframe は Drive 自身の `/preview` を直接指す) |
 
 ### syosetu (小説家になろう)
 

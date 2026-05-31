@@ -22,6 +22,7 @@ import { getJson } from '@/utils/got.js';
 import { KNOWN_SHORT_HOSTS } from '@/utils/short-urls.js';
 import { BROWSER_UA } from '@/utils/user-agents.js';
 import { plugins as builtinPlugins } from '@/plugins/index.js';
+import { PLAYER_ALLOW_OEMBED } from '@/utils/player-allow.js';
 import { sanitizeUrl } from '@/utils/sanitize-url.js';
 import { detectEncoding, toUtf8 } from '@/utils/encoding.js';
 import { destroyDefaultAgents } from '@/utils/agent.js';
@@ -1358,6 +1359,103 @@ describe('local tests', () => {
 				expect(summary!.title).toContain('【FANZA】');
 				expect(summary!.description).toBe('【R-18】 内容を伏せています');
 				expect(summary!.thumbnail).toBeNull();
+			});
+
+			test('google-drive プラグインが drive.google.com/file/d/<id> にマッチする (phase19.1)', () => {
+				const gd = builtinPlugins.find(p => p.name === 'google-drive');
+				expect(gd).toBeDefined();
+				const t = (s: string) => gd!.test(new URL(s));
+
+				// マッチすべき URL
+				expect(t('https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3/view?usp=sharing')).toBe(true);
+				expect(t('https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3/preview')).toBe(true);
+				expect(t('https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3/edit')).toBe(true);
+				expect(t('https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3')).toBe(true);  // 末尾なし
+
+				// マッチしないべき URL
+				expect(t('https://drive.google.com/drive/folders/abc123')).toBe(false);  // フォルダ共有は対象外
+				expect(t('https://drive.google.com/')).toBe(false);
+				expect(t('https://docs.google.com/file/d/abc/view')).toBe(false);  // 別ホスト
+				expect(t('https://drive.google.com.evil.example/file/d/abc/view')).toBe(false);  // ドメイン詐称
+			});
+
+			test('google-drive プラグインは skipRedirectResolution = true を宣言している (phase19.1)', () => {
+				// /view が HEAD probe でログインゲートに 302 されても原 URL のまま本プラグイン経路に
+				// 乗せるため (scrape せず URL から player を組み立てるだけなので純損失なし)。
+				const gd = builtinPlugins.find(p => p.name === 'google-drive');
+				expect(gd).toBeDefined();
+				expect(gd!.skipRedirectResolution).toBe(true);
+			});
+
+			test('google-drive プラグインの buildSummaryFromUrl() が /preview iframe player を組み立てる (phase19.1)', async () => {
+				const gd = await import('@/plugins/google-drive.js');
+				const id = '11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3';
+				const summary = gd.buildSummaryFromUrl(new URL(`https://drive.google.com/file/d/${id}/view?usp=sharing`));
+
+				expect(summary).not.toBeNull();
+				// player URL は path の種別 (/view) に関係なく /preview に正規化される
+				expect(summary!.player.url).toBe(`https://drive.google.com/file/d/${id}/preview`);
+				// buildSummaryFromUrl は pure な base (16:9 デフォルト)。summarize() が thumbnail から
+				// 実アスペクト比を取れたら上書きする (縦動画は height>width になる、phase19.1 followup)。
+				expect(summary!.player.width).toBe(16);
+				expect(summary!.player.height).toBe(9);
+				expect(summary!.player.allow).toEqual([...PLAYER_ALLOW_OEMBED]);
+				expect(summary!.sitename).toBe('Google Drive');
+				expect(summary!.icon).toBe('https://drive.google.com/favicon.ico');
+				// base 段階では title / thumbnail / description は null (summarize が title/thumbnail を補完)
+				expect(summary!.title).toBeNull();
+				expect(summary!.thumbnail).toBeNull();
+				expect(summary!.description).toBeNull();
+			});
+
+			test('google-drive プラグインの extractFileId() は最初のセグメントだけ取る (phase19.1)', async () => {
+				const gd = await import('@/plugins/google-drive.js');
+				// `/file/d/<id>/preview` のように後続セグメントがあっても id だけ抽出
+				expect(gd.extractFileId(new URL('https://drive.google.com/file/d/AbC-1_xyz0Q9/preview'))).toBe('AbC-1_xyz0Q9');
+				expect(gd.extractFileId(new URL('https://drive.google.com/file/d/AbC-1_xyz0Q9'))).toBe('AbC-1_xyz0Q9');
+				// `/file/d/` 以外は null
+				expect(gd.extractFileId(new URL('https://drive.google.com/drive/folders/AbC1234567'))).toBeNull();
+				// buildSummaryFromUrl も同じ id で /preview を組み立てる
+				const s = gd.buildSummaryFromUrl(new URL('https://drive.google.com/file/d/AbC-1_xyz0Q9/preview'));
+				expect(s!.player.url).toBe('https://drive.google.com/file/d/AbC-1_xyz0Q9/preview');
+			});
+
+			test('google-drive プラグインの applyMeta() は寸法・title を base に上書きする (phase19.1 followup)', async () => {
+				const gd = await import('@/plugins/google-drive.js');
+				const id = '11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3';
+				const mkBase = () => gd.buildSummaryFromUrl(new URL(`https://drive.google.com/file/d/${id}/view`))!;
+
+				// 縦動画: dims を渡すと player が縦長 (height > width) に上書きされ thumbnail も入る
+				const vertical = gd.applyMeta(mkBase(), id, { width: 1000, height: 1778 }, 'cam.mov');
+				expect(vertical.player.width).toBe(1000);
+				expect(vertical.player.height).toBe(1778);
+				expect(vertical.player.height! > vertical.player.width!).toBe(true);
+				expect(vertical.thumbnail).toBe(`https://drive.google.com/thumbnail?id=${id}&sz=w1000`);
+				expect(vertical.title).toBe('cam.mov');
+
+				// 両方 null (フェッチ失敗時): base のデフォルト 16:9 + title/thumbnail null を維持
+				const degraded = gd.applyMeta(mkBase(), id, null, null);
+				expect(degraded.player.width).toBe(16);
+				expect(degraded.player.height).toBe(9);
+				expect(degraded.thumbnail).toBeNull();
+				expect(degraded.title).toBeNull();
+
+				// title だけ取れて dims 失敗: title は入るが player は 16:9 のまま
+				const titleOnly = gd.applyMeta(mkBase(), id, null, 'doc.pdf');
+				expect(titleOnly.title).toBe('doc.pdf');
+				expect(titleOnly.player.width).toBe(16);
+				expect(titleOnly.thumbnail).toBeNull();
+			});
+
+			test('google-drive プラグインは異常に短い / 長い file ID を弾く (phase19.1 W-1)', () => {
+				const gd = builtinPlugins.find(p => p.name === 'google-drive');
+				const t = (s: string) => gd!.test(new URL(s));
+				// 10 文字未満は弾く (誤検知防止)
+				expect(t('https://drive.google.com/file/d/short/view')).toBe(false);
+				// 200 文字超は弾く (クラフト URL で player.url が膨れるのを防ぐ)
+				expect(t(`https://drive.google.com/file/d/${'a'.repeat(201)}/view`)).toBe(false);
+				// 通常長 (33 文字) は通る
+				expect(t('https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3/view')).toBe(true);
 			});
 
 			test('composeNsfwEmbedHtml() は基本入力で作品情報をフル表示する (phase15.6 共通 helper)', async () => {
