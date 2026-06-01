@@ -200,6 +200,27 @@ export const skipRedirectResolution = true;
 - テスト: `test/drive-embed-html.test.ts` (HTML 構造 / XSS / https / 比率フォールバック 6 件) + `composePlayerUrl` 1 件 (計 693 件 pass)。
 - knowhow: `docs/knowhow/embed-endpoint-design.md` に「外部 iframe を CSS scale で縮小ラップ」+「CORP/Sec-Fetch で `<video>` 直再生不可」を追記。
 
+## PR #2 code-review 対応 (2026-06-01)
+
+オーナーから PR #2 のレビュー (fruitriin の敵対的カバレッジ指摘 + `/code-review high` の 9 件) に対応。**スコープは google-drive PR 内に限定** (ヘルパ追加は可だが syosetu/kakuyomu 等の既存プラグインには触れない方針)。
+
+**fruitriin レビュー (image-dimensions 敵対的入力)**:
+- `getImageDimensions` に `MAX_DIM=32767` 絶対値上限 + GIF magic 6 byte 厳密検証 + JPEG 0xFF padding スキップを実装。width/height=0 / truncated / 異常 segLen DoS の退行防止テストも有効化 (敵対的カバレッジ 14 件)。
+- 「上限超えたら ffmpeg 縮小」案 → **本パーサは画像をサーブせずアスペクト比判定のみ**なので縮小不要、null → 16:9 fallback が正解と整理。
+
+**`/code-review high` 9 件 (上記 followup #4 の実装をリファクタ)**:
+1. **アスペクト比 clamp**: `MAX_DIM` 絶対値上限は `1×32767` のような極端比を素通しし、宣言された脅威 (padding-bottom 破綻) を防げていなかった。`applyMeta` / `renderEmbed` に **比率 [1/4..4/1] clamp** 層を追加 (絶対値上限とは別レイヤ)。
+2. **JPEG off-by-one**: `while (offset+9 < len)` → `<= len` (width が buffer 末尾ぴったりの valid JPEG 取りこぼし修正)。
+3. **二重フェッチ統合**: `summarize` と `renderEmbed` の重複フェッチを `resolveDriveMeta(id, opts)` に共通化。
+4. **Range + 軽量抽出**: thumbnail/title フェッチに `Range: bytes=0-65535`、og:title は cheerio 全 DOM 構築をやめ `extractOgTitle` 正規表現に (cheerio 依存を google-drive から除去)。
+5. **CSP テスト**: `filterCspOrigins` / `buildCspDirectiveParts` のヘッダインジェクション防御に専用テスト 9 件 (`test/csp-origin.test.ts`)。
+6. **cspDirectives 一般化**: `EmbedRenderResult.frameSrc?: string[]` → `cspDirectives?: Record<string, string[]>` (ディレクティブ許可リスト + origin-only 再検証)。revert された `<video>` 版の media-src churn を構造的に解消。
+7. **player URL helper**: embed player URL 組み立てを `src/utils/embed-player-url.ts` の `composeEmbedPlayerUrl` に切り出し (末尾スラッシュ複数除去。google-drive のみ使用、他プラグイン移行は別 PR)。
+8. **scale ラッパー汎用化**: `src/utils/drive-embed-html.ts` → `src/utils/scaled-iframe-embed.ts` の `renderScaledIframeEmbed` (`renderWidth` 引数化)。Drive 固有の 900px はプラグイン側 `DRIVE_RENDER_WIDTH` に保持。
+9. **thumbnail 独立採用**: dims 判定失敗 (大きすぎ/破損で null) でも thumbnail URL は valid なので `applyMeta` で dims と独立に採用 (絵は出す)。
+- 併せて dev `/embed` に本番と同じ body size cap (512KB) 追加 (guard parity)。
+- テスト計 717 件 pass。`/code-review high` で検出した #10 (library mode 非 https embedBaseUrl) は W-2 既知事項として対象外。
+
 ### Step 5: 本番動作確認 (デプロイ後 — 運用者 / オーナー側)
 
 skill `/url-preview-check` Phase 6 のバリエーションで叩く:

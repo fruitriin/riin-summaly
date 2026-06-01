@@ -1445,27 +1445,60 @@ describe('local tests', () => {
 				const gd = await import('@/plugins/google-drive.js');
 				const id = '11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3';
 				const mkBase = () => gd.buildSummaryFromUrl(new URL(`https://drive.google.com/file/d/${id}/view`))!;
+				const thumb = `https://drive.google.com/thumbnail?id=${id}&sz=w1000`;
 
 				// 縦動画: dims を渡すと player が縦長 (height > width) に上書きされ thumbnail も入る
 				const vertical = gd.applyMeta(mkBase(), id, { width: 1000, height: 1778 }, 'cam.mov');
 				expect(vertical.player.width).toBe(1000);
 				expect(vertical.player.height).toBe(1778);
 				expect(vertical.player.height! > vertical.player.width!).toBe(true);
-				expect(vertical.thumbnail).toBe(`https://drive.google.com/thumbnail?id=${id}&sz=w1000`);
+				expect(vertical.thumbnail).toBe(thumb);
 				expect(vertical.title).toBe('cam.mov');
 
-				// 両方 null (フェッチ失敗時): base のデフォルト 16:9 + title/thumbnail null を維持
+				// 両方 null (寸法判定失敗): player は 16:9。**ただし thumbnail は dims と独立に採用** (PR #2 review #9)。
 				const degraded = gd.applyMeta(mkBase(), id, null, null);
 				expect(degraded.player.width).toBe(16);
 				expect(degraded.player.height).toBe(9);
-				expect(degraded.thumbnail).toBeNull();
+				expect(degraded.thumbnail).toBe(thumb);  // dims 失敗でも絵は出す
 				expect(degraded.title).toBeNull();
 
-				// title だけ取れて dims 失敗: title は入るが player は 16:9 のまま
+				// title だけ取れて dims 失敗: title は入る、player は 16:9、thumbnail は採用
 				const titleOnly = gd.applyMeta(mkBase(), id, null, 'doc.pdf');
 				expect(titleOnly.title).toBe('doc.pdf');
 				expect(titleOnly.player.width).toBe(16);
-				expect(titleOnly.thumbnail).toBeNull();
+				expect(titleOnly.thumbnail).toBe(thumb);
+			});
+
+			test('google-drive プラグインの applyMeta() は極端なアスペクト比を clamp する (PR #2 review #1)', async () => {
+				const gd = await import('@/plugins/google-drive.js');
+				const id = '11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3';
+				const mkBase = () => gd.buildSummaryFromUrl(new URL(`https://drive.google.com/file/d/${id}/view`))!;
+
+				// 1×32767 (MAX_DIM 内だが極端比 height/width=32767) → 縦長上限 4:1 に clamp
+				const tall = gd.applyMeta(mkBase(), id, { width: 1, height: 32767 }, null);
+				expect(tall.player.height! / tall.player.width!).toBeLessThanOrEqual(4);
+				expect(tall.player.height! / tall.player.width!).toBeGreaterThan(1);  // 縦長は維持
+
+				// 32767×1 (極端横長 height/width≈0) → 横長下限 1:4 に clamp
+				const wide = gd.applyMeta(mkBase(), id, { width: 32767, height: 1 }, null);
+				expect(wide.player.height! / wide.player.width!).toBeGreaterThanOrEqual(1 / 4);
+
+				// 通常比 (縦 9:16 = h/w=1.778) は clamp されず素通し
+				const normal = gd.applyMeta(mkBase(), id, { width: 1000, height: 1778 }, null);
+				expect(normal.player.width).toBe(1000);
+				expect(normal.player.height).toBe(1778);
+			});
+
+			test('google-drive プラグインの extractOgTitle() は og:title を抽出・entity デコードする (PR #2 review #4)', async () => {
+				const gd = await import('@/plugins/google-drive.js');
+				expect(gd.extractOgTitle('<meta property="og:title" content="cam01.mp4">')).toBe('cam01.mp4');
+				// property/content 順序非依存
+				expect(gd.extractOgTitle('<meta content="movie.mov" property="og:title">')).toBe('movie.mov');
+				// entity デコード
+				expect(gd.extractOgTitle('<meta property="og:title" content="A &amp; B &quot;x&quot;">')).toBe('A & B "x"');
+				// 無い / 空は null
+				expect(gd.extractOgTitle('<html><head></head></html>')).toBeNull();
+				expect(gd.extractOgTitle('<meta property="og:title" content="">')).toBeNull();
 			});
 
 			test('google-drive プラグインは異常に短い / 長い file ID を弾く (phase19.1 W-1)', () => {

@@ -156,8 +156,8 @@ iframe player の `width`/`height` は **絶対値ではなく比率** (Misskey 
 - **固定描画幅 (`RENDER_WIDTH`) は実機で特定**: Drive は実測 **900px** から崩れなくなる (デスクトップは 600px で足りるがスマホ UI は 900px 必要)。RW を大きくすると scale が小さくなり (コントロールも小さく表示される) が、崩れて操作不能よりは良い。
 - **レスポンシブ scale は CSS container query length unit (`cqi`) で JS なし実現**: 外側に `container-type: inline-size`、内部 iframe を `width: <RW>px` 固定 + `transform: scale(calc(100cqi / <RW>px))`。`calc(100cqi / 600px)` は「コンテナ幅 ÷ 固定幅」の無次元比として解決される。これで embed CSP `default-src 'none'` を緩めずに (= `<script>` なしで) カード幅追従できる。`cqw`/`%` ベースや `zoom` は今回不安定だった、`cqi` + 固定 px 描画が確実。
 - **二重 aspect-ratio に注意**: Misskey/dev は embed iframe 自体に `aspect-ratio: player.width/height` を設定する。内部 stage で再度 `aspect-ratio` を掛けると二重になり、**横動画で高さがずれてコントロールが見切れる**。stage は `height: 100%` で embed iframe いっぱいに広げて二重化を避ける。
-- **CSP**: 内部に外部 iframe を埋め込むため `EmbedRenderResult.frameSrc` で配信元 origin を宣言 → embed エンドポイントが `frame-src` に追加 (origin-only 再検証、`frameAncestors` と同じ CSP インジェクション防御)。
-- 実装: `src/utils/drive-embed-html.ts` の `composeDriveScaledEmbedHtml`。実機検証は **必ずブラウザの DevTools スマホエミュレートで** (デスクトップだけだと崩れを見逃す)。
+- **CSP**: 内部に外部 iframe を埋め込むため `EmbedRenderResult.cspDirectives = { 'frame-src': [origin] }` で配信元 origin を宣言 → embed エンドポイントが許可ディレクティブ + origin-only 再検証して CSP に追加 (`frameAncestors` と同じインジェクション防御)。ディレクティブ名をマップ化したことで将来 `media-src` 等が必要でも embed 側コード変更不要。
+- 実装: 汎用 `src/utils/scaled-iframe-embed.ts` の `renderScaledIframeEmbed` (`renderWidth` 引数化、provider 非依存)。実機検証は **必ずブラウザの DevTools スマホエミュレートで** (デスクトップだけだと崩れを見逃す。Drive はタッチデバイスでコントロールが大きくなるため、デスクトップの最小幅 600px ではなく 900px が必要)。
 
 ### 外部サイトの動画を `<video>` で直再生できないケース: CORP / Sec-Fetch (phase19.1 followup #4)
 
