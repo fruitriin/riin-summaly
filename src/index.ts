@@ -13,6 +13,7 @@ import { DEFAULT_BOT_UA, DEFAULT_OPERATION_TIMEOUT, DEFAULT_RESPONSE_TIMEOUT, ag
 import { plugins as builtinPlugins } from '@/plugins/index.js';
 import { KNOWN_SHORT_HOSTS } from '@/utils/short-urls.js';
 import { sanitizeUrl } from '@/utils/sanitize-url.js';
+import { buildCspDirectiveParts } from '@/utils/csp-origin.js';
 import { StatusError } from '@/utils/status-error.js';
 import {
 	ParseFailureLog,
@@ -1011,6 +1012,10 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 			'form-action \'none\'',
 			`frame-ancestors ${frameAncestors}`,
 		];
+		// **外部リソース許可 (frame-src / media-src 等)**: プラグインが `cspDirectives` を宣言した場合のみ追加。
+		// ディレクティブ名は許可リスト、各 origin は origin-only https: に再検証 (CSP ヘッダインジェクション防御)。
+		// dev (dev/server.ts) と共有 util。google-drive が Drive `/preview` を iframe ラップする際に使う。
+		cspParts.push(...buildCspDirectiveParts(result.cspDirectives));
 		reply.header('Content-Security-Policy', cspParts.join('; '));
 		reply.header('X-Content-Type-Options', 'nosniff');
 		reply.header('Referrer-Policy', 'no-referrer');

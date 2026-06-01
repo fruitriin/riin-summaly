@@ -62,6 +62,7 @@ allowed = [
   "sqex",
   "syosetu",
   "kakuyomu",
+  "google-drive",
   # nitori プラグインは fail mode J (datacenter IP 全般 block) で本番では救援不可。
   # 家庭用 IP / 一般 ISP からの利用なら有効化する余地あり。Playwright 統合 (phase15.1) 完了後に再評価。
   # "nitori",

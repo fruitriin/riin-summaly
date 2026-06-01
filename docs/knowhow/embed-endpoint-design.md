@@ -125,6 +125,53 @@ for (const origin of v) {
 
 iframe 許可は **CSP `frame-ancestors`** (旧 `X-Frame-Options`)。**CORS (`Access-Control-Allow-Origin`)** は fetch 用で iframe には無関係。embed エンドポイントには CORS ヘッダを出さない (誤って出すと「埋め込み許可したつもり」の混乱招く)。
 
+### 外部 player URL を返すプラグインは「その URL が iframe 可能か」を実装前に確認する (phase19.1)
+
+`Summary.player.url` に **外部サイトの URL を直接入れる** プラグイン (`youtube` の oEmbed iframe、`google-drive` の `/preview` 等) を作るとき、対象サイトが第三者 framing を許可しているかを **`curl -I` で実装前に確認する**:
+
+```bash
+curl -sI "https://target.example/embed-url" | grep -iE "x-frame-options|content-security-policy"
+```
+
+- **`X-Frame-Options: SAMEORIGIN` / `DENY`** または CSP `frame-ancestors 'self'` を返すサイトは **構造的に iframe 不可** (Misskey の preview 枠に出ない)。回避不能なのでプラグイン化しても無駄。
+  - 実例 (phase19.1): **Google Drive** `…/preview` は frame ブロックヘッダなし → iframe player 可。**Google Photos** `photos.google.com` は `X-Frame-Options: SAMEORIGIN` → iframe 不可、card 表示 (`og:image` → thumbnail) しか手段がない。同じ「Google の共有 URL」でも可否が割れる。
+- iframe 不可サイトで「リッチ表示」を諦めたくない場合の代替は **card のみ** (`thumbnail` / `medias[]` に画像を出す)。ただし対象が SPA で `og:image` を JS 動的注入していると fail mode I で取れない (`docs/knowhow/spa-dynamic-ogp-unfixable.md`)。
+- `player.url` は完全ハードコードのテンプレートでも `new URL(playerUrl).protocol !== 'https:'` の再検証を残す (組み立て方変更時の安全網)。外部 URL を入れる以上、出口 sanitize (`docs/knowhow/sanitize-and-agent-patterns.md`) と二重で `https:` を保証する。
+
+### player のアスペクト比を外部 thumbnail の pixel 寸法から決める (phase19.1 followup)
+
+iframe player の `width`/`height` は **絶対値ではなく比率** (Misskey は `padding-bottom: height/width * 100%`)。ハードコード (例 16:9) だと **縦動画が横長枠でレターボックス**になる。動画 / 画像の **実アスペクト比が事前に分からない** とき、対象サイトが「実寸比を保った thumbnail」を公開していれば、その画像の pixel 寸法を読んで `width`/`height` に入れれば向きが正しく出る。
+
+- 実例 (Google Drive): `drive.google.com/thumbnail?id=<id>&sz=w1000` → 横動画 JPEG `1000×562` / 縦動画 JPEG `1000×1778`。この比率を player にそのまま入れると縦動画が縦長表示になる。
+- **寸法パーサは外部依存を増やさず自前で**: JPEG/PNG/GIF/WebP はヘッダ先頭バイトだけで寸法が読める (`src/utils/image-dimensions.ts`)。完全デコード不要なので数 KB の先頭チャンクで足りる。
+- **落とし穴**: `got` の `rawBody` は **`Uint8Array`** で返り、`Buffer` ではない。`buf.readUInt16BE` 等の Buffer ヘルパは無いので `Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength)` で wrap する (コピーなし view 共有)。`Buffer.isBuffer(rawBody)` は false になる点に注意。
+- **グレースフルデグレード必須**: 寸法フェッチは独立 `try/catch` にして、失敗時は安全なデフォルト比率 (16:9 等) で player を成立させる。メタ補完 (title 等) と並列で投げるなら `Promise.all` だが、片方の失敗が全体を倒さないよう各々で catch する。
+
+### 外部 iframe player のコントロール崩れを CSS scale 縮小ラッパーで回避 (phase19.1 followup #4)
+
+外部サイトの iframe player (Google Drive `/preview` 等) を狭い幅 (Misskey カード ~200px) で表示すると、**そのプレイヤーのコントロール UI に最小幅があって崩れる**ことがある。特に **Drive はタッチデバイスを検出するとスマホ用 UI (大きいボタン) に切り替える**ため、デスクトップでは崩れずスマホ (DevTools エミュレート含む) で崩れる、という再現条件になる。cross-origin なので中身の CSS は触れない。
+
+解決: `renderEmbed` で **外部 iframe を「コントロールが崩れない固定幅」で描画し、CSS `transform: scale()` でカード幅に縮小**する。Drive プレイヤーは「自分は広い幅」と認識してコントロールを崩さず描画し、それを縮小表示する。
+
+- **固定描画幅 (`RENDER_WIDTH`) は実機で特定**: Drive は実測 **900px** から崩れなくなる (デスクトップは 600px で足りるがスマホ UI は 900px 必要)。RW を大きくすると scale が小さくなり (コントロールも小さく表示される) が、崩れて操作不能よりは良い。
+- **レスポンシブ scale は CSS container query length unit で JS なし実現**: 外側に `container-type: size` (cqi=幅 / cqb=高さ 両方有効)、内部 iframe を `width: <RW>px` + 実比率の高さで描画。`calc(100cqi / <RW>px)` は「コンテナ幅 ÷ 固定幅」の無次元比として解決される。これで embed CSP `default-src 'none'` を緩めずに (= `<script>` なしで) カード幅追従できる。`cqw`/`%` ベースや `zoom` は今回不安定だった、`cqi`/`cqb` + 固定 px 描画が確実。
+- **クロップを避けるには contain scale (`min(cqi, cqb)`)**: アスペクト比制限 (下記) で外箱を実比率と違う形にすると、`scale(100cqi/RW)` の **幅基準 scale だけだと動画が箱いっぱいに広がりクロップ**される。`transform: translate(-50%,-50%) scale(min(calc(100cqi/<RW>px), calc(100cqb/<innerHeight>px)))` + 中央寄せにすると **`object-fit: contain` 相当**で「幅も高さも箱を超えない最大倍率」になり、実比率のままレターボックス (左右 or 上下の余白) で収まる。
+- **縦長コンテンツは「固定 px 高さモード」で画面幅依存を断つ**: ヘッダ寸法をそのまま player.width/height に流すと、**デスクトップの広いカード幅で縦動画 (h/w≈1.78) が画面を埋める**ほど高さが過大になる。Misskey の `MkUrlPreview.vue` は `player.width` が **falsy のとき** 高さ計算を `padding-top:(height/width)*100%` (比率) から **`padding-top:<height>px` (絶対 px)** に切り替える。これを利用し、**縦動画は `player.width=null` + `player.height=固定 px` (例 480) を返す**と、デスクトップ/スマホ問わず高さが一定になり巨大化しない。その固定 px の箱に内側 iframe を上記 contain でレターボックス表示する。横動画・正方形 (h/w<=1) は実比率のまま。絶対値上限 (MAX_DIM、寸法パーサ層) と比率対策 (dims→player 写像層) はレイヤを分ける。
+- **二重 aspect-ratio に注意**: Misskey/dev は embed iframe 自体に `aspect-ratio: player.width/height` を設定する。内部 stage で再度 `aspect-ratio` を掛けると二重になりずれる。stage は `height: 100%` (`container-type: size`) で embed iframe いっぱいに広げ、外箱の aspect-ratio に内側を contain で合わせる。
+- **CSP**: 内部に外部 iframe を埋め込むため `EmbedRenderResult.cspDirectives = { 'frame-src': [origin] }` で配信元 origin を宣言 → embed エンドポイントが許可ディレクティブ + origin-only 再検証して CSP に追加 (`frameAncestors` と同じインジェクション防御)。ディレクティブ名をマップ化したことで将来 `media-src` 等が必要でも embed 側コード変更不要。
+- 実装: 汎用 `src/utils/scaled-iframe-embed.ts` の `renderScaledIframeEmbed` (`renderWidth` 引数化、provider 非依存)。実機検証は **必ずブラウザの DevTools スマホエミュレートで** (デスクトップだけだと崩れを見逃す。Drive はタッチデバイスでコントロールが大きくなるため、デスクトップの最小幅 600px ではなく 900px が必要)。
+
+### 外部サイトの動画を `<video>` で直再生できないケース: CORP / Sec-Fetch (phase19.1 followup #4)
+
+「iframe player のコントロールが気に入らないから、元動画を取って自前 `<video>` で再生したい」という発想は、**Google Drive のような大手では原理的に塞がれている**ことが多い。Drive の直 DL / ストリーミング URL を `<video src>` に入れても再生できない理由 (実機で全滅を確認):
+
+- **`Cross-Origin-Resource-Policy: same-site`**: 第三者サイトのブラウザからの読み込みを完全ブロック (`Access-Control-Allow-Origin: *` があっても CORP が上位で効く)。`<video src>` / `crossorigin` / `fetch()+blob` のいずれも失敗。
+- **`Sec-Fetch-Site: cross-site` で 403**: download URL はブラウザが自動付与する `Sec-Fetch-*` を見て cross-site を 403。`Sec-Fetch-*` は JS から変更不可。
+- **`videoplayback` 内部ストリーム**: `application/vnd.yt-ump` (生 mp4 でない) + `ip=` バインド + CORS 不一致で `<video>` 不可。
+- **コーデック**: 新しい iPhone は HEVC、手元エンコードで AV1 等、Chrome/Firefox 非対応コーデックが混在 (`ffprobe -show_entries stream=codec_name` で確認可)。
+- **最大の罠**: **curl / ffprobe は CORP / Sec-Fetch を無視する**ため「サーバ的には 206 + CORS + Range で取れる」が、ブラウザの `<video>` は再生できない。**サーバ側 curl 検証だけで「再生できる」と判断してはいけない。必ずブラウザ実機 (`<video>` の `error.code` / DevTools Network の 403) で検証する**。
+- **結論**: iframe player でしか再生できないサイトは、上記の scale 縮小ラッパーで UI を整える方向に倒す (proxy 中継で CORP を剥がすのは帯域非現実的、コーデック非対応は proxy でも解決しない)。
+
 ### `frame-ancestors *` のデフォルト + warning
 
 開発初期は `*` で全許可だが、商用は `https://misskey.example.com` 等で明示制限すべき。config-loader で `*` を含む場合は **stderr に warning** を出す:

@@ -8,7 +8,11 @@
 
 ## オーナーフィードバック
 
+- **2026-06-01 phase19.1 (google-drive)**: 初版を「title/thumbnail は匿名取得不能なので null」と設計したが、オーナーの「縦動画を縦長プレビューできるか?」という追加質問を受けて再調査したところ、**前提が誤りだった**。`/view` を `facebookexternalhit` UA で叩くと `og:title` に file 名が入る + 公開 thumbnail エンドポイント (`/thumbnail?id=...`) が実アスペクト比の画像を返す、という 2 つの匿名取得経路が存在した。**教訓**: 「API が無いから取れない」と早期に結論づけず、`curl` で UA を変えた黒箱比較 (skill `/url-preview-check` の手法) を **実装前**に一通り回すべき。オーナーの「できるか?」という素朴な問いが再調査のトリガーになった = 実装を見せて早めにフィードバックをもらう価値が高い
+
 ## 問題の記録
+
+- **2026-06-01 phase19.1**: `got` の `res.rawBody` は **`Uint8Array` であって `Buffer` ではない**。`Buffer.isBuffer(rawBody)` は false を返し、`rawBody.readUInt16BE` 等の Buffer ヘルパも無いため、画像ヘッダ寸法パーサに直接渡すと `TypeError: buf.readUInt16BE is not a function` で落ちる (E2E で発覚、typecheck/unit はすり抜けた)。対策: パーサ側で `Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength)` (コピーなし view 共有、byteOffset 考慮必須) で wrap。同種の「`rawBody` をバイナリとして読む」新規コードで再発しうる。`docs/knowhow/embed-endpoint-design.md` に落とし穴として記録済
 
 - **2026-05-05 phase11.4 / 6.1 派生バグ**: 新規プラグイン (`npmjs` / `twitter`) が両 example の `[plugins.allowed]` リストに反映されておらず、本番で **deploy example の通り設定すると新規プラグインが無効化される** 状態が露呈。現象: `https://www.npmjs.com/package/<pkg>` が `general()` 経由で Cloudflare に直叩きされ 403。CLAUDE.md ステップ 4.5「設定ファイル example の更新（特に修正漏れしやすい！）→ `config.example.toml`（ルート）と `docs/deploy-examples/summaly-config.example.toml`（デプロイ用）の **両方**」というチェックが既に明記されているが、phase6.1 / phase11.4 の品質ゲートで両ファイル更新が漏れた
   - 直接の原因: `[plugins.allowed]` がオプトイン許可リスト方式で、新規プラグインを足しても自動で有効にならない fail-close 仕様

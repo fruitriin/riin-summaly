@@ -25,6 +25,7 @@ summaly のプラグインシステムと、組み込み 14 プラグインの�
   - [yodobashi](#yodobashi)
   - [sqex](#sqex)
   - [dmm (FANZA)](#dmm-fanza)
+  - [google-drive](#google-drive)
 - [カスタムプラグインの書き方](#カスタムプラグインの書き方)
 - [共通ユーティリティ](#共通ユーティリティ)
 
@@ -297,6 +298,26 @@ interface SummalyPlugin {
 | 副作用 | プラグイン内で `fallbackUserAgent` / `fallbackRetryCategories` を **明示的に未設定** にして UA 上書きが発生しないようにしている (`nintendo-store` と同じ) |
 | 運用要件 | NSFW 慣例で両 config example の `[plugins].allowed` に `# "dmm",` (コメントアウト) で並べる。デプロイ運用者が明示的にオプトインしなければ起動しない。`[plugins].allowed` で `"dmm"` を有効化すると `[embed].allowedPlugins` の auto-fill (phase16.3) で embed も自動的に有効化される |
 | pure 関数 export | `composeEmbedHtml({ title, description, thumbnail, sitename })` をテスト容易性のため pure 関数として export (XSS 防御テスト含む 9 件のユニットテストを担保) |
+
+### google-drive
+
+実装: [src/plugins/google-drive.ts](../src/plugins/google-drive.ts)
+
+| 項目 | 内容 |
+|:--|:--|
+| マッチ | `drive.google.com` (anchored host) かつ pathname が `/file/d/<id>` で始まるもの。`/view` / `/preview` / `/edit` / 末尾なし いずれも許容。`?usp=sharing` 等のクエリは無視 |
+| 取得方法 | URL から file ID を正規表現 (`/^\/file\/d\/([a-zA-Z0-9_-]{10,200})(?:\/\|$)/`) で抽出し、Google 公式の embed URL `https://drive.google.com/file/d/<id>/preview` を `Summary.player.url` に組み立てる。`extractFileId(url)` / `buildSummaryFromUrl(url)` を pure 関数として export (テスト容易化)。さらに `summarize()` は **2 本の補助フェッチを並列実行** してメタを補完する (下記) |
+| player (2 経路) | **embed 有効時 (Fastify モード + `embedBaseUrl` 設定)**: `player.url = <embedBaseUrl>/embed?url=<原 URL>` に向け、`renderEmbed` が Drive `/preview` iframe を **CSS scale で縮小ラップ**して返す (下記「scale 縮小ラッパー」)。**スマホ幅でもコントロールが崩れない**。**embed 無効時 (library mode 等)**: Drive 公式 `/preview` iframe 直 (フォールバック)。`composePlayerUrl(url, id, embedBaseUrl)` で分岐 (pure export)。`allow` = `PLAYER_ALLOW_OEMBED` |
+| scale 縮小ラッパー (`renderEmbed`) | **背景**: Drive `/preview` プレイヤーのコントロールバーには最小幅があり (実測。特に **タッチデバイスではスマホ用 UI でボタンが大きくなる**)、Misskey カード内の狭い実描画幅 (~200px) ではコントロールが崩れて操作不能になる (Drive 側 UI の問題で `/preview` を直接スマホで開いても崩れる)。**解決**: 汎用 `src/utils/scaled-iframe-embed.ts` の `renderScaledIframeEmbed` が内部 Drive iframe を **固定 `renderWidth=900px` (スマホ UI でコントロールが崩れない最小幅、`DRIVE_RENDER_WIDTH`)** + **実比率の高さ**で描画し、`container-type: size` (cqi 幅 / cqb 高さ) + 中央寄せ + `transform: scale(min(100cqi/900px, 100cqb/<innerHeight>px))` で外箱に **`object-fit: contain` 相当 (レターボックス)** で収める。Drive プレイヤーは「自分は 900px 幅」と認識してコントロールを崩さず描画し、CSS でカード幅に追従縮小する。**JS 不要** (embed CSP `default-src 'none'` を緩めない)。CSP は `EmbedRenderResult.cspDirectives = { 'frame-src': ['https://drive.google.com'] }` で宣言 (embed 側で origin-only 再検証)。実機検証で横/縦動画 + スマホエミュレート + デスクトップで崩れず動作を確認 (2026-06-01) |
+| アスペクト比 (縦動画対応 + デスクトップ巨大化対策) | **公開 thumbnail エンドポイント** `https://drive.google.com/thumbnail?id=<id>&sz=w1000` は file の実アスペクト比を保った画像を返す (縦動画なら縦長 JPEG)。`src/utils/image-dimensions.ts` の `getImageDimensions` で pixel 寸法を読む。**縦動画 (h/w>1) は `player.width=null` + `player.height=480px` (固定 px 高さ)** を返す (`playerBox`): summaly は PC/SP を判別できない固定レスポンスのため、デスクトップの広いカード幅で縦動画 (h/w≈1.78) を比率で渡すと高さが過大になり画面を埋める。Misskey の `MkUrlPreview.vue` は `player.width` が falsy のとき `padding-top:<height>px` (= 画面幅に依存しない絶対 px) で高さを決めるため、これで **デスクトップ/スマホ問わず高さ 480px 一定**になる。その固定 px の箱に **内側 Drive iframe を実比率のまま contain (レターボックス) 表示**するのでクロップされない。横動画・正方形 (h/w<=1) は実比率で素通し。取得失敗時は **16:9 にフォールバック**。実測: 横動画 → `1000×562` (比率)、縦動画 → `width=null, height=480` (固定 px、内側は実比率 9:16 レターボックス) |
+| title | `/view` ページを `facebookexternalhit/1.1` UA で叩くと Drive が `og:title` に **file 名**を返す (匿名で取れる唯一のメタデータ)。これを `Summary.title` に採用 (例: 「cam01.mp4」)。取得失敗時は null |
+| thumbnail | アスペクト比判定で取得した thumbnail URL (`…/thumbnail?id=<id>&sz=w1000`) を `Summary.thumbnail` にも採用。player 非対応クライアントでも向き付きの絵が出る。取得失敗時は null |
+| グレースフルデグレード | thumbnail / title の各フェッチは独立した `try/catch` + `Promise.all` で、どちらが失敗してもプレビュー自体は base (`/preview` player + 16:9) で成立する。フェッチには 8 秒 timeout + 2 MiB content-length cap |
+| `/preview` の汎用性 | Google の `/preview` は動画・PDF・画像・Google Docs すべてをレンダリングするため、URL から file 種別を判定する必要がない (Drive は URL に種別を露出しない)。同一コードで全種別をカバー |
+| `skipRedirectResolution` の必要性 | `/view` URL は `summaly()` 冒頭の HEAD probe (`SummalyBot` UA) でログインゲートにリダイレクトされうる。本プラグインは scrape せず URL から player を組み立てるだけなので probe 先は無関係だが、probe が別ホストへ飛んで `test()` が外れ汎用パスに落ちるのを防ぐため `skipRedirectResolution = true` を宣言 (純損失なし) |
+| 非公開 file の扱い | summaly は file の公開状態を検証しない (匿名 API が無いため不可能)。非公開 file の player URL を返すと iframe 内で Google がログイン要求を表示する (Google 側の正常動作、情報漏洩リスクなし) |
+| Google フォト非対応 | `photos.google.com` は `X-Frame-Options: SAMEORIGIN` を返すため第三者サイト (Misskey) の iframe には**構造的に**表示できない (実機確認 2026-06-01)。本プラグインは Drive のみを扱う。将来 Playwright モード (phase15.1) 導入後に「`og:image` カバー画像を thumbnail に出す card 表示のみ (player なし)」で再検討する余地あり |
+| 運用要件 | 両 config example の `[plugins].allowed` に `"google-drive"` (アクティブ形式、NSFW ではない)。embed エンドポイントは使わない (`renderEmbed` 未実装、player iframe は Drive 自身の `/preview` を直接指す) |
 
 ### syosetu (小説家になろう)
 

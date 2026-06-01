@@ -63,4 +63,21 @@ export interface EmbedRenderResult {
 
 	/** プレイヤーの推奨高さ (アスペクト比計算用、絶対値は無視される) */
 	height: number;
+
+	/**
+	 * embed HTML が **外部リソース (iframe / media 等) を埋め込む** 場合に、許可する配信元を
+	 * **CSP ディレクティブ名 → origin 配列** のマップで宣言する。
+	 *
+	 * 既定の embed CSP は `default-src 'none'` で外部リソースをブロックするため、外部プレイヤーを
+	 * ラップするプラグインはここで「どのディレクティブにどの origin を足すか」を宣言する。
+	 * embed エンドポイントが各 origin を **origin-only に再検証** して CSP に反映する。
+	 *
+	 * 例: `{ 'frame-src': ['https://drive.google.com'] }` (Drive `/preview` を iframe ラップ)。
+	 * 将来 `<video>` 等を埋めるプラグインは `{ 'media-src': [...] }` を足すだけで、embed 側のコード変更不要。
+	 *
+	 * **契約**: 各 origin 値は **origin (scheme + host[:port]) のみ**の `https:` URL であること
+	 * (path / query / hash / `;` を含めると CSP ヘッダインジェクションの恐れ。embed 側で再検証する)。
+	 * ディレクティブ名は許可リスト (`frame-src` / `media-src` 等) で制限される。未設定なら追加なし。
+	 */
+	cspDirectives?: Record<string, string[]>;
 }

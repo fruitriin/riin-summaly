@@ -24,6 +24,7 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { summaly, type SummalyOptions, type SummalyResult } from '../src/index.js';
 import { plugins as builtinPlugins } from '../src/plugins/index.js';
+import { buildCspDirectiveParts } from '../src/utils/csp-origin.js';
 import {
 	DomainStrategyCache,
 	getActiveCache,
@@ -220,11 +221,22 @@ app.get<{ Querystring: { url?: string } }>('/embed', async (req, reply) => {
 		reply.type('text/plain; charset=utf-8');
 		return 'render failed';
 	}
+	// 本番 (src/index.ts) と同じ body size cap (512KB)。dev/prod の guard parity を保つ。
+	if (Buffer.byteLength(result.body, 'utf8') > 512 * 1024) {
+		app.log.error('embed: renderEmbed body too large, rejecting');
+		reply.code(500);
+		reply.type('text/plain; charset=utf-8');
+		return 'render failed';
+	}
 	reply.type('text/html; charset=utf-8');
+	// 外部リソース許可 (frame-src / media-src 等): プラグインが cspDirectives を宣言した場合のみ追加
+	// (ディレクティブ許可リスト + origin-only 再検証、本番と共有 util)。
+	const cspExtra = buildCspDirectiveParts(result.cspDirectives);
+	const cspExtraPart = cspExtra.length > 0 ? `; ${cspExtra.join('; ')}` : '';
 	// dev では frame-ancestors を自身 (= dev UI) に限定。本番は config の frameAncestors。
 	reply.header(
 		'Content-Security-Policy',
-		`default-src 'none'; img-src https:; style-src 'unsafe-inline'; frame-ancestors 'self' http://localhost:${port} http://127.0.0.1:${port}`,
+		`default-src 'none'; img-src https:; style-src 'unsafe-inline'${cspExtraPart}; frame-ancestors 'self' http://localhost:${port} http://127.0.0.1:${port}`,
 	);
 	reply.header('X-Content-Type-Options', 'nosniff');
 	reply.header('Referrer-Policy', 'no-referrer');
