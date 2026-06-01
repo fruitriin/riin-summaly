@@ -1425,10 +1425,11 @@ describe('local tests', () => {
 				const id = '11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3';
 				const mkBase = () => gd.buildSummaryFromUrl(new URL(`https://drive.google.com/file/d/${id}/view`))!;
 
-				// 縦動画: dims を渡すと player が縦長 (height > width) に上書きされ thumbnail も入る
+				// 縦動画: dims を渡すと player が縦長 (height > width) に上書きされ thumbnail も入る。
+				// コントロールバー補正で height に余白が上乗せされる (1778 + round(1000*48/640)=75 → 1853)。
 				const vertical = gd.applyMeta(mkBase(), id, { width: 1000, height: 1778 }, 'cam.mov');
 				expect(vertical.player.width).toBe(1000);
-				expect(vertical.player.height).toBe(1778);
+				expect(vertical.player.height).toBe(1853);
 				expect(vertical.player.height! > vertical.player.width!).toBe(true);
 				expect(vertical.thumbnail).toBe(`https://drive.google.com/thumbnail?id=${id}&sz=w1000`);
 				expect(vertical.title).toBe('cam.mov');
@@ -1445,6 +1446,41 @@ describe('local tests', () => {
 				expect(titleOnly.title).toBe('doc.pdf');
 				expect(titleOnly.player.width).toBe(16);
 				expect(titleOnly.thumbnail).toBeNull();
+			});
+
+			test('google-drive プラグインの withControlBar() は height にバー余白を上乗せする (phase19.1 followup #2)', async () => {
+				const gd = await import('@/plugins/google-drive.js');
+				// 横動画 (1000x562): バー = round(1000*48/640) = 75 → height 637
+				expect(gd.withControlBar(1000, 562)).toEqual({ width: 1000, height: 637 });
+				// 縦動画 (1000x1778): 1778 + 75 = 1853
+				expect(gd.withControlBar(1000, 1778)).toEqual({ width: 1000, height: 1853 });
+				// width はそのまま、加算は height のみ
+				const r = gd.withControlBar(640, 360);  // バー = round(640*48/640) = 48
+				expect(r.width).toBe(640);
+				expect(r.height).toBe(408);
+				// 不正入力 (0 / 負) はそのまま返す
+				expect(gd.withControlBar(0, 100)).toEqual({ width: 0, height: 100 });
+			});
+
+			test('google-drive プラグインの composePlayerUrl() は embedBaseUrl 有無で player.url を切り替える (phase19.1 followup #3)', async () => {
+				const gd = await import('@/plugins/google-drive.js');
+				const url = new URL('https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3/view');
+				const id = '11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3';
+
+				// embedBaseUrl 無し → Drive 公式 /preview iframe
+				expect(gd.composePlayerUrl(url, id, undefined)).toBe(`https://drive.google.com/file/d/${id}/preview`);
+				expect(gd.composePlayerUrl(url, id, '')).toBe(`https://drive.google.com/file/d/${id}/preview`);
+
+				// embedBaseUrl 有り → 自前 video プレイヤーの embed エンドポイント経由
+				const embed = gd.composePlayerUrl(url, id, 'https://summaly.example');
+				expect(embed).toBe(`https://summaly.example/embed?url=${encodeURIComponent(url.href)}`);
+				// 末尾スラッシュ (複数含む) は正規化される
+				expect(gd.composePlayerUrl(url, id, 'https://summaly.example/')).toBe(embed);
+				expect(gd.composePlayerUrl(url, id, 'https://summaly.example//')).toBe(embed);
+
+				// buildSummaryFromUrl も embedBaseUrl を反映する
+				const s = gd.buildSummaryFromUrl(url, 'https://summaly.example');
+				expect(s!.player.url).toBe(embed);
 			});
 
 			test('google-drive プラグインは異常に短い / 長い file ID を弾く (phase19.1 W-1)', () => {

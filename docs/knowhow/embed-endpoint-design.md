@@ -125,6 +125,23 @@ for (const origin of v) {
 
 iframe 許可は **CSP `frame-ancestors`** (旧 `X-Frame-Options`)。**CORS (`Access-Control-Allow-Origin`)** は fetch 用で iframe には無関係。embed エンドポイントには CORS ヘッダを出さない (誤って出すと「埋め込み許可したつもり」の混乱招く)。
 
+### 外部 iframe player が壊れるとき: 自前 `<video>` + 直ストリーミング URL に逃がす (phase19.1 followup #3)
+
+外部サイトの iframe player (Google Drive `/preview` 等) を `player.url` に入れたが、**その iframe 内の UI が特定環境 (スマホ幅) で崩れる**ことがある。崩れが iframe 側 (cross-origin) の問題なら **CSS でも比率でも直せない** (cross-origin の中身は触れない、iframe を crop してもオーバーレイ型コントロールは動画ごと切れる)。切り分けは「**対象サイトの iframe URL をブラウザで直接開いて崩れるか**」— 直接開いても崩れるなら summaly 側では直せない。
+
+逃げ道: **元データ (動画ファイル) の直ストリーミング URL を取得して `renderEmbed` で自前の `<video controls>` を返す**。成立条件は、その URL が `<video src>` で読めること:
+
+```bash
+curl -sI -H "Range: bytes=0-1023" "<direct-stream-url>" | grep -iE "access-control-allow-origin|accept-ranges|content-range"
+# 必須: access-control-allow-origin: *  (CORS、第三者 <video> から読める)
+#       accept-ranges: bytes / 206 Partial Content  (seek 可能)
+```
+
+- 実例 (Google Drive): `drive.usercontent.google.com/download?id=<id>&export=download&confirm=t&uuid=<uuid>` が CORS + Range を満たす。大きい file は「ウイルススキャン確認」HTML を挟むので、その form の `confirm`/`uuid` を抽出して付け直す (gdown と同方式、`src/utils/drive-download.ts`)。
+- **summaly はバイナリを中継しない**: URL を `<video src>` に渡すだけで再生はブラウザ↔配信元の直結。中継 proxy 化すると帯域を食うので避ける。
+- **CSP**: `renderEmbed` の embed は `default-src 'none'` なので `<video src=外部URL>` がブロックされる。`EmbedRenderResult.mediaSrc?: string[]` で配信元 origin を宣言 → embed エンドポイントが `media-src` に追加。各 origin は **origin-only に再検証** (path/query/`;` 混入を弾く、frameAncestors と同じ CSP インジェクション防御)。
+- **player.url の分岐**: embed 有効 (`embedBaseUrl` あり) のときだけ自前 video 経路 (`/embed?url=...`)、無効なら外部 iframe にフォールバック (`composePlayerUrl` で分岐)。library mode では embed が無いので iframe のまま。
+
 ### 外部 player URL を返すプラグインは「その URL が iframe 可能か」を実装前に確認する (phase19.1)
 
 `Summary.player.url` に **外部サイトの URL を直接入れる** プラグイン (`youtube` の oEmbed iframe、`google-drive` の `/preview` 等) を作るとき、対象サイトが第三者 framing を許可しているかを **`curl -I` で実装前に確認する**:

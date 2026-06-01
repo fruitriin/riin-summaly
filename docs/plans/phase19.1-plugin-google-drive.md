@@ -177,6 +177,28 @@ export const skipRedirectResolution = true;
 - knowhow: `docs/knowhow/embed-endpoint-design.md` に「外部 thumbnail の pixel 寸法で player アスペクト比を決める」パターンを追記。
 - **followup レビュー (addf-code-review-agent)**: Critical 0。バイナリパースの境界チェック / SSRF (private IP ガードは redirect 後の最終 IP を検査) は安全確認。W-1 (`String(res.body)` encoding) → コメント明示。W-2 (WebP テスト無し) → VP8/VP8L/VP8X テスト追加。S-1 (typeFilter 意図) / S-2 (JPEG EOI 早期打ち切り) 対応。S-3 (mutation のテスト不足) → マージ処理を `applyMeta` pure 関数に抽出してユニットテスト追加。
 
+## Followup #3 (2026-06-01): スマホでコントロールが崩れる → 自前 `<video>` プレイヤー
+
+オーナーが実機 (スマホ) で「Drive の再生コントロールが崩れる」と報告。切り分け:
+
+1. **アスペクト比補正 (followup #2 の `withControlBar`) では直らなかった** — 横動画はコントロールがほぼ全潰れ。
+2. **Drive の `/preview` をスマホブラウザで直接開いても崩れる** (Misskey 非経由) → **Drive 側プレイヤー UI の問題で、iframe 比率調整では直せない**と確定。
+3. `/preview` のクエリ (`?controls=0` 等) は Drive が無視 → UI 制御レバー無し。
+
+**解決: gdown 方式で実動画を `<video>` 直再生**。検証で判明:
+- Drive 直 DL URL `drive.usercontent.google.com/download?id=<id>&export=download` は大きい file だと「ウイルススキャン確認」HTML を返すが、その form の `confirm`/`uuid` を付け直すと実バイナリに到達。
+- 解決済み URL は **`Access-Control-Allow-Origin: *` + `Accept-Ranges: bytes`** (206 Partial Content) を返す → 第三者サイトの `<video>` から CORS + seek 再生可能 (実機確認)。
+
+**実装**:
+- `src/utils/drive-download.ts`: `resolveDownloadUrl(id)` で download ページを叩き、HTML なら `resolveConfirmUrlFromHtml` で `confirm`/`uuid` 解決、バイナリなら素 URL をそのまま使う。
+- `src/utils/drive-video-embed.ts`: `composeDriveVideoEmbedHtml` で `<video controls playsinline poster>` のレスポンシブ HTML 生成 (pure、`<script>` なし、`https:` のみ + escapeHtml)。
+- google-drive プラグイン: `renderEmbed` 実装 + `composePlayerUrl(url, id, embedBaseUrl)` で player.url を分岐 (embed 有効 → `/embed?url=...`、無効 → Drive `/preview` iframe フォールバック)。embed 経路ではアスペクト比は実寸そのまま (コントロールバー余白なし)。
+- `EmbedRenderResult.mediaSrc?: string[]` 新設 → embed CSP に `media-src` を **origin-only 再検証**して追加 (本番 `src/index.ts` + dev `dev/server.ts`)。
+- **バイナリは summaly が中継しない** (URL を `<video src>` に渡すだけ、再生はブラウザ↔Drive 直、帯域負担ゼロ)。
+- E2E: dev `/embed` を curl → CSP に `media-src https://drive.usercontent.google.com`、`<video src>` に解決済み confirm URL、解決 URL は 206 + CORS + Range を確認。
+- テスト: `test/drive-video-embed.test.ts` 8 件 + `composePlayerUrl` 1 件 (計 696 件 pass)。
+- **既知の制約**: 非公式 download URL 依存 (Drive 仕様変更で壊れうる)。uuid は `renderEmbed` 都度解決するため鮮度問題なし (embed は毎回生成)。embed 無効環境では従来 iframe にフォールバック (スマホ崩れは残るが Drive 側の制約)。
+
 ### Step 5: 本番動作確認 (デプロイ後 — 運用者 / オーナー側)
 
 skill `/url-preview-check` Phase 6 のバリエーションで叩く:
