@@ -221,18 +221,26 @@ async function resolveDriveMeta(id: string, opts?: GeneralScrapingOptions): Prom
 	return { dims, title };
 }
 
-// アスペクト比 (height/width) の許容範囲。極端比が Misskey の `padding-bottom=(height/width)*100%` を
-// 破綻させるのを防ぐ (PR #2 review。MAX_DIM の絶対値上限は `1×32767` のような極端比を素通しするため、
-// **比率** をこの層で別途 bound する)。実在動画 (縦 9:16 = h/w≈1.78、横 16:9 = h/w≈0.56) は余裕で収まり、
-// 4:1 / 1:4 を超える異常比だけ clamp する。
-const MIN_ASPECT = 1 / 4; // 横長すぎ (height/width 下限)
-const MAX_ASPECT = 4; // 縦長すぎ (height/width 上限)
+// **player の箱サイズ決定**。Misskey の `MkUrlPreview.vue` は player.width の有無で高さ計算を変える:
+//   - `player.width` あり → `padding-top: (height/width)*100%` (**比率固定** = 幅に応じて高さ可変)
+//   - `player.width` が falsy → `padding-top: <height>px` (**絶対 px 固定** = 画面幅に依存せず一定)
+//
+// **縦動画は固定 px 高さモード**: summaly は PC/SP を判別できない固定レスポンスのため、縦動画 (h/w>1) を
+// 比率で渡すとデスクトップの広いカード幅で高さが過大になり画面を埋める (実機確認 2026-06-01)。そこで縦動画は
+// **`width=null` + `height=PORTRAIT_FIXED_HEIGHT_PX`** を返し、デスクトップ/スマホ問わず高さを一定に固定する。
+// その固定 px の箱に内側 Drive iframe を実比率のまま contain (レターボックス) するのでクロップされない。
+// 横動画・正方形 (h/w<=1) は従来通り比率 (width/height) で幅に応じた自然な高さにする。
+const PORTRAIT_THRESHOLD = 1.0; // h/w がこれを超えたら縦動画扱い (固定 px 高さモード)
+const PORTRAIT_FIXED_HEIGHT_PX = 480; // 縦動画の固定表示高さ (px)。デスクトップ/スマホ共通。実機調整可
 
-/** 実寸 dims を player の `width`/`height` に落とす際、アスペクト比を [MIN_ASPECT, MAX_ASPECT] に clamp する。 */
-function clampedPlayerSize(width: number, height: number): { width: number; height: number } {
-	const ratio = height / width;
-	if (ratio < MIN_ASPECT) return { width: 1000, height: Math.round(1000 * MIN_ASPECT) };
-	if (ratio > MAX_ASPECT) return { width: 1000, height: Math.round(1000 * MAX_ASPECT) };
+/**
+ * 実寸 dims を player の箱に落とす。縦動画は `width=null`+固定 px 高さ、それ以外は実比率 (width/height)。
+ */
+function playerBox(width: number, height: number): { width: number | null; height: number } {
+	if (height / width > PORTRAIT_THRESHOLD) {
+		// 縦動画: 固定 px 高さモード (Misskey が画面幅に依存せず height px で箱を作る)。
+		return { width: null, height: PORTRAIT_FIXED_HEIGHT_PX };
+	}
 	return { width, height };
 }
 
@@ -249,8 +257,8 @@ export function applyMeta(
 	title: string | null,
 ): Summary {
 	if (dims != null) {
-		// 実アスペクト比で上書き (縦動画は height > width で縦長プレビュー)。極端比のみ clamp。
-		const { width, height } = clampedPlayerSize(dims.width, dims.height);
+		// 縦動画は width=null+固定 px 高さ、それ以外は実比率。内側 iframe は contain でレターボックス。
+		const { width, height } = playerBox(dims.width, dims.height);
 		base.player.width = width;
 		base.player.height = height;
 	}
@@ -299,10 +307,14 @@ export async function renderEmbed(url: URL, opts?: GeneralScrapingOptions): Prom
 	}
 
 	const { dims, title } = await resolveDriveMeta(id, opts);
-	// player.width/height (= embed iframe の外枠 aspect-ratio) は applyMeta と同じ clamp を通して
-	// 内部 scale ラッパーの比率とずれないようにする。dims 不明なら 16:9。
-	const { width: aspectW, height: aspectH } = dims != null ? clampedPlayerSize(dims.width, dims.height) : { width: 16, height: 9 };
+	// **外枠 (player.width/height = Misskey の embed iframe の箱)** は applyMeta と同じく playerBox で決める
+	//   (縦動画は width=null+固定 px 高さ、横動画は実比率)。**内側 iframe** は **実比率** を渡し、箱に contain
+	//   (`scale(min(cqi, cqb))`) でレターボックス表示する。これにより縦動画はデスクトップ/スマホで高さ一定、
+	//   かつクロップされず実比率のまま収まる。dims 不明なら 16:9。
+	const inner = dims ?? { width: 16, height: 9 };
 
-	const body = renderScaledIframeEmbed({ src: previewUrl(id), title, aspectW, aspectH, renderWidth: DRIVE_RENDER_WIDTH });
-	return { body, width: aspectW, height: aspectH, cspDirectives: { 'frame-src': [DRIVE_FRAME_ORIGIN] } };
+	const body = renderScaledIframeEmbed({ src: previewUrl(id), title, aspectW: inner.width, aspectH: inner.height, renderWidth: DRIVE_RENDER_WIDTH });
+	// EmbedRenderResult.width/height は embed エンドポイントでは未使用 (アスペクト比メタ情報)。実比率を返す。
+	// 実際の player の箱サイズ (縦動画 width=null+固定 px) は summarize→applyMeta が summary 側に設定する。
+	return { body, width: inner.width, height: inner.height, cspDirectives: { 'frame-src': [DRIVE_FRAME_ORIGIN] } };
 }

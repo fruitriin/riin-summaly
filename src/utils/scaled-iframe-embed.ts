@@ -50,9 +50,12 @@ export function renderScaledIframeEmbed(input: ScaledIframeEmbedInput): string {
 		return fallbackHtml(titleSafe);
 	}
 
-	// .stage: container-type:inline-size で cqi を有効化。height:100% で embed iframe いっぱいに広げ、
-	//   embed iframe 自体の aspect-ratio (player.width/height) に追従させる (二重 aspect-ratio を避ける)。
-	// .frame: 固定 rw × innerHeight で描画 → scale(calc(100cqi/rwpx)) でカード幅に縮小。
+	// .stage: container-type:size で cqi(幅)/cqb(高さ) を両方有効化。embed iframe いっぱいに広げる。
+	//   embed iframe 自体の aspect-ratio は Misskey が `player.width/height` (= clamp 済みの箱比率) で設定する。
+	// .frame: 内部 iframe を **実比率** (rw × innerHeight) で描画 → 中央寄せ + `contain` scale で箱に収める。
+	//   scale = min(100cqi/rw, 100cqb/innerHeight) で「幅も高さも箱を超えない」最大倍率 (= object-fit:contain 相当)。
+	//   箱が内部より横長なら左右に、縦長なら上下に余白 (レターボックス) ができる。これにより、player の箱比率を
+	//   clamp して高さを抑えても **動画はクロップされず実比率のまま縮小表示**される (PR #2 review / デスクトップ縦動画対策)。
 	return `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -62,8 +65,8 @@ export function renderScaledIframeEmbed(input: ScaledIframeEmbedInput): string {
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-.stage { container-type: inline-size; width: 100%; height: 100%; position: relative; overflow: hidden; background: #000; }
-.frame { position: absolute; top: 0; left: 0; width: ${rw}px; height: ${innerHeight}px; border: 0; transform-origin: top left; transform: scale(calc(100cqi / ${rw}px)); }
+.stage { container-type: size; width: 100%; height: 100%; position: relative; overflow: hidden; background: #000; }
+.frame { position: absolute; top: 50%; left: 50%; width: ${rw}px; height: ${innerHeight}px; border: 0; transform-origin: center center; transform: translate(-50%, -50%) scale(min(calc(100cqi / ${rw}px), calc(100cqb / ${innerHeight}px))); }
 </style>
 </head>
 <body>

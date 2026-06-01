@@ -221,6 +221,12 @@ export const skipRedirectResolution = true;
 - 併せて dev `/embed` に本番と同じ body size cap (512KB) 追加 (guard parity)。
 - テスト計 717 件 pass。`/code-review high` で検出した #10 (library mode 非 https embedBaseUrl) は W-2 既知事項として対象外。
 
+**派生: デスクトップ縦動画の巨大化対策 (オーナー実機 2026-06-01)**:
+- 本番 Misskey で**デスクトップ表示時に縦動画が画面を埋める**ほど巨大化する問題が判明 (縦動画 h/w≈1.78 を比率で渡すと広いカード幅で高さ過大)。
+- **Misskey `MkUrlPreview.vue` 確認**: `player.width` が **falsy のとき** 高さ計算を `padding-top:(height/width)*100%` (比率) から **`padding-top:<height>px` (絶対 px)** に切り替える。これを利用。
+- 対策: **縦動画 (h/w>1) は `player.width=null` + `player.height=480px` (固定 px 高さ)** を返す (`playerBox`)。デスクトップ/スマホ問わず高さ 480px 一定で巨大化しない。その固定 px の箱に内側 Drive iframe を **contain (レターボックス)** で収めるため、`renderScaledIframeEmbed` を contain 方式 (二重 iframe、内側実比率 + `container-type: size` + 中央寄せ + `scale(min(100cqi/RW, 100cqb/innerHeight))`) に変更。縦動画はクロップされず実比率のまま左右余白付きで収まる。横動画・正方形 (h/w<=1) は実比率で素通し。
+- 実機検証: デスクトップ幅を変えても縦動画 (width=null, height=480、内側 9:16 レターボックス) の高さが一定 + 横動画も正常を確認。`playerBox` + `renderScaledIframeEmbed` contain テストを更新 (717 件 pass)。
+
 ### Step 5: 本番動作確認 (デプロイ後 — 運用者 / オーナー側)
 
 skill `/url-preview-check` Phase 6 のバリエーションで叩く:

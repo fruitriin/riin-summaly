@@ -1447,13 +1447,18 @@ describe('local tests', () => {
 				const mkBase = () => gd.buildSummaryFromUrl(new URL(`https://drive.google.com/file/d/${id}/view`))!;
 				const thumb = `https://drive.google.com/thumbnail?id=${id}&sz=w1000`;
 
-				// 縦動画: dims を渡すと player が縦長 (height > width) に上書きされ thumbnail も入る
+				// 横動画 (16:9、clamp 範囲内): dims を渡すと player が実比率に上書きされ thumbnail も入る
+				const landscape = gd.applyMeta(mkBase(), id, { width: 1000, height: 562 }, 'cam.mov');
+				expect(landscape.player.width).toBe(1000);
+				expect(landscape.player.height).toBe(562);
+				expect(landscape.thumbnail).toBe(thumb);
+				expect(landscape.title).toBe('cam.mov');
+
+				// 縦動画 (9:16) は width=null + 固定 px 高さ (Misskey が画面幅に依存せず高さ一定にする。
+				// 内側は実比率レターボックス。デスクトップ巨大化対策)。
 				const vertical = gd.applyMeta(mkBase(), id, { width: 1000, height: 1778 }, 'cam.mov');
-				expect(vertical.player.width).toBe(1000);
-				expect(vertical.player.height).toBe(1778);
-				expect(vertical.player.height! > vertical.player.width!).toBe(true);
-				expect(vertical.thumbnail).toBe(thumb);
-				expect(vertical.title).toBe('cam.mov');
+				expect(vertical.player.width).toBeNull();
+				expect(vertical.player.height).toBe(480);
 
 				// 両方 null (寸法判定失敗): player は 16:9。**ただし thumbnail は dims と独立に採用** (PR #2 review #9)。
 				const degraded = gd.applyMeta(mkBase(), id, null, null);
@@ -1469,24 +1474,32 @@ describe('local tests', () => {
 				expect(titleOnly.thumbnail).toBe(thumb);
 			});
 
-			test('google-drive プラグインの applyMeta() は極端なアスペクト比を clamp する (PR #2 review #1)', async () => {
+			test('google-drive プラグインの applyMeta() は縦動画を width=null+固定px高さ、横動画を実比率にする (PR #2 review #1 / デスクトップ縦動画対策)', async () => {
 				const gd = await import('@/plugins/google-drive.js');
 				const id = '11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3';
 				const mkBase = () => gd.buildSummaryFromUrl(new URL(`https://drive.google.com/file/d/${id}/view`))!;
 
-				// 1×32767 (MAX_DIM 内だが極端比 height/width=32767) → 縦長上限 4:1 に clamp
+				// 縦動画 9:16 (h/w=1.778 > 1) → width=null + 固定 px 高さ 480
+				// (Misskey は player.width が falsy なら padding-top:<height>px で画面幅に依存せず高さ一定にする。
+				// 内側 iframe は実比率のまま contain レターボックス表示)。
+				const vertical = gd.applyMeta(mkBase(), id, { width: 1000, height: 1778 }, null);
+				expect(vertical.player.width).toBeNull();
+				expect(vertical.player.height).toBe(480);
+
+				// 極端縦 1×32767 (h/w 巨大) も同じく width=null + 480
 				const tall = gd.applyMeta(mkBase(), id, { width: 1, height: 32767 }, null);
-				expect(tall.player.height! / tall.player.width!).toBeLessThanOrEqual(4);
-				expect(tall.player.height! / tall.player.width!).toBeGreaterThan(1);  // 縦長は維持
+				expect(tall.player.width).toBeNull();
+				expect(tall.player.height).toBe(480);
 
-				// 32767×1 (極端横長 height/width≈0) → 横長下限 1:4 に clamp
-				const wide = gd.applyMeta(mkBase(), id, { width: 32767, height: 1 }, null);
-				expect(wide.player.height! / wide.player.width!).toBeGreaterThanOrEqual(1 / 4);
+				// 横動画 16:9 (h/w=0.5625 <= 1) は実比率で素通し (幅に応じた自然な高さ)
+				const landscape = gd.applyMeta(mkBase(), id, { width: 1000, height: 562 }, null);
+				expect(landscape.player.width).toBe(1000);
+				expect(landscape.player.height).toBe(562);
 
-				// 通常比 (縦 9:16 = h/w=1.778) は clamp されず素通し
-				const normal = gd.applyMeta(mkBase(), id, { width: 1000, height: 1778 }, null);
-				expect(normal.player.width).toBe(1000);
-				expect(normal.player.height).toBe(1778);
+				// 正方形ちょうど (h/w=1.0) は閾値以下なので実比率扱い
+				const square = gd.applyMeta(mkBase(), id, { width: 1000, height: 1000 }, null);
+				expect(square.player.width).toBe(1000);
+				expect(square.player.height).toBe(1000);
 			});
 
 			test('google-drive プラグインの extractOgTitle() は og:title を抽出・entity デコードする (PR #2 review #4)', async () => {

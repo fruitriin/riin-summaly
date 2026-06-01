@@ -12,32 +12,35 @@ import { renderScaledIframeEmbed, pickHttpsUrl } from '@/utils/scaled-iframe-emb
 const PREVIEW = 'https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3/preview';
 
 describe('renderScaledIframeEmbed', () => {
-	test('外部 iframe を cqi scale でラップした HTML を返す (renderWidth 反映)', () => {
+	test('外部 iframe を contain scale (min cqi/cqb) でラップした HTML を返す (renderWidth 反映)', () => {
 		const html = renderScaledIframeEmbed({ src: PREVIEW, title: 'cam01.mp4', aspectW: 1000, aspectH: 562, renderWidth: 900 });
 		expect(html).toContain('<!DOCTYPE html>');
-		expect(html).toContain('container-type: inline-size');
-		expect(html).toContain('scale(calc(100cqi / 900px))');
+		// container-type:size で cqi(幅)/cqb(高さ) 両方有効 → 箱に contain
+		expect(html).toContain('container-type: size');
+		// 内部 iframe 高さ = round(900 * 562/1000) = 506。contain scale = min(100cqi/900px, 100cqb/506px)
 		expect(html).toContain('width: 900px');
-		// 内部 iframe 高さ = round(900 * 562/1000) = 506
 		expect(html).toContain('height: 506px');
+		expect(html).toContain('scale(min(calc(100cqi / 900px), calc(100cqb / 506px)))');
+		// 中央寄せ (レターボックスの余白が左右/上下均等に出る)
+		expect(html).toContain('translate(-50%, -50%)');
 		expect(html).toContain(`src="${PREVIEW}"`);
 		expect(html).toContain('cam01.mp4');
 		// <script> は含まない (CSP default-src 'none' + sanity check 契約)
 		expect(/<script/i.test(html)).toBe(false);
 	});
 
-	test('縦長は内部高さが縦長になる + stage は height:100% (二重 aspect-ratio 回避)', () => {
+	test('縦長は内部 iframe を実比率の縦長で描画 (箱に contain でレターボックス)', () => {
 		const html = renderScaledIframeEmbed({ src: PREVIEW, title: null, aspectW: 1000, aspectH: 1778, renderWidth: 900 });
-		// 内部 iframe 高さ = round(900 * 1778/1000) = 1600
+		// 内部 iframe 高さ = round(900 * 1778/1000) = 1600 (実比率のまま、clamp は外箱側で行う)
 		expect(html).toContain('height: 1600px');
-		expect(html).toContain('height: 100%');
+		expect(html).toContain('scale(min(calc(100cqi / 900px), calc(100cqb / 1600px)))');
 	});
 
 	test('比率不正 (0 / 負 / NaN) は 16:9、renderWidth 不正は 900 にフォールバック', () => {
 		const html = renderScaledIframeEmbed({ src: PREVIEW, title: null, aspectW: 0, aspectH: 0, renderWidth: 0 });
-		// 16:9 + rw=900 → 内部高さ = round(900*9/16) = 506、scale も 900px
+		// 16:9 + rw=900 → 内部高さ = round(900*9/16) = 506
 		expect(html).toContain('height: 506px');
-		expect(html).toContain('scale(calc(100cqi / 900px))');
+		expect(html).toContain('scale(min(calc(100cqi / 900px), calc(100cqb / 506px)))');
 	});
 
 	test('src が null / 非 https ならフォールバック (iframe 無し)', () => {
