@@ -221,20 +221,10 @@ app.get<{ Querystring: { url?: string } }>('/embed', async (req, reply) => {
 		return 'render failed';
 	}
 	reply.type('text/html; charset=utf-8');
-	// media-src: プラグインが外部 video/audio 配信元を宣言した場合のみ追加 (origin-only に再検証)。
-	const mediaSrcOrigins = (result.mediaSrc ?? []).filter((o): o is string => {
-		try {
-			const u = new URL(o);
-			return u.protocol === 'https:' && u.pathname === '/' && u.search === '' && u.hash === '' && o === u.origin;
-		} catch {
-			return false;
-		}
-	});
-	const mediaSrcPart = mediaSrcOrigins.length > 0 ? `; media-src ${mediaSrcOrigins.join(' ')}` : '';
 	// dev では frame-ancestors を自身 (= dev UI) に限定。本番は config の frameAncestors。
 	reply.header(
 		'Content-Security-Policy',
-		`default-src 'none'; img-src https:; style-src 'unsafe-inline'${mediaSrcPart}; frame-ancestors 'self' http://localhost:${port} http://127.0.0.1:${port}`,
+		`default-src 'none'; img-src https:; style-src 'unsafe-inline'; frame-ancestors 'self' http://localhost:${port} http://127.0.0.1:${port}`,
 	);
 	reply.header('X-Content-Type-Options', 'nosniff');
 	reply.header('Referrer-Policy', 'no-referrer');

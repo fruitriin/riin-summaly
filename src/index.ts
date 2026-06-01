@@ -1011,20 +1011,6 @@ export default function (fastify: FastifyInstance, options: SummalyOptions, done
 			'form-action \'none\'',
 			`frame-ancestors ${frameAncestors}`,
 		];
-		// **media-src (外部 video/audio 配信元)**: プラグインが `mediaSrc` を宣言した場合のみ追加。
-		// 各要素は **origin-only の https: URL** に再検証する (CSP ヘッダインジェクション防御、`;` や
-		// path 混入を構造的に弾く)。1 つでも不正なら media-src 自体を出さない (fail-close)。
-		const mediaSrcOrigins = (result.mediaSrc ?? []).filter((o): o is string => {
-			try {
-				const u = new URL(o);
-				return u.protocol === 'https:' && u.pathname === '/' && u.search === '' && u.hash === '' && o === u.origin;
-			} catch {
-				return false;
-			}
-		});
-		if (mediaSrcOrigins.length > 0) {
-			cspParts.push(`media-src ${mediaSrcOrigins.join(' ')}`);
-		}
 		reply.header('Content-Security-Policy', cspParts.join('; '));
 		reply.header('X-Content-Type-Options', 'nosniff');
 		reply.header('Referrer-Policy', 'no-referrer');

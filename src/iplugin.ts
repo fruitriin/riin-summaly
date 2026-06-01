@@ -63,17 +63,4 @@ export interface EmbedRenderResult {
 
 	/** プレイヤーの推奨高さ (アスペクト比計算用、絶対値は無視される) */
 	height: number;
-
-	/**
-	 * embed HTML が **外部 media** (`<video>` / `<audio>`) を読み込む場合に、その配信元を CSP の
-	 * `media-src` に追加するための origin 一覧 (例: `['https://drive.usercontent.google.com']`)。
-	 *
-	 * 既定の embed CSP は `default-src 'none'` で `<video src=外部URL>` をブロックするため、
-	 * 自前の HTML5 video プレイヤーを返すプラグイン (google-drive) はここで読み込み元を宣言する。
-	 *
-	 * **契約**: 各要素は **origin (scheme + host[:port]) のみ**の `https:` URL であること
-	 * (path / query / hash を含めると CSP ヘッダインジェクションの恐れ。embed 側で origin-only に再検証する)。
-	 * 未設定なら `media-src` ディレクティブは追加されない (= 従来通り外部 media 不可)。
-	 */
-	mediaSrc?: string[];
 }
