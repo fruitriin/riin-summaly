@@ -177,6 +177,29 @@ export const skipRedirectResolution = true;
 - knowhow: `docs/knowhow/embed-endpoint-design.md` に「外部 thumbnail の pixel 寸法で player アスペクト比を決める」パターンを追記。
 - **followup レビュー (addf-code-review-agent)**: Critical 0。バイナリパースの境界チェック / SSRF (private IP ガードは redirect 後の最終 IP を検査) は安全確認。W-1 (`String(res.body)` encoding) → コメント明示。W-2 (WebP テスト無し) → VP8/VP8L/VP8X テスト追加。S-1 (typeFilter 意図) / S-2 (JPEG EOI 早期打ち切り) 対応。S-3 (mutation のテスト不足) → マージ処理を `applyMeta` pure 関数に抽出してユニットテスト追加。
 
+## Followup #4 (2026-06-01): スマホでコントロールが崩れる → Drive `/preview` を CSS scale で縮小ラップ
+
+オーナーが実機 (スマホ) で「横動画のコントロールが崩れる」と報告 (縦動画は followup #2 のアスペクト比対応で OK)。徹底検証で原因と解を確定:
+
+**原因の切り分け**:
+- `/preview` をスマホブラウザで**直接**開いても崩れる → Drive 側 UI の問題、アスペクト比調整では直せない。
+- 決定的条件: **デスクトップでは崩れず、DevTools のスマホエミュレート (タッチデバイス) で崩れる** → Drive プレイヤーは **タッチデバイスを検出するとコントロールボタンを大きいスマホ用 UI に切り替える**。狭い実描画幅 (~200px) でそのボタンが収まらず崩れる。
+
+**自前 `<video>` 案は原理的に不可と判明 (撤回)**:
+- Drive 直ストリーミング URL (`drive.usercontent.google.com/download?...`) は `Cross-Origin-Resource-Policy: same-site` + `Sec-Fetch-Site: cross-site` 403 で第三者サイトの `<video>` / `fetch` / `crossorigin` のいずれからも読めない。
+- `videoplayback` 内部ストリームは `application/vnd.yt-ump` (生 mp4 でない) + IP バインド + CORS 不一致。
+- コーデックも HEVC/AV1 が混在し Chrome 非対応。
+- **罠**: curl/ffprobe は CORP/Sec-Fetch を無視するため「サーバ的には 206 + CORS + Range で取れる」が、ブラウザの `<video>` は再生できない。必ずブラウザ実機で検証する。
+
+**解決: `/preview` iframe を CSS scale で縮小ラップ**:
+- `src/utils/drive-embed-html.ts` の `composeDriveScaledEmbedHtml`: 内部 Drive iframe を **固定 `RENDER_WIDTH=900px` (スマホ UI で崩れない最小幅、実機で 600→900 と判明) で描画**し、`transform: scale(calc(100cqi / 900px))` (CSS container query length unit) でカード幅に追従縮小。Drive は「自分は 900px 幅」と認識してコントロールを崩さず描画 → CSS で縮小。**JS 不要** (embed CSP `default-src 'none'` 維持)。
+- stage は `height:100%` で embed iframe 自体の aspect-ratio (`player.width/height`) に追従 (二重 aspect-ratio で横動画がずれるのを回避)。
+- `EmbedRenderResult.frameSrc?: string[]` 新設 → embed CSP に `frame-src https://drive.google.com` を origin-only 再検証して追加 (本番 `src/index.ts` + dev `dev/server.ts`)。
+- `composePlayerUrl(url, id, embedBaseUrl)` で embed 有効時は `/embed?url=...`、無効時は `/preview` 直に分岐。
+- 実機検証: 横/縦動画 + スマホエミュレートでコントロール崩れず動作確認。
+- テスト: `test/drive-embed-html.test.ts` (HTML 構造 / XSS / https / 比率フォールバック 6 件) + `composePlayerUrl` 1 件 (計 693 件 pass)。
+- knowhow: `docs/knowhow/embed-endpoint-design.md` に「外部 iframe を CSS scale で縮小ラップ」+「CORP/Sec-Fetch で `<video>` 直再生不可」を追記。
+
 ### Step 5: 本番動作確認 (デプロイ後 — 運用者 / オーナー側)
 
 skill `/url-preview-check` Phase 6 のバリエーションで叩く:

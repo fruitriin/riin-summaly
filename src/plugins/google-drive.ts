@@ -26,9 +26,11 @@
 import * as cheerio from 'cheerio';
 import type Summary from '@/summary.js';
 import type { GeneralScrapingOptions } from '@/general.js';
+import type { EmbedRenderResult } from '@/iplugin.js';
 import { getResponse, DEFAULT_FALLBACK_UA } from '@/utils/got.js';
 import { getImageDimensions } from '@/utils/image-dimensions.js';
 import { PLAYER_ALLOW_OEMBED } from '@/utils/player-allow.js';
+import { composeDriveScaledEmbedHtml } from '@/utils/drive-embed-html.js';
 
 export const name = 'google-drive';
 
@@ -66,21 +68,44 @@ export function extractFileId(url: URL): string | null {
 	return m ? m[1] : null;
 }
 
+/** Drive 公式 `/preview` iframe URL を組み立てる。 */
+export function previewUrl(id: string): string {
+	return `https://drive.google.com/file/d/${id}/preview`;
+}
+
 /**
- * file ID から /preview player URL を組み立て、Summary の基本形を返す (pure, I/O なし)。
+ * player.url を決める (pure)。
+ * - `embedBaseUrl` あり (Fastify モードで embed 有効) → `<embedBaseUrl>/embed?url=<原 URL>` を返し、
+ *   `renderEmbed` の **scale 縮小ラッパー** に繋ぐ (狭いカード幅でコントロールが崩れないようにする)。
+ * - `embedBaseUrl` 無し (library mode / embed 無効) → Drive 公式 `/preview` iframe 直 (フォールバック)。
+ */
+// `embedBaseUrl` (= opts._embedBaseUrl) は **Fastify モード内部専用**で、本番では `SummalyOptions.embedBaseUrl`
+// (config の `[embed].publicUrl`) から伝搬される https URL。dev サーバは `http://localhost` を渡す。
+// 本番経路では embed の player.url は最終的に `index.ts` の sanitizeUrl を通る。library mode で外部から
+// `_embedBaseUrl` に `http:` を直接渡すのは想定外で、その場合の結果は未定義 (W-2)。
+export function composePlayerUrl(url: URL, id: string, embedBaseUrl: string | undefined): string {
+	if (embedBaseUrl != null && embedBaseUrl !== '') {
+		// 末尾スラッシュ (複数含む) を除去してから /embed を足す。
+		return `${embedBaseUrl.replace(/\/+$/, '')}/embed?url=${encodeURIComponent(url.href)}`;
+	}
+	return previewUrl(id);
+}
+
+/**
+ * file ID から player URL を組み立て、Summary の基本形を返す (pure, I/O なし)。
  * アスペクト比はデフォルトの 16:9。title / thumbnail は呼び元 (`summarize`) が I/O で補完する。
+ * `embedBaseUrl` があれば player.url は embed エンドポイント経由 (scale 縮小)、無ければ Drive `/preview`。
  * 単体テストやフォールバック経路から使えるよう export。
  */
-export function buildSummaryFromUrl(url: URL): Summary | null {
+export function buildSummaryFromUrl(url: URL, embedBaseUrl?: string): Summary | null {
 	const id = extractFileId(url);
 	if (id == null) return null;
-	// id は `[a-zA-Z0-9_-]` のみのため encodeURIComponent 不要。テンプレートに直接埋める。
-	const playerUrl = `https://drive.google.com/file/d/${id}/preview`;
-	// 防御: 組み立てた URL を再 parse して https を検証する (plugin-infrastructure-patterns の作法)。
-	// 現状 playerUrl は完全ハードコードのテンプレートで必ず https になるため self-evident に通るが、
-	// 将来 playerUrl の組み立て方が変わったときの安全網として残す (誤って削除しないこと、phase19.1 S-1)。
+	const playerUrl = composePlayerUrl(url, id, embedBaseUrl);
+	// 防御: 組み立てた URL を再 parse して https を検証する。embed (http://localhost dev) 経路では
+	// 最終 sanitize (index.ts) に委ねるため、Drive `/preview` 直 (embedBaseUrl 無し) のみ https を強制。
 	try {
-		if (new URL(playerUrl).protocol !== 'https:') return null;
+		const proto = new URL(playerUrl).protocol;
+		if (embedBaseUrl == null && proto !== 'https:') return null;
 	} catch {
 		return null;
 	}
@@ -191,7 +216,8 @@ export function applyMeta(
 }
 
 export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promise<Summary | null> {
-	const base = buildSummaryFromUrl(url);
+	const embedBaseUrl = opts?._embedBaseUrl;
+	const base = buildSummaryFromUrl(url, embedBaseUrl);
 	if (base == null) return null;
 	const id = extractFileId(url);
 	if (id == null) return base; // 到達しない (base != null なら id も取れている) が型安全のため
@@ -203,4 +229,33 @@ export async function summarize(url: URL, opts?: GeneralScrapingOptions): Promis
 	]);
 
 	return applyMeta(base, id, dims, title);
+}
+
+/** Drive origin (embed CSP `frame-src` 用)。 */
+const DRIVE_FRAME_ORIGIN = 'https://drive.google.com';
+
+/**
+ * `/embed` 用 HTML を返す (Fastify モード)。Drive `/preview` iframe を **CSS scale で縮小**して
+ * 狭い Misskey カード幅でもコントロールが崩れないようにラップした HTML を返す。
+ * thumbnail 寸法から実アスペクト比を取り、取れなければ 16:9。`frameSrc` で Drive origin を CSP に許可。
+ */
+export async function renderEmbed(url: URL, opts?: GeneralScrapingOptions): Promise<EmbedRenderResult> {
+	const id = extractFileId(url);
+	if (id == null) {
+		// test() を通った URL のみ呼ばれる契約だが、防御的に最小フォールバックを返す。
+		// previewUrl: '' を渡すと composeDriveScaledEmbedHtml 内の pickHttpsUrl が null 判定 → iframe なしの
+		// フォールバック HTML (「表示できませんでした」) になる。
+		return { body: composeDriveScaledEmbedHtml({ previewUrl: '', title: null, aspectW: 16, aspectH: 9 }), width: 16, height: 9 };
+	}
+
+	// 実アスペクト比と title を並列取得。失敗しても 16:9 で成立する。
+	const [dims, title] = await Promise.all([
+		fetchThumbnailDimensions(id, opts),
+		fetchTitle(id, opts),
+	]);
+	const aspectW = dims?.width ?? 16;
+	const aspectH = dims?.height ?? 9;
+
+	const body = composeDriveScaledEmbedHtml({ previewUrl: previewUrl(id), title, aspectW, aspectH });
+	return { body, width: aspectW, height: aspectH, frameSrc: [DRIVE_FRAME_ORIGIN] };
 }

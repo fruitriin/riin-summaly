@@ -63,4 +63,18 @@ export interface EmbedRenderResult {
 
 	/** プレイヤーの推奨高さ (アスペクト比計算用、絶対値は無視される) */
 	height: number;
+
+	/**
+	 * embed HTML が **内部に外部 iframe を埋め込む** 場合に、その配信元を CSP の `frame-src` に
+	 * 追加するための origin 一覧 (例: `['https://drive.google.com']`)。
+	 *
+	 * 既定の embed CSP は `default-src 'none'` で `<iframe src=外部URL>` をブロックするため、
+	 * 外部プレイヤーをラップするプラグイン (google-drive: Drive `/preview` を CSS scale で縮小して
+	 * 狭いカード幅でのコントロール崩れを回避) はここで埋め込み元を宣言する。
+	 *
+	 * **契約**: 各要素は **origin (scheme + host[:port]) のみ**の `https:` URL であること
+	 * (path / query / hash を含めると CSP ヘッダインジェクションの恐れ。embed 側で origin-only に再検証する)。
+	 * 未設定なら `frame-src` ディレクティブは追加されない (= 従来通り外部 iframe 不可)。
+	 */
+	frameSrc?: string[];
 }

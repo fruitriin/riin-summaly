@@ -147,6 +147,29 @@ iframe player の `width`/`height` は **絶対値ではなく比率** (Misskey 
 - **落とし穴**: `got` の `rawBody` は **`Uint8Array`** で返り、`Buffer` ではない。`buf.readUInt16BE` 等の Buffer ヘルパは無いので `Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength)` で wrap する (コピーなし view 共有)。`Buffer.isBuffer(rawBody)` は false になる点に注意。
 - **グレースフルデグレード必須**: 寸法フェッチは独立 `try/catch` にして、失敗時は安全なデフォルト比率 (16:9 等) で player を成立させる。メタ補完 (title 等) と並列で投げるなら `Promise.all` だが、片方の失敗が全体を倒さないよう各々で catch する。
 
+### 外部 iframe player のコントロール崩れを CSS scale 縮小ラッパーで回避 (phase19.1 followup #4)
+
+外部サイトの iframe player (Google Drive `/preview` 等) を狭い幅 (Misskey カード ~200px) で表示すると、**そのプレイヤーのコントロール UI に最小幅があって崩れる**ことがある。特に **Drive はタッチデバイスを検出するとスマホ用 UI (大きいボタン) に切り替える**ため、デスクトップでは崩れずスマホ (DevTools エミュレート含む) で崩れる、という再現条件になる。cross-origin なので中身の CSS は触れない。
+
+解決: `renderEmbed` で **外部 iframe を「コントロールが崩れない固定幅」で描画し、CSS `transform: scale()` でカード幅に縮小**する。Drive プレイヤーは「自分は広い幅」と認識してコントロールを崩さず描画し、それを縮小表示する。
+
+- **固定描画幅 (`RENDER_WIDTH`) は実機で特定**: Drive は実測 **900px** から崩れなくなる (デスクトップは 600px で足りるがスマホ UI は 900px 必要)。RW を大きくすると scale が小さくなり (コントロールも小さく表示される) が、崩れて操作不能よりは良い。
+- **レスポンシブ scale は CSS container query length unit (`cqi`) で JS なし実現**: 外側に `container-type: inline-size`、内部 iframe を `width: <RW>px` 固定 + `transform: scale(calc(100cqi / <RW>px))`。`calc(100cqi / 600px)` は「コンテナ幅 ÷ 固定幅」の無次元比として解決される。これで embed CSP `default-src 'none'` を緩めずに (= `<script>` なしで) カード幅追従できる。`cqw`/`%` ベースや `zoom` は今回不安定だった、`cqi` + 固定 px 描画が確実。
+- **二重 aspect-ratio に注意**: Misskey/dev は embed iframe 自体に `aspect-ratio: player.width/height` を設定する。内部 stage で再度 `aspect-ratio` を掛けると二重になり、**横動画で高さがずれてコントロールが見切れる**。stage は `height: 100%` で embed iframe いっぱいに広げて二重化を避ける。
+- **CSP**: 内部に外部 iframe を埋め込むため `EmbedRenderResult.frameSrc` で配信元 origin を宣言 → embed エンドポイントが `frame-src` に追加 (origin-only 再検証、`frameAncestors` と同じ CSP インジェクション防御)。
+- 実装: `src/utils/drive-embed-html.ts` の `composeDriveScaledEmbedHtml`。実機検証は **必ずブラウザの DevTools スマホエミュレートで** (デスクトップだけだと崩れを見逃す)。
+
+### 外部サイトの動画を `<video>` で直再生できないケース: CORP / Sec-Fetch (phase19.1 followup #4)
+
+「iframe player のコントロールが気に入らないから、元動画を取って自前 `<video>` で再生したい」という発想は、**Google Drive のような大手では原理的に塞がれている**ことが多い。Drive の直 DL / ストリーミング URL を `<video src>` に入れても再生できない理由 (実機で全滅を確認):
+
+- **`Cross-Origin-Resource-Policy: same-site`**: 第三者サイトのブラウザからの読み込みを完全ブロック (`Access-Control-Allow-Origin: *` があっても CORP が上位で効く)。`<video src>` / `crossorigin` / `fetch()+blob` のいずれも失敗。
+- **`Sec-Fetch-Site: cross-site` で 403**: download URL はブラウザが自動付与する `Sec-Fetch-*` を見て cross-site を 403。`Sec-Fetch-*` は JS から変更不可。
+- **`videoplayback` 内部ストリーム**: `application/vnd.yt-ump` (生 mp4 でない) + `ip=` バインド + CORS 不一致で `<video>` 不可。
+- **コーデック**: 新しい iPhone は HEVC、手元エンコードで AV1 等、Chrome/Firefox 非対応コーデックが混在 (`ffprobe -show_entries stream=codec_name` で確認可)。
+- **最大の罠**: **curl / ffprobe は CORP / Sec-Fetch を無視する**ため「サーバ的には 206 + CORS + Range で取れる」が、ブラウザの `<video>` は再生できない。**サーバ側 curl 検証だけで「再生できる」と判断してはいけない。必ずブラウザ実機 (`<video>` の `error.code` / DevTools Network の 403) で検証する**。
+- **結論**: iframe player でしか再生できないサイトは、上記の scale 縮小ラッパーで UI を整える方向に倒す (proxy 中継で CORP を剥がすのは帯域非現実的、コーデック非対応は proxy でも解決しない)。
+
 ### `frame-ancestors *` のデフォルト + warning
 
 開発初期は `*` で全許可だが、商用は `https://misskey.example.com` 等で明示制限すべき。config-loader で `*` を含む場合は **stderr に warning** を出す:

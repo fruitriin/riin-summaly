@@ -1408,6 +1408,27 @@ describe('local tests', () => {
 				expect(summary!.description).toBeNull();
 			});
 
+			test('google-drive プラグインの composePlayerUrl() は embedBaseUrl 有無で player.url を切り替える (phase19.1 followup #4)', async () => {
+				const gd = await import('@/plugins/google-drive.js');
+				const url = new URL('https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3/view');
+				const id = '11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3';
+
+				// embedBaseUrl 無し → Drive 公式 /preview iframe 直
+				expect(gd.composePlayerUrl(url, id, undefined)).toBe(`https://drive.google.com/file/d/${id}/preview`);
+				expect(gd.composePlayerUrl(url, id, '')).toBe(`https://drive.google.com/file/d/${id}/preview`);
+
+				// embedBaseUrl 有り → embed エンドポイント経由 (scale 縮小ラッパー)
+				const embed = gd.composePlayerUrl(url, id, 'https://summaly.example');
+				expect(embed).toBe(`https://summaly.example/embed?url=${encodeURIComponent(url.href)}`);
+				// 末尾スラッシュ (複数含む) は正規化される
+				expect(gd.composePlayerUrl(url, id, 'https://summaly.example/')).toBe(embed);
+				expect(gd.composePlayerUrl(url, id, 'https://summaly.example//')).toBe(embed);
+
+				// buildSummaryFromUrl も embedBaseUrl を反映する
+				const s = gd.buildSummaryFromUrl(url, 'https://summaly.example');
+				expect(s!.player.url).toBe(embed);
+			});
+
 			test('google-drive プラグインの extractFileId() は最初のセグメントだけ取る (phase19.1)', async () => {
 				const gd = await import('@/plugins/google-drive.js');
 				// `/file/d/<id>/preview` のように後続セグメントがあっても id だけ抽出

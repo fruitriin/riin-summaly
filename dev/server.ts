@@ -24,6 +24,7 @@ import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import { summaly, type SummalyOptions, type SummalyResult } from '../src/index.js';
 import { plugins as builtinPlugins } from '../src/plugins/index.js';
+import { filterCspOrigins } from '../src/utils/csp-origin.js';
 import {
 	DomainStrategyCache,
 	getActiveCache,
@@ -221,10 +222,13 @@ app.get<{ Querystring: { url?: string } }>('/embed', async (req, reply) => {
 		return 'render failed';
 	}
 	reply.type('text/html; charset=utf-8');
+	// frame-src: プラグインが内部に埋め込む外部 iframe の配信元を宣言した場合のみ追加 (origin-only 再検証、本番と共有 util)。
+	const frameSrcOrigins = filterCspOrigins(result.frameSrc);
+	const frameSrcPart = frameSrcOrigins.length > 0 ? `; frame-src ${frameSrcOrigins.join(' ')}` : '';
 	// dev では frame-ancestors を自身 (= dev UI) に限定。本番は config の frameAncestors。
 	reply.header(
 		'Content-Security-Policy',
-		`default-src 'none'; img-src https:; style-src 'unsafe-inline'; frame-ancestors 'self' http://localhost:${port} http://127.0.0.1:${port}`,
+		`default-src 'none'; img-src https:; style-src 'unsafe-inline'${frameSrcPart}; frame-ancestors 'self' http://localhost:${port} http://127.0.0.1:${port}`,
 	);
 	reply.header('X-Content-Type-Options', 'nosniff');
 	reply.header('Referrer-Policy', 'no-referrer');
