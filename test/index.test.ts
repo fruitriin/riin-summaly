@@ -1458,6 +1458,205 @@ describe('local tests', () => {
 				expect(t('https://drive.google.com/file/d/11osMpfxFZOwWH6m0MKevA5S8x4q4Bkt3/view')).toBe(true);
 			});
 
+			// ===============================================================
+			// 敵対的カバレッジテスト アウトライン (phase19.1 followup)
+			//
+			// 各テスト先頭に「想定シナリオ / メジャーケース / 実害カテゴリ」を明記。
+			// 実害カテゴリ凡例:
+			//   [DoS]            … fastify worker 死亡 or サービス停止
+			//   [UX 劣化]        … Misskey 側の表示破綻 (iframe 崩壊 / 寸法異常)
+			//   [機能劣化]       … サイレント degrade で運用者が気付けない
+			//   [フィッシング]   … 攻撃者が Misskey TL 経由で受信者の credential を狙う
+			//   [誇大広告]       … CHANGELOG / ドキュメントの謳い文句と実装が乖離、運用者の混乱
+			//   [将来の温床]     … 現状経路では発火しないが、関数再利用 / 仕様変更で踏む
+			//   [退行防止]       … 現実装は健全、リファクタ時の退行を catch する目的
+			// ===============================================================
+
+			test.fails('google-drive: docs.google.com/document/d/<id> の扱いを明示する (H-1 CHANGELOG 乖離)', () => {
+				// 想定シナリオ: ユーザが Misskey TL に Google ドキュメントの共有 URL
+				//                (`https://docs.google.com/document/d/<id>/edit?usp=sharing`) を投稿。
+				// メジャーケース: **極めて高頻度**。Drive 上で「Google ドキュメント」を共有する大半が
+				//                 この URL 形式。FILE_ID_RE が `^\/file\/d\/` 固定アンカーなのでマッチ
+				//                 しない → 汎用パスへ → 汎用パスでも Google は SummalyBot UA に
+				//                 ログインゲート HTML or 空 OGP を返すので preview 出ない。
+				// 実害: [誇大広告] — CHANGELOG / Plugins.md「Docs インライン表示」を読んだ運用者が
+				//                    「動かないのは設定ミスでは」と数時間デバッグする。
+				//      [機能劣化] — Docs の preview がユーザ体感として「全部出ない」。
+				// 対応方針: マッチさせるなら drive.google.com の `/document/d/` `/spreadsheets/d/`
+				//          `/presentation/d/` も含めて test() を拡張。しないなら CHANGELOG から
+				//          「Docs」記述を削除して期待値を実装に合わせる。
+				expect.fail('方針未確定: 実装拡張 or CHANGELOG 訂正');
+			});
+
+			test.fails('google-drive: drive.google.com/open?id=<id> の流通形式をマッチさせる (H-1)', () => {
+				// 想定シナリオ: Drive の旧来「リンクを取得」ボタン (クラシック共有 UI) が長年
+				//                この URL を吐いていた。現在でもブックマーク / メール添付 / 古い
+				//                Slack 投稿の遺産として現役で流通する。
+				// メジャーケース: **高頻度**。特に長期運用のチーム / 学校環境で大量に存在する。
+				// 実害: [機能劣化] — 旧来形式リンクは全部 preview 出ない。新形式 (`/file/d/<id>/view`)
+				//                    のみ動く非対称性をユーザが理解できない。
+				expect.fail('方針未確定: URL パターン拡張 or ドキュメント訂正');
+			});
+
+			test.fails('google-drive: drive.google.com/uc?id=<id>&export=download の流通形式をマッチさせる (H-1)', () => {
+				// 想定シナリオ: Google Colab notebook / 公開データセット配布 / オープンソース
+				//                プロジェクトの README で多用される直リン URL。
+				// メジャーケース: **中〜高頻度**。技術コミュニティの Misskey インスタンスでは特に
+				//                 頻出する。
+				// 実害: [機能劣化]
+				expect.fail('方針未確定: URL パターン拡張 or ドキュメント訂正');
+			});
+
+			test.fails('google-drive: fetchTitle は facebookexternalhit/1.1 UA を固定で送る (H-2 ドキュメント整合)', () => {
+				// 想定シナリオ: Plugins.md は「facebookexternalhit/1.1 UA を固定で叩く」と説明。
+				//                実装は opts?.userAgent ?? DEFAULT_FALLBACK_UA を使用。
+				// メジャーケース: **常時**。全 Drive プレビューが影響を受ける。
+				// 実害:
+				//   [機能劣化] — Google が facebookexternalhit にだけ og:title を返す挙動なら
+				//                title が常に null。さらに Google が将来 UA 制限を絞った瞬間、全
+				//                Drive プレビューの title が一斉に死ぬ。
+				//   [誇大広告] — ドキュメントが嘘 → 運用者が「UA を変えれば直るはず」と誤った方向で
+				//                デバッグして時間を浪費 (W-2 の typo パターンと同種)。
+				// dmm.ts / nintendo-store.ts は明示固定済 — 同パターンに揃える。
+				expect.fail('未実装: fetchTitle の UA を facebookexternalhit/1.1 固定にする');
+			});
+
+			test.fails('google-drive: fetchTitle で og:title が空文字なら null フォールバックする (M-1)', () => {
+				// 想定シナリオ: 非公開ファイル / Google 側の HTML 構造変更で og:title が空文字
+				//                ("") として降る。現実装の `length > 0` ガードは既に null にしている
+				//                ので **現状は問題なし**。
+				// 実害: [退行防止] — リファクタで length>0 ガードを外した瞬間、Misskey TL に空文字 title
+				//                    が並ぶ。
+				expect.fail('退行防止テスト未追加 — length>0 ガードの回帰テスト');
+			});
+
+			test.fails('google-drive: fetchTitle で og:title がログインゲート文字列なら null フォールバックする (M-1 フィッシング誘導防御)', () => {
+				// 想定シナリオ (敵対的):
+				//   1. 攻撃者が **非公開** Google Drive ファイルを 1 つ作成 (中身は何でもよい)。
+				//   2. 攻撃者がそのファイルの共有 URL を Misskey TL / DM に投稿。
+				//   3. summaly が `/view` を叩くと、Google は **正規ドメイン (drive.google.com)** 上で
+				//      「Google ドライブ - ログイン」のような OGP HTML を返す。
+				//   4. 現実装は length>0 ガードのみなので、その文字列がそのまま Misskey preview の
+				//      title として表示される。
+				//   5. 受信者は「(攻撃者の文脈) + Google 正規ドメイン + 『ログイン』」という組み合わせ
+				//      を見て、攻撃者の話に沿った正規 Google ログインフローだと誤認しクリック。
+				//   6. リンク先は本物の Google なのでブラウザの URL バーは正規。受信者は警戒を解いて
+				//      Google アカウントの credential / 2FA を入力。
+				// メジャーケース: **攻撃 PoC として極めて実用的**。被害者が「Google ドライブからの
+				//                 共有通知」とのコンテキストを信じれば成立する古典的 social engineering。
+				//                 Misskey の preview が正規ドメインを表示する仕組みを悪用する。
+				// 実害: [フィッシング] — credential 窃取 / 2FA バイパス足がかり。
+				// 既知ゲート文字列 (例): "Google ドライブ - ログイン" / "Sign in - Google Accounts" /
+				//                       "Meet our team" / "Request access" など。
+				expect.fail('未実装: ログインゲート og:title 検知 + null フォールバック');
+			});
+
+			test.fails('google-drive: fetchThumbnailDimensions のエラーはロガーに記録される (H-4 サイレント失敗撲滅)', () => {
+				// 想定シナリオ: catch {} で完全サイレント。phase11.6 JSONL (blocked failure log) と
+				//                phase11.8 pino エラー出力のどちらにも残らない。Drive 側の仕様変更
+				//                (thumbnail エンドポイント認証必須化 / UA 制限変更 / URL 形式変更)
+				//                で全 Drive プレビューの thumbnail dimension 取得が常時失敗しても
+				//                運用者は気付かない。
+				// メジャーケース: **Google 側仕様変更時に常時発火**。Google は告知なしで Drive の
+				//                 内部 API を変更する前科多数。
+				// 実害: [機能劣化] — 「縦動画が全部横長表示」がユーザ体感として現れるが、運用者は
+				//                    「特定のユーザ環境の問題」と誤認して長期間 (数週間〜数ヶ月)
+				//                    放置する。phase11.6 を導入した動機そのもの。
+				// 対応: catch 内で req.log?.warn({ stage: 'thumbnail', err: { name, message } })
+				//      もしくは parse-failure-log helper を呼ぶ。URL は PII (file ID) 含むので
+				//      ホスト名だけに留めるか err.name のみログる。
+				expect.fail('未実装: fetchThumbnailDimensions の catch にロギング (PII 配慮)');
+			});
+
+			test.fails('google-drive: fetchTitle のエラーはロガーに記録される (H-4)', () => {
+				// 同上 (title 経路)。常時失敗していても運用者は「Misskey 側の表示の問題」と誤認する。
+				// 実害: [機能劣化]
+				expect.fail('未実装: fetchTitle の catch にロギング');
+			});
+
+			test.fails('google-drive: typeFilter は image/* のみ許可する (M-2)', () => {
+				// 想定シナリオ: 現状 typeFilter が image/* + application/octet-stream + application/binary
+				//                を許容。Drive が HTML エラーページを Content-Type: application/octet-stream
+				//                で返すケース (非公開ファイル / 認証切れ等) は実際にあり得る。
+				//                現実装は getImageDimensions が HTML 先頭 byte (0x3C "<") を
+				//                どのシグネチャにもマッチさせず null を返すので **実害ゼロ**。
+				// メジャーケース: 自然発生は稀だが、将来 getImageDimensions が拡張されて未知バイナリの
+				//                 寸法判定を試みるようになったら HTML エラーを画像と誤認するリスク。
+				// 実害: [将来の温床] + [退行防止]
+				expect.fail('未実装: typeFilter を /^image\\// に絞る');
+			});
+
+			test.fails('google-drive: applyMeta() は base を mutate しない pure 関数である (M-3 JSDoc 整合)', async () => {
+				// 想定シナリオ: JSDoc に「pure (I/O なし)」と書かれているが、実装は base.player.width /
+				//                base.thumbnail / base.title を破壊的に書き換える。現状の呼出パターン
+				//                (buildSummaryFromUrl 直後の 1 回使い捨て) では問題なし。
+				// メジャーケース (将来):
+				//   1. 誰かが thundering herd 緩和のため buildSummaryFromUrl の結果をモジュール
+				//      トップで Map にキャッシュする リファクタを入れる。
+				//   2. リクエスト A が applyMeta(cached, idA, dimsA, titleA) を呼ぶ。
+				//   3. キャッシュされた base 自身が書き換わる。
+				//   4. 後続のリクエスト B が同じ base を参照すると idA の title / thumbnail が漏れる。
+				// 実害: [将来の温床 / multi-tenancy 汚染] — concurrent request 間で他人のファイル
+				//                                          メタが漏洩する。プライバシー観点で深刻。
+				// 対応: spread copy ベースに refactor して JSDoc 契約と実装を一致させる。
+				expect.fail('未実装: applyMeta() を spread copy ベースに refactor');
+			});
+
+			// ===============================================================
+			// summarize() 統合テスト (M-5 / 統合カバレッジ不足)
+			//
+			// 現状の test/index.test.ts google-drive 群は pure 関数 (test / extractFileId /
+			// buildSummaryFromUrl / applyMeta) しかテストしていない。実 I/O 経路の summarize() は
+			// ローカル fastify モックで再現してテストする必要がある。
+			// ===============================================================
+
+			test.fails('google-drive summarize() 統合: 正常な /thumbnail + /view 応答で寸法と title が反映される', () => {
+				// 想定: 経路全体の happy path。fastify モックで /thumbnail?id=... → JPEG bytes +
+				//        /view → OGP HTML を返し、player.width/height/thumbnail/title が正しく
+				//        埋まることを確認。
+				// 実害: [退行防止] — buildSummaryFromUrl → fetchThumbnailDimensions → fetchTitle →
+				//                    applyMeta の経路が壊れたときに即検知できる総合テスト。
+				expect.fail('未実装: summarize() のローカル fastify モック happy path');
+			});
+
+			test.fails('google-drive summarize() 統合: thumbnail が 0 byte body を返したとき base degrade する', () => {
+				// 想定シナリオ: Google が 200 OK + Content-Length: 0 を返すケース (一時的エラー /
+				//                認証切れの代替フォールバック挙動)。
+				// メジャーケース: 自然発生する。Google CDN の degrade 時に観測されることあり。
+				// 現実装は getImageDimensions が `buf.length < 24` で null → applyMeta で dims=null
+				//          → base のまま (16:9) → graceful degrade 健全。テスト未確認。
+				// 実害: [退行防止]
+				expect.fail('未実装: 0 byte body の degrade テスト');
+			});
+
+			test.fails('google-drive summarize() 統合: thumbnail が typeFilter で reject されたとき base degrade する (text/html)', () => {
+				// 想定シナリオ: Drive が thumbnail に対して HTML エラーページ (Content-Type: text/html)
+				//                を返す。これは認証切れ / レート制限 / Drive 内部エラー時に観測される。
+				// メジャーケース: 自然発生する。
+				// 現実装は getResponse の typeFilter が reject → throw → catch で null → base degrade。
+				// 実害: [退行防止] — typeFilter reject 経路が壊れたら HTML を画像と誤読する余地。
+				expect.fail('未実装: typeFilter reject 時の degrade テスト');
+			});
+
+			test.fails('google-drive summarize() 統合: thumbnail + title 両方タイムアウトしても base summary は返る', () => {
+				// 想定シナリオ: Google CDN 全停止 / ネットワーク全断。両方が 8s タイムアウトで catch。
+				// メジャーケース: 大規模障害時。
+				// 現実装は Promise.all (両方とも catch で null 返却) → base のまま返却 → graceful。
+				// 退行で **base ではなく throw** が起きると summaly() 全体が 500 → Misskey 側で
+				// 「プレビュー失敗」表示 → ユーザは「リンクが壊れている」と誤認する。
+				// 実害: [退行防止] — degrade と throw の境界を明示するテスト。
+				expect.fail('未実装: 両方失敗時の graceful degradation テスト');
+			});
+
+			test.fails('google-drive summarize() 統合: /view がログインゲート HTML を返したとき title=null になる (M-1)', () => {
+				// 想定: M-1 のフィッシング防御を経路レベルで E2E 検証する統合テスト。
+				//        fastify モックで /view にログインゲート HTML を返させ、title が null に
+				//        フォールバックすることを確認。
+				// 実害: [フィッシング防御の回帰テスト] — M-1 の実装が将来コード整理で消されないよう
+				//                                       経路レベルで pin する。
+				expect.fail('未実装: ログインゲート HTML 検知の E2E テスト');
+			});
+
 			test('composeNsfwEmbedHtml() は基本入力で作品情報をフル表示する (phase15.6 共通 helper)', async () => {
 				const { composeNsfwEmbedHtml } = await import('@/utils/nsfw-embed-html.js');
 				const html = composeNsfwEmbedHtml({

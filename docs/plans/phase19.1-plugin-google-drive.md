@@ -36,6 +36,7 @@
 - oEmbed は存在しないため **player URL を直接組み立てる** (`youtube` / `spotify` の oEmbed 経路とは異なり、ネットワーク I/O なしの pure 構築)
 - `test()` で `drive.google.com` の `/file/d/<id>` 形式にマッチ
 - player の `width`/`height` は 16:9 (動画想定のデフォルトアスペクト比) を返す
+  - ⚠️ **反証 (followup 2026-06-01 で覆った)**: 「ネットワーク I/O なしの pure 構築」「16:9 固定」は **旧設計**。実装後の追加調査で `/thumbnail?id=...` から **実アスペクト比**を取れることが判明し、`summarize()` は thumbnail / `/view` OGP を **並列 fetch する I/O ありの構造**に変更された。詳細は末尾 Followup セクション参照
 
 ## 設計詳細
 
@@ -97,6 +98,8 @@ export async function summarize(url: URL): Promise<Summary | null> {
 }
 ```
 
+⚠️ **反証 (followup 2026-06-01 で覆った)**: 上記の `summarize()` 実装 (`buildSummaryFromUrl` をそのまま返すだけ) は **旧設計**。実態は `summarize()` が thumbnail (`/thumbnail?id=...`) と OGP (`/view`) を **`Promise.all` で並列 fetch** し、`applyMeta(base, id, dims, title)` で `player.width`/`height` を実比率に上書き + thumbnail / title を補完する構造に変わった。`buildSummaryFromUrl` 自体は 16:9 + null の base を返す pure 関数として残り、I/O 経路は `summarize()` 側に移動。詳細は末尾 Followup セクション参照。
+
 #### title / thumbnail を null にする判断
 
 匿名 (未ログイン) で Drive file の **メタデータ (file 名・サムネ) を安定取得する公開 API は無い**。
@@ -107,6 +110,13 @@ export async function summarize(url: URL): Promise<Summary | null> {
 そのため title/thumbnail は `null` で返し、**player iframe をプレビューの主役**にする (youtube の oEmbed が title を返すのとは事情が異なる)。Misskey 側は player があればそれを表示するため、title なしでも実用上問題ない。
 
 > **将来検討**: API key を運用者が設定できる場合に限り `files.get?fields=name,thumbnailLink` で title/thumbnail を補完するオプションを追加する余地あり (本 phase スコープ外)。
+
+⚠️ **反証 (followup 2026-06-01 で覆った — この節の前提が誤りだった)**:
+- 「匿名で安定取得する公開 API は無い」は **誤り**。`/view` を `facebookexternalhit/1.1` UA で叩くと `og:title` に **file 名**が入っている (Google が SNS bot allowlist で OGP を返す経路を持っていた)
+- 「`/preview` ページを scrape すると…安定しない」は **対象が違う**。scrape する必要があったのは `/view` + 公開 `/thumbnail?id=...` エンドポイントで、後者は **実アスペクト比を保った JPEG** を匿名で返す
+- 「API key 必須」も `og:title` + `/thumbnail` 経路を見落とした結果の結論。**API key 不要で file 名 + サムネ画像が両方取れる**
+- 「将来検討」に追い出した API key 補完は **本 phase 内で API key なしの代替経路に置き換わって解決済**
+- **教訓 (.claude/Feedback.md にも記録済)**: 「API が無いから取れない」と早期に結論づけず、`curl` で UA を変えた黒箱比較 (skill `/url-preview-check` の手法) を**実装前**に一通り回すべきだった。本節は「Plan 段階で前提検証を怠った代表例」として残す
 
 ### `allow` permission
 
@@ -122,6 +132,8 @@ Drive の `/file/d/<id>/view` は **終端 URL** (短縮でない)。ただし `
 ```typescript
 export const skipRedirectResolution = true;
 ```
+
+⚠️ **反証 (followup 2026-06-01 で根拠が変質した)**: 上記の根拠 (「scrape せず URL から組み立てるだけ」) は **旧設計の前提**。followup で `summarize()` が `/view` + `/thumbnail` を実 fetch するようになったため、根拠は「**プラグイン内で `/view` を `facebookexternalhit` UA で叩くのに、外側の HEAD probe が `SummalyBot` UA でゲートに飛ばすと URL が書き換わり id 抽出が壊れる**」に変わる。結論 (= `skipRedirectResolution = true`) は維持されるが論理経路が違うため、本節を読んで「実 fetch しないなら不要では?」と削除判断しないこと。
 
 ### exit sanitize との整合
 
