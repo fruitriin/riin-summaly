@@ -1818,6 +1818,52 @@ describe('local tests', () => {
 				});
 			});
 
+			describe('spotify extractArtist (アーティスト情報抽出)', () => {
+				test('music.song は music:musician_description を優先して使う', async () => {
+					const cheerio = await import('cheerio');
+					const { extractArtist } = await import('@/plugins/spotify.js');
+					const $ = cheerio.load(`
+						<meta property="og:type" content="music.song">
+						<meta property="og:description" content="Ed Sheeran · ÷ (Deluxe) · Song · 2017">
+						<meta name="music:musician_description" content="Ed Sheeran">
+					`);
+					expect(extractArtist($)).toBe('Ed Sheeran');
+				});
+
+				test('music.album は music:musician_description が無いので og:description の先頭セグメントにフォールバックする', async () => {
+					const cheerio = await import('cheerio');
+					const { extractArtist } = await import('@/plugins/spotify.js');
+					const $ = cheerio.load(`
+						<meta property="og:type" content="music.album">
+						<meta property="og:description" content="Ed Sheeran · album · 2017 · 16 songs">
+					`);
+					expect(extractArtist($)).toBe('Ed Sheeran');
+				});
+
+				test('music.playlist / profile はアーティスト情報の対象外 (null)', async () => {
+					const cheerio = await import('cheerio');
+					const { extractArtist } = await import('@/plugins/spotify.js');
+					const playlist = cheerio.load(`
+						<meta property="og:type" content="music.playlist">
+						<meta property="og:description" content="Playlist · Spotify · 50 items · 34.2M saves">
+					`);
+					expect(extractArtist(playlist)).toBeNull();
+
+					const profile = cheerio.load(`
+						<meta property="og:type" content="profile">
+						<meta property="og:description" content="Artist · 83.7M monthly listeners.">
+					`);
+					expect(extractArtist(profile)).toBeNull();
+				});
+
+				test('og:type / og:description が無ければ null', async () => {
+					const cheerio = await import('cheerio');
+					const { extractArtist } = await import('@/plugins/spotify.js');
+					expect(extractArtist(cheerio.load('<html></html>'))).toBeNull();
+					expect(extractArtist(cheerio.load('<meta property="og:type" content="music.song">'))).toBeNull();
+				});
+			});
+
 			describe('npmjs プラグイン (phase11.4)', () => {
 				test('test() は (www.)?npmjs.com/package/... にマッチする', async () => {
 					const { test: matchTest } = await import('@/plugins/npmjs.js');
