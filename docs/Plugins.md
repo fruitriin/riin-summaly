@@ -145,12 +145,12 @@ interface SummalyPlugin {
 | 項目 | 内容 |
 |:--|:--|
 | マッチ | `open.spotify.com` のみ（`spotify.link` は `branchio-deeplinks` 担当） |
-| 取得方法 | `https://open.spotify.com/oembed?url=<encodeURIComponent(url.href)>` を `getJson` で取得。oEmbed にはアーティスト情報が無いため、`facebookexternalhit` UA でのページ本体取得（`scpaping`）を並行発火して補完する（nintendo-store と同型の SNS bot UA allowlist パターン） |
+| 取得方法 | `https://open.spotify.com/oembed?url=<encodeURIComponent(url.href)>` を `getJson` で取得。oEmbed にはアーティスト情報が無いため、`facebookexternalhit` UA でのページ本体取得（`scpaping`）を並行発火して補完する（nintendo-store と同型の SNS bot UA allowlist パターン）。補助 fetch は track / album パスのみ発火（`isArtistBearingPath`、locale プレフィックス `/intl-xx/` 対応）し、短縮タイムアウト（response 5s / operation 10s）+ proxy / curl_cffi / 経路学習キャッシュ記録の無効化で本体経路から分離する |
 | 検証 | `j.html` 内 iframe の `src` が `https:` プロトコルであること |
 | 抽出フィールド | `title` / `thumbnail` / `provider_name` (→ `sitename`) を oEmbed から、`player.allow` は固定の `PLAYER_ALLOW_OEMBED`。`description` にはページ本体の `music:musician_description`（無ければ `og:description` の先頭セグメント）から抽出したアーティスト名を格納（`og:type` が `music.song` / `music.album` のときのみ、`music.playlist` 等は対象外） |
 | 固定値 | `icon: 'https://open.spotify.com/favicon.ico'` |
 | フェイルセーフ | ページ本体取得が失敗（bot block・timeout 等）しても oEmbed ベースの summary はそのまま返す（`description: null`） |
-| ヘルパ export | `buildSummaryFromOEmbed(oEmbed: unknown): Summary \| null`、`extractArtist($: cheerio.CheerioAPI): string \| null` |
+| ヘルパ export | `buildSummaryFromOEmbed(oEmbed: unknown): Summary \| null`、`extractArtist($: cheerio.CheerioAPI): string \| null`、`isArtistBearingPath(pathname: string): boolean` |
 
 ### twitter (X)
 

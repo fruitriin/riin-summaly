@@ -16,6 +16,18 @@ const FB_BOT_UA = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit
 // music.playlist は "Playlist · ..."、profile はアーティスト自身のページなので対象外。
 const ARTIST_BEARING_OG_TYPES = new Set(['music.song', 'music.album']);
 
+// アーティスト名を持つのは track / album ページのみ (playlist / artist / show / episode は対象外)。
+// `/intl-ja/track/...` のような locale プレフィックス付き URL も同構造 (実ページ確認済み)。
+const ARTIST_BEARING_PATH = /^\/(?:intl-[a-z-]+\/)?(?:track|album)\//;
+
+/**
+ * ページ本体の補完取得を行う価値があるパスか (track / album のみ)。
+ * それ以外は og:type 判定で必ず null になるため fetch 自体を省く。テストから直接呼べるよう export。
+ */
+export function isArtistBearingPath(pathname: string): boolean {
+	return ARTIST_BEARING_PATH.test(pathname);
+}
+
 export function test(url: URL): boolean {
 	return url.hostname === 'open.spotify.com';
 }
@@ -74,6 +86,8 @@ export function extractArtist($: cheerio.CheerioAPI): string | null {
 	const ogType = $('meta[property="og:type"]').attr('content');
 	if (ogType == null || !ARTIST_BEARING_OG_TYPES.has(ogType)) return null;
 
+	// Spotify は musician_description のみ property= ではなく **name= 属性**で出力する (OGP 標準からは
+	// 外れた出し方だが実ページで確認済み)。property= に「修正」すると取得できなくなるので注意。
 	const musicianDescription = $('meta[name="music:musician_description"]').attr('content')?.trim();
 	if (musicianDescription) return musicianDescription;
 
@@ -86,14 +100,26 @@ export function extractArtist($: cheerio.CheerioAPI): string | null {
 /**
  * アーティスト名補完用のページ本体取得。bot block 等で失敗しても呼び出し側は
  * description: null のまま summary を返せるよう、ここで例外を吸収して null を返す。
+ *
+ * description は「あれば嬉しい」補助情報のため、本体 (oEmbed) 経路から分離する:
+ * - track / album 以外のパスは fetch 自体を省く (og:type 判定で必ず null になるため)
+ * - タイムアウトを本体より短く抑え、Promise.all 全体のレイテンシを引きずらない
+ * - proxy / curl_cffi / 経路学習キャッシュ記録を無効化し、補助 fetch の失敗や hedge 発火が
+ *   外部経路 quota 消費・キャッシュ汚染・pino ログの誤帰属を起こさないようにする
  */
 async function fetchArtist(url: URL, opts?: GeneralScrapingOptions): Promise<string | null> {
+	if (!isArtistBearingPath(url.pathname)) return null;
 	try {
 		const { $ } = await scpaping(url.href, {
 			...opts,
 			userAgent: FB_BOT_UA,
+			responseTimeout: 5000,
+			operationTimeout: 10000,
 			fallbackUserAgent: undefined,
 			fallbackRetryCategories: undefined,
+			proxyFallback: undefined,
+			curlCffiFallback: undefined,
+			_cacheRecording: undefined,
 		});
 		return extractArtist($);
 	} catch {

@@ -1862,6 +1862,20 @@ describe('local tests', () => {
 					expect(extractArtist(cheerio.load('<html></html>'))).toBeNull();
 					expect(extractArtist(cheerio.load('<meta property="og:type" content="music.song">'))).toBeNull();
 				});
+
+				test('isArtistBearingPath は track / album パスのみ true (locale プレフィックス対応)', async () => {
+					const { isArtistBearingPath } = await import('@/plugins/spotify.js');
+					expect(isArtistBearingPath('/track/7qiZfU4dY1lWllzX7mPBI3')).toBe(true);
+					expect(isArtistBearingPath('/album/3T4tUhGYeRNVUGevb0wThu')).toBe(true);
+					expect(isArtistBearingPath('/intl-ja/track/7qiZfU4dY1lWllzX7mPBI3')).toBe(true);
+					expect(isArtistBearingPath('/intl-pt-br/album/3T4tUhGYeRNVUGevb0wThu')).toBe(true);
+					// アーティスト名を持たないページ種別は補助 fetch 自体を省く
+					expect(isArtistBearingPath('/playlist/37i9dQZF1DXcBWIGoYBM5M')).toBe(false);
+					expect(isArtistBearingPath('/artist/6eUKZXaKkcviH0Ku9w2n3V')).toBe(false);
+					expect(isArtistBearingPath('/show/4rOoJ6Egrf8K2IrywzwOMk')).toBe(false);
+					expect(isArtistBearingPath('/episode/512ojhOuo1ktJprKbVcKyQ')).toBe(false);
+					expect(isArtistBearingPath('/')).toBe(false);
+				});
 			});
 
 			describe('npmjs プラグイン (phase11.4)', () => {
