@@ -122,7 +122,7 @@ riin-summaly の独自軸として、URL 取得を **4 種類の経路** に整�
 | **Proxy 経由** | `proxy` | Cloudflare Workers Free を outbound proxy として経由。Vultr Tokyo IP 等の **datacenter IP block** を CF (AS13335) 経由で救援。HMAC-SHA256 認証 + 8 層防御 | `amazon` (`amazon.co.jp` 500 救援), `sqex` (DC IP block) |
 | **curl_cffi** | `curl_cffi` | `tools/curl-cffi-fetcher/` の Python CLI を spawn し、Chrome / Firefox / Safari の **TLS フィンガープリント (JA3) を完全再現**。`SummalyBot` どころか Mozilla UA でも HTTP/2 INTERNAL_ERROR を返す **TLS / HTTP/2 layer の bot block** を突破 | `yodobashi` (TLS block 救援)、`nitori` ※ (TLS block + datacenter IP 全般 block の fail mode J、家庭用 IP のみ救援可) |
 
-これらと直交して、抽出 (extraction) 戦略は別軸です（**公式 JSON API / oEmbed 直叩き** で HTML スクレイプ自体を回避するもの: `wikipedia` / `npmjs` / `syosetu` / `youtube` / `spotify` / `nitori`、**内部 CDN 直叩き** (公式 API ではないが widget 用 JSON が露出している経路): `twitter` (`cdn.syndication.twimg.com` — X の仕様変更で壊れうる)、**HTML 内 state JSON parse**: `kakuyomu`、**DOM 直接抽出**: `amazon`）。経路と抽出戦略は組み合わせ可能で、例えば `kakuyomu` は「SNS Bot UA で取得した HTML」から `__NEXT_DATA__` の Apollo state を parse する複合戦略、`nitori` は「curl_cffi で TLS block を迂回 + 公式 JSON API 直叩き」を試みる戦略です (ただし `nitori` は datacenter IP block で本番 VPS では機能しない、`docs/knowhow/spa-dynamic-ogp-unfixable.md` 参照)。
+これらと直交して、抽出 (extraction) 戦略は別軸です（**公式 JSON API / oEmbed 直叩き** で HTML スクレイプ自体を回避するもの: `wikipedia` / `npmjs` / `syosetu` / `youtube` / `nitori`、**内部 CDN 直叩き** (公式 API ではないが widget 用 JSON が露出している経路): `twitter` (`cdn.syndication.twimg.com` — X の仕様変更で壊れうる)、**HTML 内 state JSON parse**: `kakuyomu`、**DOM 直接抽出**: `amazon`）。経路と抽出戦略は組み合わせ可能で、例えば `kakuyomu` は「SNS Bot UA で取得した HTML」から `__NEXT_DATA__` の Apollo state を parse する複合戦略、`nitori` は「curl_cffi で TLS block を迂回 + 公式 JSON API 直叩き」を試みる戦略、`spotify` は「oEmbed 直叩き + SNS Bot UA でのページ本体並行取得 (アーティスト名補完)」の複合戦略です (ただし `nitori` は datacenter IP block で本番 VPS では機能しない、`docs/knowhow/spa-dynamic-ogp-unfixable.md` 参照)。
 
 ### 経路学習キャッシュ (phase14)
 
@@ -148,7 +148,7 @@ riin-summaly の独自軸として、URL 取得を **4 種類の経路** に整�
 | `wikipedia` | `*.wikipedia.org` | 公式 API | MediaWiki API から intro テキスト取得 |
 | `branchio-deeplinks` | `*.app.link` / `spotify.link` | Summaly UA | `$web_only=true` を付けて Web 版にリダイレクトさせ汎用パスへ |
 | `youtube` | `(www\|m).youtube.com/{watch,v,playlist,shorts}` / `youtu.be` | 公式 API | oEmbed エンドポイント直叩きで 1 リクエスト |
-| `spotify` | `open.spotify.com` | 公式 API | oEmbed エンドポイント直叩き |
+| `spotify` | `open.spotify.com` | 公式 API + SNS Bot UA | oEmbed 直叩き + `facebookexternalhit` UA でページ本体を並行取得しアーティスト名を description に補完 (track / album のみ) |
 | `twitter` | `(twitter\|x).com/<user>/status/<id>` | 内部 CDN (非公式) | `cdn.syndication.twimg.com` から JSON 取得して title/description/thumbnail を返す。複数画像は `medias[]`、player は null（Misskey の「ポストを展開」と重複しないため）。**X 側仕様変更で壊れうるため要メンテ** |
 | `dlsite` | `www.dlsite.com` | Summaly UA | `/announce/` ↔ `/work/` の 404 リトライ + パス分類で sensitive 判定。**sensitive 時 card 抑制 + embed フル表示** (`/maniax/` 等のアダルト経路。`/comic/` 等のセーフパスは素通し、phase15.6) |
 | `iwara` | `(www\|ecchi).iwara.tv` | Summaly UA | description / thumbnail を DOM から補完。**全件 sensitive=true 強制 + card 抑制 + embed フル表示** (MMD/3D モデルアニメで R-15〜R-18 が混在するため、phase15.6 followup) |
