@@ -12,6 +12,8 @@
 
 ## 問題の記録
 
+- **2026-07-29 phase19.2**: `pnpm test` に **外から `SUMMALY_ALLOW_PRIVATE_IP=true` を注入すると「Should block localhost by default」テストが fail する** (プライベート IP ガードのデフォルト挙動を検証するテストのため)。各テストは `process.env` を describe 単位で自己管理しており、素の `pnpm test` が正解。CLAUDE.repo.md の旧記述「`SUMMALY_ALLOW_PRIVATE_IP=true` が必要」が誤誘導だったため修正済み
+
 - **2026-06-01 phase19.1**: `got` の `res.rawBody` は **`Uint8Array` であって `Buffer` ではない**。`Buffer.isBuffer(rawBody)` は false を返し、`rawBody.readUInt16BE` 等の Buffer ヘルパも無いため、画像ヘッダ寸法パーサに直接渡すと `TypeError: buf.readUInt16BE is not a function` で落ちる (E2E で発覚、typecheck/unit はすり抜けた)。対策: パーサ側で `Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength)` (コピーなし view 共有、byteOffset 考慮必須) で wrap。同種の「`rawBody` をバイナリとして読む」新規コードで再発しうる。`docs/knowhow/embed-endpoint-design.md` に落とし穴として記録済
 
 - **2026-05-05 phase11.4 / 6.1 派生バグ**: 新規プラグイン (`npmjs` / `twitter`) が両 example の `[plugins.allowed]` リストに反映されておらず、本番で **deploy example の通り設定すると新規プラグインが無効化される** 状態が露呈。現象: `https://www.npmjs.com/package/<pkg>` が `general()` 経由で Cloudflare に直叩きされ 403。CLAUDE.md ステップ 4.5「設定ファイル example の更新（特に修正漏れしやすい！）→ `config.example.toml`（ルート）と `docs/deploy-examples/summaly-config.example.toml`（デプロイ用）の **両方**」というチェックが既に明記されているが、phase6.1 / phase11.4 の品質ゲートで両ファイル更新が漏れた
@@ -38,6 +40,10 @@
 - **2026-05-07 phase12.6 セッション (レビュー agent の false positive)**: `addf-code-review-agent` が W-1 で「`matchesDomain` の export 確認が必要」と指摘したが、実は既に export 済み (proxy-fallback.ts L65) で `pnpm test` 405 件全パス状態だった。レビュー agent は **diff だけを見て元ファイル全体の状態を把握しきれない** ことがある (特に動的 import 経由のシンボル参照)。実害ゼロだが、ADDF レビュー agent プロンプトに「動的 import で参照しているシンボルは元ファイルを Read して export 状態を確認すること」を含めるとレビュー精度が上がる可能性 (ADDF テンプレート側への寄与候補)
 
 ## ADDF 推進エンジンに関する記録
+
+- **2026-07-29 phase19.2 セッション**: `addf-code-review-agent` が **コードだけでなく進捗管理ドキュメント (`Progress.md` / `TODO.md` / Plan チェックリスト) の実態乖離を Warning で指摘** した (「実装完了なのに未着手表記のままだと次セッションが再着手する」)。レビュー agent がプロセス整合性までカバーする事例で、`/addf-dev` の「実装 → レビュー → 完了処理」の順序だと構造上この Warning は毎回出うる (完了処理はレビュー後のため)。レビュー依頼プロンプトに「進捗ドキュメント更新はレビュー後の完了処理で行う」と一言添えると false positive を防げる
+- **2026-07-29 phase19.2 セッション**: `addf-contribution-agent` はスキップ判断を適用 (変更は `src/` `test/` `docs/` + 進捗管理ファイルのみで、フレームワーク機能への影響なし。意図ベーススキップ条件の適用実績追加)
+- **2026-07-29 phase19.2 セッション**: Plan 起票時の観測 (本番 256h ログ分析) を **計画書の「背景」セクションに実測値付きで残す**運用が効いた。実装時に「error 65% が Bug A」という定量根拠で優先順位を再確認でき、レビュー agent も件数ベースで設計判断を追認できた。ログ分析 → Plan 起票の流れでは集計コマンド (`grep '^{' | jq`) も Plan に残すと再現可能になる
 
 - **2026-05-03**: ADDF 導入直後のセッションでは `/addf-dev` slash コマンドおよび `addf-code-review-agent` / `addf-contribution-agent` などの subagent type が Claude Code の register 対象に**まだ載っていない**。`Skill` ツール経由でも、`Agent({ subagent_type: 'addf-*' })` でも認識されない。
   - 暫定回避: スキル定義ファイル (`.claude/commands/addf-dev.md`、`.claude/agents/addf-code-review-agent.md`) を Read してその指示を手動で実行、または `general-purpose` subagent に definition の内容をプロンプトとして渡す

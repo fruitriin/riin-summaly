@@ -8,6 +8,19 @@ import { get, head, scpaping } from '@/utils/got.js';
 import { PDF_ICON_DATA_URL } from '@/utils/pdf-icon.js';
 
 /**
+ * HTML 属性値由来の URL を安全に絶対 URL へ解決する。
+ * `og:image` 等に `https://` だけのような壊れた値を入れているサイトが実在し、
+ * 無防備な `new URL()` は TypeError → 500 になるため throw せず null を返す (phase19.2)。
+ */
+function tryResolveUrl(href: string, base?: string): string | null {
+	try {
+		return new URL(href, base).href;
+	} catch {
+		return null;
+	}
+}
+
+/**
  * Contains only the html snippet for a sanitized iframe as the thumbnail is
  * mostly covered in OpenGraph instead.
  *
@@ -39,7 +52,9 @@ async function getOEmbedPlayer($: cheerio.CheerioAPI, pageUrl: string): Promise<
 		} catch { /* empty */ }
 	})();
 
-	if (!body || body.version !== '1.0' || !['rich', 'video'].includes(body.type)) {
+	// `html` は仕様上必須だが、fixupx.com 等 `html` を持たない oEmbed JSON を返す実装が実在する。
+	// 型ガードなしで `.startsWith()` を呼ぶと TypeError → 500 になる (phase19.2)。
+	if (!body || body.version !== '1.0' || !['rich', 'video'].includes(body.type) || typeof body.html !== 'string') {
 		// Not a well formed rich oEmbed
 		return null;
 	}
@@ -334,7 +349,7 @@ export async function parseGeneral(_url: URL | string, res: Awaited<ReturnType<t
 		$('link[rel="apple-touch-icon"]').attr('href') ||
 		$('link[rel="apple-touch-icon image_src"]').attr('href');
 
-	image = image ? (new URL(image, url.href)).href : null;
+	image = image ? tryResolveUrl(image, url.href) : null;
 
 	const playerUrl =
 		(twitterCard !== 'summary_large_image' && $('meta[name="twitter:player"]').attr('content')) ||
@@ -395,12 +410,15 @@ export async function parseGeneral(_url: URL | string, res: Awaited<ReturnType<t
 		$('meta[name=\'rating\']').attr('content')?.toUpperCase() === 'RTA-5042-1996-1400-1577-RTA';
 
 	const getIcon = async (): Promise<{ href: string; contentType: string | undefined } | null> => {
-		const target = new URL(favicon, url.href);
+		const target = tryResolveUrl(favicon, url.href);
+		if (target == null) {
+			return null;
+		}
 		try {
-			const res = await head(target.href);
+			const res = await head(target);
 			const ct = res.headers['content-type'];
 			return {
-				href: target.href,
+				href: target,
 				contentType: typeof ct === 'string' ? ct : undefined,
 			};
 		} catch {

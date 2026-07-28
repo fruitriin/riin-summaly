@@ -193,7 +193,8 @@ await fastify.register(Summaly, {
 | `content_too_large` | `contentLengthLimit` 超過 (デフォルト 10 MiB) | 巨大 HTML、`useRange` 推奨 |
 | `ssrf_blocked` | プライベート IP 拒否 | `192.168.*` 等 (ガード有効時)、IP パース失敗の `Invalid IP` も含む |
 | `network_error` | DNS 失敗 / 接続拒否 | `ENOTFOUND` / `ECONNREFUSED` |
-| `connection_dropped` | TCP/TLS 後の HTTP 応答前切断 (phase11.9) | `socket hang up` / `EPIPE` / `ECONNRESET` / WAF 黙殺 |
+| `connection_dropped` | TCP/TLS 後の HTTP 応答前切断、TLS/HTTP2 層の handshake 拒否 (phase11.9 → phase19.2) | `socket hang up` / `EPIPE` / `ECONNRESET` / `EPROTO` SSL alert / HTTP/2 stream 切断 / WAF 黙殺 |
+| `tls_error` | 証明書検証失敗 (phase19.2)。どの取得経路でも救えない決定的失敗 | `certificate has expired` / self-signed / チェーン不完全 / altnames 不一致 |
 | `parse_error` | summarize null / cheerio 失敗 | `failed summarize` |
 | `unknown` | 上記いずれにも該当しない | catch-all |
 

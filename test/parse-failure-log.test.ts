@@ -215,6 +215,39 @@ describe('categorizeError (phase11.2)', () => {
 		expect(categorizeError('failed summarize')).toBe('parse_error');
 	});
 
+	test('証明書検証失敗 → tls_error (phase19.2、本番 256h ログの実測メッセージ)', () => {
+		expect(categorizeError('unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca')).toBe('tls_error');
+		expect(categorizeError('certificate has expired')).toBe('tls_error');
+		expect(categorizeError('self-signed certificate; if the root CA is installed locally, try running Node.js with --use-system-ca')).toBe('tls_error');
+		expect(categorizeError('unable to get local issuer certificate')).toBe('tls_error');
+		expect(categorizeError("Hostname/IP does not match certificate's altnames: Host: example.com. is not in the cert's altnames: DNS:*.example.net")).toBe('tls_error');
+	});
+
+	test('certificate verify failed は EPROTO/SSL routines を含んでも tls_error 優先 (証明書問題側に寄せる)', () => {
+		expect(categorizeError('write EPROTO 0000:error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed')).toBe('tls_error');
+	});
+
+	test('TLS handshake 拒否 / HTTP2 stream 切断 → connection_dropped (phase19.2、curl_cffi 偽装で救援可能な bot block シグネチャ)', () => {
+		expect(categorizeError('write EPROTO 408DAC3797700000:error:0A000438:SSL routines:ssl3_read_bytes:tlsv1 alert internal error:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:918:SSL alert number 80')).toBe('connection_dropped');
+		expect(categorizeError('Client network socket disconnected before secure TLS connection was established')).toBe('connection_dropped');
+		expect(categorizeError('curl_cffi (network): Failed to perform, curl: (92) HTTP/2 stream 1 was not closed cleanly: INTERNAL_ERROR (err 2). See https://curl.se/libcurl/c/libcurl-errors.html first for more details.')).toBe('connection_dropped');
+	});
+
+	test('fetch failed / incorrect header check → network_error (phase19.2)', () => {
+		expect(categorizeError('fetch failed')).toBe('network_error');
+		expect(categorizeError('incorrect header check')).toBe('network_error');
+	});
+
+	test('Redirected N times (got MaxRedirectsError) → origin_error (phase19.2)', () => {
+		expect(categorizeError('Redirected 10 times. Aborting.')).toBe('origin_error');
+	});
+
+	test('message 空の RequestError → network_error / message 付き未知 RequestError は unknown のまま (phase19.2)', () => {
+		expect(categorizeError('', 'RequestError')).toBe('network_error');
+		expect(categorizeError(undefined, 'RequestError')).toBe('network_error');
+		expect(categorizeError('mysterious new failure', 'RequestError')).toBe('unknown');
+	});
+
 	test('未知のエラー → unknown', () => {
 		expect(categorizeError('cheerio internal error')).toBe('unknown');
 		expect(categorizeError(undefined, undefined)).toBe('unknown');

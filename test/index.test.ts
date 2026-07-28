@@ -294,6 +294,46 @@ describe('local tests', () => {
 		});
 	});
 
+	describe('壊れた URL 属性値の graceful degradation (phase19.2)', () => {
+		// 本番 256h ログで `og:image` 等に不正 URL を入れているサイトが実在し、
+		// 無防備な `new URL()` が TypeError → 500 になっていた (jumpsq.shueisha.co.jp 等)。
+		test('og:image が不正 URL でも 500 にならず thumbnail は null', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				const html = '<html><head><title>Broken OG Image</title>'
+					+ '<meta property="og:image" content="https://">'
+					+ '</head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			app.get('/favicon.ico', (_req, reply) => reply.status(404).send());
+			await app.listen({ port });
+
+			const summary = await summaly(host);
+			expect(summary.title).toBe('Broken OG Image');
+			expect(summary.thumbnail).toBeNull();
+		});
+
+		test('favicon href が不正 URL でも 500 にならず icon は null', async () => {
+			app = fastify();
+			app.get('/', (_req, reply) => {
+				const html = '<html><head><title>Broken Favicon</title>'
+					+ '<link rel="icon" href="https://">'
+					+ '</head><body>x</body></html>';
+				reply.header('content-type', 'text/html');
+				reply.header('content-length', html.length);
+				return reply.send(html);
+			});
+			await app.listen({ port });
+
+			const summary = await summaly(host);
+			expect(summary.title).toBe('Broken Favicon');
+			expect(summary.icon).toBeNull();
+			expect(summary.thumbnail).toBeNull();
+		});
+	});
+
 	test('titleがcleanupされる', async () => {
 		app = fastify();
 		app.get('/', (request, reply) => {

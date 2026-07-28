@@ -55,6 +55,14 @@ describe('chooseLogLevel', () => {
 		expect(chooseLogLevel(new TypeError('foo'))).toBe('error');
 	});
 
+	test('Error("certificate has expired") → warn (tls_error, phase19.2)', () => {
+		expect(chooseLogLevel(new Error('certificate has expired'))).toBe('warn');
+	});
+
+	test('Error("write EPROTO ... SSL alert") → warn (connection_dropped, phase19.2)', () => {
+		expect(chooseLogLevel(new Error('write EPROTO 0000:error:0A000438:SSL routines:ssl3_read_bytes:tlsv1 alert internal error'))).toBe('warn');
+	});
+
 	test('Error()（プレーン）→ error (unknown)', () => {
 		expect(chooseLogLevel(new Error('cheerio internal error'))).toBe('error');
 	});

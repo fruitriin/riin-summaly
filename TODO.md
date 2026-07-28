@@ -5,7 +5,7 @@
 
 phase 番号は **着手順**（数値が小さいほど先）。同じ大番号内（例: 2.1 と 2.2）は並列着手可能。
 
-## 現在のフェーズ: phase18 完了 (2026-05-10、phase18.1 派生まで)。auto-run 可能タスクは phase15.3 (DMM プラグイン、サイズ S) のみ残
+## 現在のフェーズ: phase19.2 完了 (2026-07-29)。auto-run 可能タスクは phase16.5 / 16.6 (低優先) のみ残
 
 > **次サイクル候補消化状況** (`docs/knowhow/addf-dev-operation-patterns.md` 「auto-run 可能タスクが尽きたときの運用」参照):
 > 1. **Plan の半自動 Step を切り分けて API 部分だけ実装** — 候補なし (phase14 Step 5 API は実装済)
@@ -45,6 +45,7 @@ phase 番号は **着手順**（数値が小さいほど先）。同じ大番号
 | 低 | 16.6 | proxy 実 HTTP 疎通テスト。Worker 側に `/health` endpoint 追加 + summaly 起動時に HMAC なしで GET → 200 確認。phase16.4 では placeholder 検出のみで止めた、実 HTTP は別 phase | S〜M | 未着手 |
 | 低 | 17.1 | [docs/plans/phase17.1-addf-upstream-prune-stale-markers.md](docs/plans/phase17.1-addf-upstream-prune-stale-markers.md) — `prune-stale-markers` スキルを ADDF 本体に upstream。summaly 側で実証済 (src/+bin/ で 156→5 件、96.8% 削減)。ADDF 利用プロジェクト全般の履歴マーカー累積問題への横展開 | S〜M | 未着手 (着手トリガー: ADDF 本体への寄与タイミング、急がない) |
 | — | 18 | [docs/plans/phase18-hedged-fallback.md](docs/plans/phase18-hedged-fallback.md) — Hedged fallback (champion / challenger 並列発火) で経路選定を全自動化。第一候補 (champion) 失敗 or 5 秒遅延で残り全 strategy を `Promise.any` 並列発火、最速 valid 結果を採用 + 即昇格 (1 回で promotion、N 連続要件なし、降格・除外なし)。Python 側 SSRF ガード追加 (`assert_public_ip`)。`[scraping.fallback].hedgedThresholdMs` 新規 (default 5000)。**経路問題だけのサイト (monotaro クラス) は plugin / config 編集なしで自動救援される**。phase18.1 で healthcheck `uv run fetch --help` / monotaro fail mode J 整理 / Worker `ALLOWED_DOMAINS` 撤廃まで派生対応済 | M〜L | 完了 (2026-05-10、Step 1〜7 + phase18.1 派生まで完了 619 件 pass。`domains` 物理撤廃 / プラグイン棚卸し / 本番デプロイ動作確認は将来 phase or 運用者範囲) |
+| — | 19.2 | [docs/plans/phase19.2-500-error-hardening.md](docs/plans/phase19.2-500-error-hardening.md) — 本番 500 エラー根絶。256h ログ分析で error 308 件中 199 件 (65%) が `getOEmbedPlayer` の `body.html` 型ガード欠落 (fixupx.com 154 件)、6 件が `parseGeneral` の無防備 `new URL` (og:image 等)。残り 103 件は外部要因 (TLS 証明書 / curl_cffi HTTP/2 切断) を `categorizeError` に `tls_error` 等で取り込み warn 降格、「error = 真のバグ」の観測規約を回復 | S〜M | 完了 (2026-07-29、Bug A/B 修正 + tls_error 新設 + 729 件 pass。本番デプロイ + 1 週間後の error 再集計は運用者側) |
 | 中 | 19.1 | [docs/plans/phase19.1-plugin-google-drive.md](docs/plans/phase19.1-plugin-google-drive.md) — Google Drive プレビュープラグイン (iframe player)。`drive.google.com/file/d/<id>/...` を `…/preview` iframe player で返す (video / PDF / 画像 / Docs 全種別)。oEmbed 不在のため player URL を pure 構築、`skipRedirectResolution = true`、title/thumbnail は匿名メタ取得不可で null。**Google Photos は `x-frame-options: SAMEORIGIN` で iframe 不可のため本 phase スコープ外** (Playwright 導入後に card 表示で再検討) | S | 完了 (2026-06-01、Step 1〜4 + E2E 検証完了 677 件 pass。レビュー W-1/W-2/S-1/S-3 対応済。本番デプロイは運用者側) |
 | — | 20.1 | [docs/plans/phase20.1-spotify-artist-description.md](docs/plans/phase20.1-spotify-artist-description.md) — Spotify アーティスト名補完。oEmbed に無いアーティスト情報を `facebookexternalhit` UA でのページ本体並行取得（`music:musician_description` → `og:description` 先頭セグメント）で補い `description` に格納。track / album パスのみ発火、短縮タイムアウト + proxy / curl_cffi / 経路学習キャッシュ記録の明示無効化で本体経路から分離。外部コントリビューション [PR #6](https://github.com/fruitriin/riin-summaly/pull/6) (@t1nyb0x) の追認 Plan | S | 完了 (2026-07-21、レビュー対応 2a178e9 + E2E 検証済 722 件 pass。本番デプロイは運用者側) |
 

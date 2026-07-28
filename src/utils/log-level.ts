@@ -5,8 +5,8 @@
  *
  * - **info**: upstream 4xx（普通のことなので運用上は priority filter で除外可）
  *   - `not_found` / `bot_blocked`
- * - **warn**: upstream 5xx・timeout・SSRF block・型 reject・サイズ超過・低レベルネットワーク（運用者が気にすべき）
- *   - `origin_error` / `timeout` / `unsupported_type` / `content_too_large` / `ssrf_blocked` / `network_error` / `connection_dropped`
+ * - **warn**: upstream 5xx・timeout・SSRF block・型 reject・サイズ超過・低レベルネットワーク・証明書不良（運用者が気にすべき）
+ *   - `origin_error` / `timeout` / `unsupported_type` / `content_too_large` / `ssrf_blocked` / `network_error` / `connection_dropped` / `tls_error`
  * - **error**: 想定外（プラグインのバグ・cheerio 失敗・catch-all）
  *   - `parse_error` / `unknown`
  *
@@ -28,6 +28,7 @@ const LOG_LEVEL_BY_CATEGORY: Record<SummalyErrorCategory, LogLevel> = {
 	ssrf_blocked: 'warn',
 	network_error: 'warn',
 	connection_dropped: 'warn',
+	tls_error: 'warn',
 	parse_error: 'error',
 	unknown: 'error',
 };

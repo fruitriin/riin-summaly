@@ -117,7 +117,11 @@ export function isThinSummary(summary: SummalyResult): boolean {
  * - `content_too_large` `contentLengthLimit` 超過 (10 MiB デフォルト)
  * - `ssrf_blocked` プライベート IP 拒否（IP パース失敗で投げられる `Invalid IP` も含む）
  * - `network_error` DNS 失敗 / 接続拒否 (`ENOTFOUND` 等)
- * - `connection_dropped` TCP/TLS は通ったが HTTP 応答前に切断 (`socket hang up` / `EPIPE` / `ECONNRESET` / `Empty reply`) — bot block 系の典型
+ * - `connection_dropped` TCP/TLS は通ったが HTTP 応答前に切断 (`socket hang up` / `EPIPE` / `ECONNRESET` / `Empty reply`)、
+ *   および TLS handshake をサイト側が拒否するケース (`EPROTO` / SSL alert / HTTP/2 stream 切断) — bot block 系の典型。
+ *   後者は curl_cffi の TLS フィンガープリント偽装で救援できる可能性がある (yodobashi 型)
+ * - `tls_error` 証明書検証失敗（期限切れ / self-signed / チェーン不完全 / altnames 不一致）。
+ *   サイト側の証明書の問題であり、どの取得経路でも救えない決定的失敗 (phase19.2)
  * - `parse_error` HTML は取れたが summarize が null / cheerio パース失敗
  * - `unknown` 上記いずれにも該当しない（catch-all）
  */
@@ -131,6 +135,7 @@ export type SummalyErrorCategory =
 	| 'ssrf_blocked'
 	| 'network_error'
 	| 'connection_dropped'
+	| 'tls_error'
 	| 'parse_error'
 	| 'unknown';
 
@@ -168,21 +173,39 @@ export function categorizeError(
 		if (/Rejected by type filter/i.test(errorMessage)) return 'unsupported_type';
 		if (/maxSize exceeded/i.test(errorMessage)) return 'content_too_large';
 		if (/timeout|timed out|aborted/i.test(errorMessage)) return 'timeout';
+		// 証明書検証失敗は connection_dropped (EPROTO 等) より先に判定する。
+		// 「SSL routines ... certificate verify failed」のように両方にマッチしうるメッセージは
+		// 証明書問題 (= どの経路でも救えない決定的失敗) 側に寄せたい。
+		// Node の証明書系エラーメッセージはすべて "certificate" を含む
+		// (unable to verify the first certificate / certificate has expired / self-signed certificate /
+		//  unable to get local issuer certificate / does not match certificate's altnames)。
+		if (/certificate/i.test(errorMessage)) return 'tls_error';
 		// connection_dropped を network_error より前に判定する。`ECONNRESET` は両方にマッチしうるが、
 		// 「TCP は通ったが HTTP 応答前に切断」という意味は connection_dropped 側に寄せる
 		// （bot block 系 WAF の典型シグニチャ。フォールバック UA リトライの対象）。
-		if (/socket hang up|EPIPE|ECONNRESET|Empty reply/i.test(errorMessage)) {
+		// `EPROTO` / SSL alert / `secure TLS connection` 前切断 / curl の HTTP/2 stream 切断は
+		// サイト側が TLS/HTTP2 層で当方を拒否する bot block シグネチャ (yodobashi 型) なので
+		// tls_error ではなくこちら (= curl_cffi 偽装で救援可能な経路) に振り分ける。
+		if (/socket hang up|EPIPE|ECONNRESET|Empty reply|EPROTO|SSL routines|secure TLS connection|HTTP\/2 stream \d+ was not closed cleanly/i.test(errorMessage)) {
 			return 'connection_dropped';
 		}
-		if (/ENOTFOUND|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN/i.test(errorMessage)) {
+		if (/ENOTFOUND|ECONNREFUSED|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN|fetch failed|incorrect header check/i.test(errorMessage)) {
 			return 'network_error';
 		}
+		// got の MaxRedirectsError (`Redirected 10 times. Aborting.`) — リダイレクトループはサイト側の
+		// 設定不良なので origin_error に丸める (件数僅少のため専用カテゴリは設けない)。
+		if (/Redirected \d+ times/i.test(errorMessage)) return 'origin_error';
 		if (/failed summarize/i.test(errorMessage)) return 'parse_error';
 	}
 
 	// 2. errorName ベースの timeout 系
 	if (errorName === 'TimeoutError' || errorName === 'AbortError' || errorName === 'CancelError') {
 		return 'timeout';
+	}
+	// message 空の got RequestError（低レベル接続失敗で message が組み立てられないケースが本番で実在）。
+	// message があるのにどのパターンにも当たらない RequestError は新パターン発見のため unknown のまま残す。
+	if (errorName === 'RequestError' && (errorMessage == null || errorMessage === '')) {
+		return 'network_error';
 	}
 
 	// 3. StatusError + statusCode で HTTP ステータス由来の分類
@@ -217,6 +240,7 @@ const FILTERED_CATEGORIES = new Set<SummalyErrorCategory>([
 	'ssrf_blocked',
 	'network_error',
 	'connection_dropped',
+	'tls_error',
 ]);
 
 /**

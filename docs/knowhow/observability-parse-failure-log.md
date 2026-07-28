@@ -158,6 +158,23 @@ cat /var/log/summaly/parse-failures-blocked.jsonl \
 
 candidate ログと同じく失敗 URL の origin+pathname を記録。ファイルパーミッション 600 推奨。
 
+## TLS 系エラーの分類原則: 「どちらが拒否したか」で救援可能性が決まる (phase19.2)
+
+TLS 関連のエラーメッセージをカテゴリ分類するときは、**拒否の主体**で二分する:
+
+| 主体 | 意味 | カテゴリ | 救援可能性 |
+|---|---|---|---|
+| **当方がサイトの証明書を拒否** (期限切れ / self-signed / チェーン不完全 / altnames 不一致) | サイトの証明書の問題 | `tls_error` | **どの経路でも救えない決定的失敗**。got / CF Workers / curl_cffi のいずれも証明書検証は行うため hedge fire は全経路無駄弾 → `HEDGED_FINAL_CATEGORIES` に含めて skip |
+| **サイトが当方の TLS handshake を拒否** (`EPROTO` + SSL alert / `secure TLS connection` 確立前切断 / HTTP/2 stream 即切断) | TLS フィンガープリントベースの bot block (yodobashi 型) | `connection_dropped` | **curl_cffi の TLS 偽装で救援可能** → hedge fire 対象に残す |
+
+判定の実装上のコツ: Node の証明書検証エラーメッセージは**すべて "certificate" を含む** (`unable to verify the first certificate` / `certificate has expired` / `self-signed certificate` / `unable to get local issuer certificate` / `does not match certificate's altnames`) ため `/certificate/i` 1 パターンで拾える。`SSL routines ... certificate verify failed` のように EPROTO 系と両方にマッチするメッセージがあるので、**certificate 判定を EPROTO 判定より先に置く** (証明書問題 = 決定的失敗側に寄せる)。
+
+この区別を誤って EPROTO 系を `tls_error` (hedge skip) に入れると、**TLS 層 bot block サイトの curl_cffi 救援経路を殺す**。phase19.2 の Plan 初版はこの誤りを含んでいて実装時に気付いた。
+
+### categorizeError の message ベース判定は origin が理論上操作可能
+
+`StatusError` の message には origin レスポンスの **statusMessage (HTTP reason phrase) がそのまま入る**ため、悪意あるサイトが reason phrase に `certificate` 等の分類キーワードを含めると誤分類を誘導できる (例: `403 Certificate Required` → 本来 `bot_blocked` のところ `tls_error` に化ける)。実害は「そのサイトへの hedge fire が抑止される」程度で summaly 側のクラッシュや漏洩には繋がらないが、**message パターンを追加するときはこの前提 (message は半分 origin 由来の untrusted 入力) を思い出すこと**。高リスクな分岐 (SSRF 判定等) を message パターンに依存させてはいけない。
+
 ## 参考
 
 - [docs/plans/phase10.1-parse-failure-log.md](../plans/phase10.1-parse-failure-log.md)

@@ -45,6 +45,8 @@ export class HedgeAbortedError extends Error {
  * - `unsupported_type`: content-type の問題 (HTML 以外を受信)
  * - `content_too_large`: サイズ超過
  * - `parse_error`: HTML パース失敗 (response は取れている)
+ * - `tls_error`: 証明書検証失敗 (期限切れ / self-signed 等)。got / CF Workers / curl_cffi の
+ *   どの経路も証明書検証は行うため別経路でも同じ結果になる (phase19.2)
  *
  * `bot_blocked` (4xx 全般) / `origin_error` (5xx) / `timeout` / `connection_dropped` /
  * `network_error` / `unknown` は別経路で救援可能性があるため hedge fire 対象。
@@ -55,6 +57,7 @@ const HEDGED_FINAL_CATEGORIES: ReadonlySet<SummalyErrorCategory> = new Set<Summa
 	'unsupported_type',
 	'content_too_large',
 	'parse_error',
+	'tls_error',
 ]);
 
 /**
@@ -584,6 +587,8 @@ export type FallbackUaConfig = {
 	categories: SummalyErrorCategory[];
 };
 
+// phase18 以降 hedge race が全 challenger を並列発火するため本フィールドは事実上不使用
+// (forward-compat のみ、DEPRECATED.md 参照)。カテゴリを増減しても発火挙動は変わらない。
 export const DEFAULT_FALLBACK_RETRY_CATEGORIES: SummalyErrorCategory[] = [
 	'bot_blocked',
 	'connection_dropped',
