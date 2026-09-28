@@ -12,6 +12,7 @@ export const KNOWN_SHORT_HOSTS = new Set<string>([
 	'amzn.to',
 	'amzn.asia',
 	'a.co',
+	'link.amazon',
 	'w.wiki',
 	'spotify.link',
 ]);

@@ -25,7 +25,7 @@ const AMAZON_HOST = /^(?:www\.)?amazon\.(?:com|co\.jp|ca|com\.br|com\.mx|co\.uk|
  * 短縮ホストもマッチさせて summarize() 内で final URL から ASIN 抽出 → canonical 化 → 再 scpaping
  * する経路を追加する。
  */
-const AMAZON_SHORT_HOST = /^(?:amzn\.asia|amzn\.to|a\.co)$/;
+const AMAZON_SHORT_HOST = /^(?:amzn\.asia|amzn\.to|a\.co|link\.amazon)$/;
 
 export function test(url: URL): boolean {
 	return AMAZON_HOST.test(url.hostname) || AMAZON_SHORT_HOST.test(url.hostname);
